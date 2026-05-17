@@ -5,6 +5,10 @@
 <h1 align="center">Entracte</h1>
 
 <p align="center">
+  <em>Pronounced "ahn-TRAHKT" (French <em>entracte</em>, IPA /ɑ̃.tʁakt/) — not "en-tract".</em>
+</p>
+
+<p align="center">
   A cross-platform break reminder app for macOS, Windows, and Linux —<br/>
   named after the theatre interval between acts.
 </p>
