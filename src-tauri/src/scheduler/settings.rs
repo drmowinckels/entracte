@@ -405,8 +405,10 @@ impl Settings {
         self.daily_screen_time_budget_minutes = self.daily_screen_time_budget_minutes.min(1_440);
         self.daily_screen_time_remind_again_minutes =
             self.daily_screen_time_remind_again_minutes.clamp(1, 720);
-        // Hint rotation: 1..10min.
-        self.hint_rotate_seconds = self.hint_rotate_seconds.clamp(1, 600);
+        // Hint rotation: 0 = disabled, otherwise capped at 10min. Must not
+        // clamp 0 up to 1 — the renderer treats 0 as "off" and `clamp(1, 600)`
+        // silently re-enables rotation for users who turned it off.
+        self.hint_rotate_seconds = self.hint_rotate_seconds.min(600);
         // Time-of-day windows are minutes-since-midnight (0..1439).
         self.work_start_minutes = self.work_start_minutes.min(1_439);
         self.work_end_minutes = self.work_end_minutes.min(1_439);
@@ -559,6 +561,19 @@ mod tests {
         };
         s.clamp();
         assert_eq!(s.prebreak_notification_seconds, 0);
+    }
+
+    #[test]
+    fn clamp_keeps_zero_hint_rotation_as_disabled() {
+        // 0 = rotation off. The renderer's useHintRotation gates on
+        // `hint_rotate_seconds > 0`; clamping 0 up to 1 would silently
+        // re-enable rotation for users who unchecked the toggle.
+        let mut s = Settings {
+            hint_rotate_seconds: 0,
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.hint_rotate_seconds, 0);
     }
 
     #[test]

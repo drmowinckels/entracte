@@ -727,10 +727,7 @@ mod tests {
     fn log_path_uses_bundle_subdir() {
         let p = log_path().expect("log_path resolves on the test platform");
         let s = p.to_string_lossy();
-        assert!(
-            s.contains("app.entracte"),
-            "missing bundle id in {s}"
-        );
+        assert!(s.contains("app.entracte"), "missing bundle id in {s}");
         assert!(s.ends_with("entracte.log"), "wrong filename in {s}");
     }
 }
