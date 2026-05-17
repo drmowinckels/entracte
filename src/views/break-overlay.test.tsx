@@ -13,7 +13,7 @@ let currentPostpone: { count: number; max: number; remaining: number } = {
   remaining: 3,
 };
 
-const invokeMock = vi.fn(async (cmd: string) => {
+const invokeMock = vi.fn(async (cmd: string, _args?: unknown) => {
   if (cmd === "get_settings") return currentSettings;
   if (cmd === "get_current_break") return currentBreak;
   if (cmd === "get_postpone_state") return currentPostpone;
