@@ -2,6 +2,10 @@
 
 ::: tip Pronounced "ahn-TRAHKT"
 **Entracte** is French for the interval between acts of a play — IPA `/ɑ̃.tʁakt/`. "En-tract" with a hard _t_ is the common-but-incorrect English reading; we say it the French way.
+
+<audio controls preload="none" src="/entracte/audio/entracte-fr.ogg">Your browser doesn't support inline audio — <a href="/entracte/audio/entracte-fr.ogg">download the clip</a> instead.</audio>
+
+<sub>Recording by Vion Nicolas via the <a href="https://commons.wikimedia.org/wiki/File:Fr-entracte.ogg">Shtooka Project</a>, used under <a href="https://creativecommons.org/licenses/by/2.0/fr/deed.en">CC BY 2.0 France</a>.</sub>
 :::
 
 Entracte runs as a menu bar / tray app. After launching it, you'll see a small stage-arch icon in the system tray — that's the only entry point. There is no Dock icon on macOS, by design.

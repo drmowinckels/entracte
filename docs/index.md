@@ -44,3 +44,15 @@ features:
     title: Native and lightweight
     details: Rust + Tauri 2 core. Small binary, low idle CPU, no Electron.
 ---
+
+<div style="text-align: center; margin-top: 2rem;">
+
+## How to say it
+
+"ahn-TRAHKT" — French, IPA `/ɑ̃.tʁakt/`. Not "en-tract".
+
+<audio controls preload="none" src="/entracte/audio/entracte-fr.ogg" style="margin-top: 0.5rem;">Your browser doesn't support inline audio — <a href="/entracte/audio/entracte-fr.ogg">download the clip</a> instead.</audio>
+
+<sub>Recording by Vion Nicolas via the <a href="https://commons.wikimedia.org/wiki/File:Fr-entracte.ogg">Shtooka Project</a>, used under <a href="https://creativecommons.org/licenses/by/2.0/fr/deed.en">CC BY 2.0 France</a>.</sub>
+
+</div>
