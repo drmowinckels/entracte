@@ -39,12 +39,26 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: The diagnostics report below already records this, so only fill it in if you're pasting raw log contents instead.
+      options:
+        - (see diagnostics report)
+        - macOS
+        - Windows
+        - Linux
+      default: 0
+    validations:
+      required: false
+
   - type: textarea
     id: diagnostics
     attributes:
       label: Diagnostics report
       description: |
-        Paste the output of **Settings → About → Copy diagnostics report**. If the app is so broken you can't reach that screen, paste the contents of the log file directly — see the dropdown below for its location.
+        Paste the output of **Settings → About → Copy diagnostics report**. If the app is so broken you can't reach that screen, paste the contents of the log file directly — see the dropdown below for its location, and pick your OS in the field above.
       render: text
     validations:
       required: true
