@@ -40,3 +40,7 @@ README_files/
 
 # Local-only setup notes
 SIGNPATH_SETUP.md
+
+
+# Lychee link-checker cache
+.lycheecache

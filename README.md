@@ -113,6 +113,10 @@ The a11y audit ([scripts/audit-a11y.mjs](scripts/audit-a11y.mjs)) builds `dist/`
 
 Platform support matrix, scheduler internals, and OS-specific quirks are documented in [.github/AGENTS.md](.github/AGENTS.md).
 
+## Contributing
+
+Bug reports, ideas, and patches are all welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, test, and PR workflow. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md), which — among the usual things — requires a real human reviewer in the loop on every contribution.
+
 ## Releases
 
 Tag-driven via GitHub Actions. Pushing a `v*` tag builds signed (when secrets are configured) bundles for macOS aarch64 + x86_64, Windows, and Linux, and attaches them to a draft release.
