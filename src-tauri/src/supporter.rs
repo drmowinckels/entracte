@@ -122,8 +122,20 @@ pub async fn activate_remote(
     key: &str,
     instance_name: &str,
 ) -> Result<String, String> {
+    activate_remote_at(client, LS_API_BASE, key, instance_name).await
+}
+
+/// HTTP-layer split for `activate_remote`: takes an explicit base URL so
+/// tests can point it at `mockito::Server` without bringing up Lemon
+/// Squeezy. The production caller hard-codes `LS_API_BASE`.
+pub(crate) async fn activate_remote_at(
+    client: &reqwest::Client,
+    base: &str,
+    key: &str,
+    instance_name: &str,
+) -> Result<String, String> {
     let resp = client
-        .post(format!("{LS_API_BASE}/licenses/activate"))
+        .post(format!("{base}/licenses/activate"))
         .header("Accept", "application/json")
         .form(&[("license_key", key), ("instance_name", instance_name)])
         .send()
@@ -149,8 +161,18 @@ pub async fn validate_remote(
     key: &str,
     instance_id: &str,
 ) -> Result<bool, String> {
+    validate_remote_at(client, LS_API_BASE, key, instance_id).await
+}
+
+/// HTTP-layer split for `validate_remote`. See `activate_remote_at`.
+pub(crate) async fn validate_remote_at(
+    client: &reqwest::Client,
+    base: &str,
+    key: &str,
+    instance_id: &str,
+) -> Result<bool, String> {
     let resp = client
-        .post(format!("{LS_API_BASE}/licenses/validate"))
+        .post(format!("{base}/licenses/validate"))
         .header("Accept", "application/json")
         .form(&[("license_key", key), ("instance_id", instance_id)])
         .send()
@@ -278,5 +300,125 @@ mod tests {
         let p = std::env::temp_dir().join("entracte-supporter-delete-test.json");
         let _ = fs::remove_file(&p);
         delete(&p).unwrap();
+    }
+
+    // ----- HTTP-layer tests for activate_remote_at / validate_remote_at -----
+
+    #[tokio::test]
+    async fn activate_remote_returns_instance_id_on_success() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"activated": true, "instance": {"id": "inst-42"}}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let got = activate_remote_at(&client, &server.url(), "KEY", "laptop")
+            .await
+            .unwrap();
+        assert_eq!(got, "inst-42");
+    }
+
+    #[tokio::test]
+    async fn activate_remote_surfaces_server_error_message() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_body(r#"{"activated": false, "error": "key revoked"}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let err = activate_remote_at(&client, &server.url(), "KEY", "laptop")
+            .await
+            .unwrap_err();
+        assert!(err.contains("key revoked"));
+    }
+
+    #[tokio::test]
+    async fn activate_remote_errors_when_server_omits_instance() {
+        // Defensive: activated=true with no instance.id is a Lemon Squeezy
+        // response we can't act on. We must error rather than panic.
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_body(r#"{"activated": true}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let err = activate_remote_at(&client, &server.url(), "KEY", "laptop")
+            .await
+            .unwrap_err();
+        assert!(err.contains("activated=true"));
+    }
+
+    #[tokio::test]
+    async fn activate_remote_errors_on_malformed_json() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_body("not json")
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let err = activate_remote_at(&client, &server.url(), "KEY", "laptop")
+            .await
+            .unwrap_err();
+        assert!(err.contains("invalid response"));
+    }
+
+    #[tokio::test]
+    async fn validate_remote_returns_valid_flag() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/validate")
+            .with_status(200)
+            .with_body(r#"{"valid": true}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let got = validate_remote_at(&client, &server.url(), "KEY", "inst-1")
+            .await
+            .unwrap();
+        assert!(got);
+    }
+
+    #[tokio::test]
+    async fn validate_remote_surfaces_error_message() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/validate")
+            .with_status(200)
+            .with_body(r#"{"valid": false, "error": "instance not found"}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let err = validate_remote_at(&client, &server.url(), "KEY", "inst-1")
+            .await
+            .unwrap_err();
+        assert!(err.contains("instance not found"));
+    }
+
+    #[tokio::test]
+    async fn validate_remote_returns_false_when_valid_false_and_no_error() {
+        // Some Lemon Squeezy paths return `valid: false` with no error
+        // string (e.g. a soft-deactivated instance). The helper must
+        // surface that as `Ok(false)`, not as a network error.
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/validate")
+            .with_status(200)
+            .with_body(r#"{"valid": false}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let got = validate_remote_at(&client, &server.url(), "KEY", "inst-1")
+            .await
+            .unwrap();
+        assert!(!got);
     }
 }

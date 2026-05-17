@@ -969,4 +969,218 @@ mod tests {
             .expect_err("strict mode blocks skip");
         assert_eq!(err, "strict mode active");
     }
+
+    #[tokio::test]
+    async fn skip_next_break_long_resets_both_anchors_and_counter() {
+        // Long-break skip resets micro state too: a long break "swallows"
+        // the upcoming micro, so the user shouldn't be hit with a micro
+        // a moment after skipping a long.
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_long = Instant::now()
+                .checked_sub(Duration::from_secs(3_600))
+                .unwrap_or_else(Instant::now);
+            t.last_micro = Instant::now()
+                .checked_sub(Duration::from_secs(3_600))
+                .unwrap_or_else(Instant::now);
+            t.long_postpone_count = 4;
+            t.long_warned = true;
+            t.micro_warned = true;
+        }
+        skip_next_break_impl(&sched, BreakKind::Long).await.unwrap();
+        let t = sched.timers.lock().await;
+        assert_eq!(t.long_postpone_count, 0);
+        assert!(!t.long_warned);
+        assert!(!t.micro_warned);
+        assert!(t.last_long.elapsed() < Duration::from_secs(1));
+        assert!(t.last_micro.elapsed() < Duration::from_secs(1));
+        assert!(matches!(
+            t.last_skipped_or_postponed,
+            Some((BreakKind::Long, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn skip_next_break_sleep_sets_last_sleep_marker() {
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        assert!(sched.timers.lock().await.last_sleep.is_none());
+        skip_next_break_impl(&sched, BreakKind::Sleep)
+            .await
+            .unwrap();
+        let t = sched.timers.lock().await;
+        assert!(t.last_sleep.is_some());
+        assert!(matches!(
+            t.last_skipped_or_postponed,
+            Some((BreakKind::Sleep, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn postpone_break_long_bumps_long_counter_and_resets_micro_anchor() {
+        // Long-postpone bumps long's counter and also pushes back the
+        // micro anchor so a micro doesn't fire inside the postpone window.
+        let settings = Settings {
+            postpone_enabled: true,
+            postpone_escalation_enabled: true,
+            postpone_minutes: 5,
+            postpone_escalation_step_secs: 120,
+            postpone_max_count: 3,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(settings);
+        let out = postpone_break_impl(&sched, BreakKind::Long).await.unwrap();
+        assert_eq!(out.postpone_secs, 300);
+        let t = sched.timers.lock().await;
+        assert_eq!(t.long_postpone_count, 1);
+        // Micro state must be pushed back too, not just long's.
+        assert!(!t.micro_warned);
+        assert!(t.micro_deferred_since.is_none());
+        assert!(matches!(
+            t.last_skipped_or_postponed,
+            Some((BreakKind::Long, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn postpone_break_sleep_records_last_sleep() {
+        let settings = Settings {
+            postpone_enabled: true,
+            // Escalation off so sleep doesn't hit the cap check.
+            postpone_escalation_enabled: false,
+            postpone_minutes: 5,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(settings);
+        assert!(sched.timers.lock().await.last_sleep.is_none());
+        postpone_break_impl(&sched, BreakKind::Sleep).await.unwrap();
+        let t = sched.timers.lock().await;
+        assert!(t.last_sleep.is_some());
+        assert!(matches!(
+            t.last_skipped_or_postponed,
+            Some((BreakKind::Sleep, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn postpone_break_with_escalation_disabled_ignores_cap() {
+        // postpone_escalation_enabled=false bypasses the per-kind cap
+        // even when the counter is already past it — escalation off means
+        // each postpone is just the base duration with no limit.
+        let settings = Settings {
+            postpone_enabled: true,
+            postpone_escalation_enabled: false,
+            postpone_minutes: 5,
+            postpone_escalation_step_secs: 120,
+            postpone_max_count: 1,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(settings);
+        for _ in 0..3 {
+            let out = postpone_break_impl(&sched, BreakKind::Micro)
+                .await
+                .expect("escalation off uncaps postpone");
+            assert_eq!(out.postpone_secs, 300, "no escalation = constant 5 min");
+        }
+        assert_eq!(sched.timers.lock().await.micro_postpone_count, 3);
+    }
+
+    /// Poll the events.jsonl file until it contains the given marker
+    /// substring or the timeout elapses. The logger writes on a
+    /// background thread, so a fixed sleep is racy on loaded CI runners.
+    async fn wait_for_log_substring(path: &std::path::Path, marker: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                if contents.contains(marker) {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_when_already_paused_does_not_re_fire_hooks() {
+        // pause_impl logs pause_start only on the running→paused edge.
+        // A second pause-while-paused must not produce a second log entry.
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        pause_impl(&sched, Some(60)).await;
+        wait_for_log_substring(&sched.events_path, "\"type\":\"pause_start\"").await;
+        pause_impl(&sched, Some(900)).await;
+        // Drain the logger queue: a second event would land within the
+        // same window the first did, so polling a touch longer is enough.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let log = std::fs::read_to_string(&sched.events_path).unwrap_or_default();
+        let count = log.matches("\"type\":\"pause_start\"").count();
+        assert_eq!(
+            count, 1,
+            "pause_start only fires on the running→paused edge, got log:\n{log}",
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_when_already_running_is_a_noop() {
+        // resume_impl on a Running scheduler is a no-op — it must not
+        // log a pause_end event when there was no pause to end.
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        resume_impl(&sched).await;
+        // Wait long enough that a real pause_end log would have flushed.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let log = std::fs::read_to_string(&sched.events_path).unwrap_or_default();
+        assert!(
+            !log.contains("\"type\":\"pause_end\""),
+            "resume on a Running scheduler must not log pause_end, got log:\n{log}",
+        );
+        // State stays Running across the no-op.
+        assert!(matches!(
+            *sched.pause_state.lock().await,
+            PauseState::Running
+        ));
+    }
+
+    #[tokio::test]
+    async fn compute_postpone_state_sleep_is_uncapped_even_with_escalation_on() {
+        // Sleep breaks never escalate; their postpone slot in
+        // `compute_postpone_state` should always report `max = u32::MAX`
+        // regardless of the `postpone_escalation_enabled` setting.
+        let settings = Arc::new(Mutex::new(settings_with_postpone(true, 5, 120, 3)));
+        let timers = Arc::new(Mutex::new(timers_with_postpone(0, 0)));
+        let sleep = compute_postpone_state(&settings, &timers, BreakKind::Sleep).await;
+        assert_eq!(sleep.max, u32::MAX);
+        assert_eq!(sleep.count, 0);
+        assert_eq!(sleep.remaining, u32::MAX);
+    }
+
+    #[tokio::test]
+    async fn end_break_completed_resets_postpone_counter_and_clears_last() {
+        // The end_break command itself needs an AppHandle, but the
+        // state mutations it triggers in the scheduler are observable
+        // without one: stash an active break, then re-implement the
+        // "completed" tail (stats + counter reset + clear_last) and
+        // confirm the helpers leave the scheduler in the expected shape.
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        {
+            let mut t = sched.timers.lock().await;
+            t.active_break = Some(BreakKind::Micro);
+            t.micro_postpone_count = 2;
+            t.last_skipped_or_postponed = Some((BreakKind::Micro, Instant::now()));
+        }
+        // Drive the same path end_break's "completed" branch takes:
+        // active_kind.take() + reset_postpone_counter + clear_last_break.
+        let active_kind = {
+            let mut t = sched.timers.lock().await;
+            t.active_break.take()
+        };
+        assert_eq!(active_kind, Some(BreakKind::Micro));
+        let mut t = sched.timers.lock().await;
+        reset_postpone_counter(&mut t, BreakKind::Micro);
+        let cleared = clear_last_break(&mut t);
+        assert!(
+            cleared,
+            "clear_last_break returns true when slot was populated"
+        );
+        assert_eq!(t.micro_postpone_count, 0);
+        assert!(t.last_skipped_or_postponed.is_none());
+    }
 }

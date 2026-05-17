@@ -295,4 +295,155 @@ mod tests {
         assert_eq!(format_countdown(59 * 60 + 59), "59:59");
         assert_eq!(format_countdown(60 * 60), "60:00");
     }
+
+    // ----- Scheduler::tray_countdown_snapshot integration -----
+
+    use crate::config::{Profile, DEFAULT_PROFILE_NAME};
+    use crate::scheduler::break_stats::BreakStats;
+    use crate::scheduler::screen_time::ScreenTimeState;
+    use crate::scheduler::settings::Settings;
+    use crate::scheduler::timers::BreakTimers;
+    use crate::scheduler::types::BreakEvent as InternalBreakEvent;
+    use crate::scheduler::types::BreakKind;
+    use crate::screen_time_store::ScreenTimeSnapshot;
+    use crate::stats::Logger;
+    use crate::test_support::{temp_dir, TempDir};
+    use std::sync::atomic::{AtomicBool, AtomicU8};
+    use std::sync::Arc;
+    use tokio::sync::Mutex as TokioMutex;
+
+    fn build_test_scheduler(settings: Settings) -> (TempDir, Scheduler) {
+        let dir = temp_dir();
+        let config_path = dir.path().join("settings.json");
+        let pause_path = dir.path().join("pause.json");
+        let events_path = dir.path().join("events.jsonl");
+        let screen_time_path = dir.path().join("screen_time.json");
+        let logger = Logger::spawn(events_path.clone());
+        let sched = Scheduler {
+            settings: Arc::new(TokioMutex::new(settings.clone())),
+            pause_state: Arc::new(TokioMutex::new(PauseState::Running)),
+            camera_active: Arc::new(AtomicBool::new(false)),
+            video_active: Arc::new(AtomicBool::new(false)),
+            auto_suppress_reason: Arc::new(AtomicU8::new(0)),
+            config_path,
+            pause_path,
+            events_path,
+            screen_time_path,
+            timers: Arc::new(TokioMutex::new(BreakTimers::new())),
+            stats: Arc::new(TokioMutex::new(BreakStats::default())),
+            screen_time: Arc::new(TokioMutex::new(ScreenTimeState::from_snapshot(
+                ScreenTimeSnapshot::default(),
+                "1970-01-01",
+            ))),
+            current_break: Arc::new(std::sync::Mutex::new(None)),
+            logger,
+            profiles: Arc::new(TokioMutex::new(vec![Profile {
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                settings,
+            }])),
+            active_profile_name: Arc::new(TokioMutex::new(DEFAULT_PROFILE_NAME.to_string())),
+            hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+        };
+        (dir, sched)
+    }
+
+    #[tokio::test]
+    async fn tray_countdown_snapshot_running_when_idle_and_text_enabled() {
+        // Fresh scheduler with the default interval settings → both timers
+        // anchored at construction → countdown is ~micro_interval_secs.
+        let s = Settings {
+            tray_countdown_enabled: true,
+            tray_countdown_target: "short".to_string(),
+            ..Settings::default()
+        };
+        let micro = s.micro_interval_secs;
+        let (_dir, sched) = build_test_scheduler(s);
+        let (snap, text_on) = sched.tray_countdown_snapshot().await;
+        assert!(text_on);
+        match snap {
+            TrayCountdownSnapshot::Running(secs) => {
+                // Allow a few seconds of slack for test execution overhead.
+                assert!(secs <= micro, "{secs} <= {micro}");
+                assert!(micro - secs < 5, "fresh anchor → close to full interval");
+            }
+            other => panic!("expected Running, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tray_countdown_snapshot_paused_when_scheduler_paused() {
+        let s = Settings {
+            tray_countdown_enabled: true,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(s);
+        *sched.pause_state.lock().await = PauseState::PausedUntil(None);
+        let (snap, text_on) = sched.tray_countdown_snapshot().await;
+        assert!(text_on);
+        assert_eq!(snap, TrayCountdownSnapshot::Paused);
+    }
+
+    #[tokio::test]
+    async fn tray_countdown_snapshot_on_break_when_current_break_present() {
+        let s = Settings {
+            tray_countdown_enabled: true,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(s);
+        *sched.current_break.lock().unwrap() = Some(InternalBreakEvent {
+            kind: BreakKind::Micro,
+            duration_secs: 30,
+            enforceable: false,
+            manual_finish: false,
+            postpone_available: true,
+            hints: vec![],
+            hint_rotate_seconds: 0,
+            health_intensity: 0.0,
+        });
+        let (snap, _) = sched.tray_countdown_snapshot().await;
+        assert_eq!(snap, TrayCountdownSnapshot::OnBreak);
+    }
+
+    #[tokio::test]
+    async fn tray_countdown_snapshot_disabled_when_text_off_and_no_visual_signal() {
+        let s = Settings {
+            tray_countdown_enabled: false,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(s);
+        let (snap, text_on) = sched.tray_countdown_snapshot().await;
+        assert!(!text_on);
+        assert_eq!(snap, TrayCountdownSnapshot::Disabled);
+    }
+
+    #[tokio::test]
+    async fn tray_countdown_snapshot_suppressed_carries_auto_reason() {
+        // Auto-suppress encodes which guard fired via an AtomicU8; the
+        // snapshot must surface that reason even when text countdown is on.
+        let s = Settings {
+            tray_countdown_enabled: true,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(s);
+        sched.auto_suppress_reason.store(
+            SuppressReason::Dnd.as_u8(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let (snap, _) = sched.tray_countdown_snapshot().await;
+        assert_eq!(snap, TrayCountdownSnapshot::Suppressed(SuppressReason::Dnd));
+    }
+
+    #[tokio::test]
+    async fn tray_countdown_snapshot_idle_when_no_interval_modes_enabled() {
+        // Both kinds disabled → no interval-driven countdown → Idle.
+        let s = Settings {
+            tray_countdown_enabled: true,
+            micro_enabled: false,
+            long_enabled: false,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(s);
+        let (snap, _) = sched.tray_countdown_snapshot().await;
+        assert_eq!(snap, TrayCountdownSnapshot::Idle);
+    }
 }

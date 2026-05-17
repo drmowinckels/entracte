@@ -179,57 +179,12 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
         sched.timers.lock().await.last_sleep = None;
 
-        if s.work_window_enabled && !in_window(now_min, s.work_start_minutes, s.work_end_minutes) {
-            let mut t = sched.timers.lock().await;
-            t.last_micro = Instant::now();
-            t.last_long = Instant::now();
-            t.micro_deferred_since = None;
-            t.long_deferred_since = None;
-            sched
-                .auto_suppress_reason
-                .store(SuppressReason::WorkWindow.as_u8(), Ordering::Relaxed);
-            continue;
-        }
-
-        if s.pause_during_dnd && dnd::is_active() {
-            let mut t = sched.timers.lock().await;
-            log_suppressions(&sched.logger, &s, &t, GuardReason::Dnd);
-            t.last_micro = Instant::now();
-            t.last_long = Instant::now();
-            t.micro_deferred_since = None;
-            t.long_deferred_since = None;
-            sched
-                .auto_suppress_reason
-                .store(SuppressReason::Dnd.as_u8(), Ordering::Relaxed);
-            continue;
-        }
-
-        if s.pause_during_camera && sched.camera_active.load(Ordering::Relaxed) {
-            let mut t = sched.timers.lock().await;
-            log_suppressions(&sched.logger, &s, &t, GuardReason::Camera);
-            t.last_micro = Instant::now();
-            t.last_long = Instant::now();
-            t.micro_deferred_since = None;
-            t.long_deferred_since = None;
-            sched
-                .auto_suppress_reason
-                .store(SuppressReason::Camera.as_u8(), Ordering::Relaxed);
-            continue;
-        }
-
-        if s.pause_during_video && sched.video_active.load(Ordering::Relaxed) {
-            let mut t = sched.timers.lock().await;
-            log_suppressions(&sched.logger, &s, &t, GuardReason::Video);
-            t.last_micro = Instant::now();
-            t.last_long = Instant::now();
-            t.micro_deferred_since = None;
-            t.long_deferred_since = None;
-            sched
-                .auto_suppress_reason
-                .store(SuppressReason::Video.as_u8(), Ordering::Relaxed);
-            continue;
-        }
-
+        // Live readings for the guard decision. Short-circuit each
+        // call on the matching setting so `dnd::is_active()` and the
+        // process-scan only run when the user has opted in.
+        let dnd_live = s.pause_during_dnd && dnd::is_active();
+        let camera_live = s.pause_during_camera && sched.camera_active.load(Ordering::Relaxed);
+        let video_live = s.pause_during_video && sched.video_active.load(Ordering::Relaxed);
         if s.app_pause_enabled && !s.app_pause_list.is_empty() {
             if last_app_refresh.elapsed() >= Duration::from_secs(5) {
                 let sys = sysinfo_system.get_or_insert_with(System::new);
@@ -242,21 +197,31 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 });
                 last_app_refresh = Instant::now();
             }
-            if app_pause_active {
-                let mut t = sched.timers.lock().await;
-                log_suppressions(&sched.logger, &s, &t, GuardReason::AppPause);
-                t.last_micro = Instant::now();
-                t.last_long = Instant::now();
-                t.micro_deferred_since = None;
-                t.long_deferred_since = None;
-                sched
-                    .auto_suppress_reason
-                    .store(SuppressReason::AppPause.as_u8(), Ordering::Relaxed);
-                continue;
-            }
         } else {
             sysinfo_system = None;
             app_pause_active = false;
+        }
+
+        if let Some(outcome) = evaluate_guards(
+            &s,
+            now_min,
+            dnd_live,
+            camera_live,
+            video_live,
+            app_pause_active,
+        ) {
+            let mut t = sched.timers.lock().await;
+            if let Some(guard_reason) = outcome.log_as {
+                log_suppressions(&sched.logger, &s, &t, guard_reason);
+            }
+            t.last_micro = Instant::now();
+            t.last_long = Instant::now();
+            t.micro_deferred_since = None;
+            t.long_deferred_since = None;
+            sched
+                .auto_suppress_reason
+                .store(outcome.reason.as_u8(), Ordering::Relaxed);
+            continue;
         }
 
         let long_fixed_due = s.long_enabled
@@ -600,6 +565,71 @@ fn now_epoch_secs_for_warn() -> i64 {
         .unwrap_or(0)
 }
 
+/// Result of evaluating the per-tick suppression guards: either no
+/// guard fires, or exactly one wins and dictates the tray icon
+/// (`reason`) plus whether the event-log records a `GuardSuppress`
+/// entry (`log_as`).
+///
+/// `work_window` deliberately doesn't log — it's a scheduled silence
+/// (the user said "no breaks outside 09:00–17:00"), not an unexpected
+/// suppression worth logging once per second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct GuardOutcome {
+    pub reason: SuppressReason,
+    pub log_as: Option<GuardReason>,
+}
+
+/// Pure decision: given the per-tick guard inputs, return which
+/// `SuppressReason` should fire (if any) and whether the run-loop
+/// should also write a `GuardSuppress` event for it.
+///
+/// Precedence (first match wins, mirroring the run-loop order):
+/// work_window → dnd → camera → video → app_pause. The run-loop is
+/// expected to short-circuit expensive checks before passing them in
+/// (e.g. only calling `dnd::is_active()` when `pause_during_dnd` is
+/// set), so the booleans here are "is the condition live right now",
+/// and the function applies the setting gates itself.
+pub(super) fn evaluate_guards(
+    s: &Settings,
+    now_min: u32,
+    dnd_active: bool,
+    camera_active: bool,
+    video_active: bool,
+    app_pause_active: bool,
+) -> Option<GuardOutcome> {
+    if s.work_window_enabled && !in_window(now_min, s.work_start_minutes, s.work_end_minutes) {
+        return Some(GuardOutcome {
+            reason: SuppressReason::WorkWindow,
+            log_as: None,
+        });
+    }
+    if s.pause_during_dnd && dnd_active {
+        return Some(GuardOutcome {
+            reason: SuppressReason::Dnd,
+            log_as: Some(GuardReason::Dnd),
+        });
+    }
+    if s.pause_during_camera && camera_active {
+        return Some(GuardOutcome {
+            reason: SuppressReason::Camera,
+            log_as: Some(GuardReason::Camera),
+        });
+    }
+    if s.pause_during_video && video_active {
+        return Some(GuardOutcome {
+            reason: SuppressReason::Video,
+            log_as: Some(GuardReason::Video),
+        });
+    }
+    if s.app_pause_enabled && !s.app_pause_list.is_empty() && app_pause_active {
+        return Some(GuardOutcome {
+            reason: SuppressReason::AppPause,
+            log_as: Some(GuardReason::AppPause),
+        });
+    }
+    None
+}
+
 /// Decide whether enough time has elapsed since the last UserIdle warn
 /// to fire another one, and update the timestamp atomically if so.
 ///
@@ -827,5 +857,147 @@ mod tests {
         let cell = AtomicI64::new(2000);
         assert!(!user_idle_warn_throttle(&cell, 1500, 60));
         assert_eq!(cell.load(Ordering::Relaxed), 2000);
+    }
+
+    // ----- evaluate_guards: pure per-tick suppression decision -----
+
+    fn settings_for_guards(
+        work_window: bool,
+        dnd: bool,
+        camera: bool,
+        video: bool,
+        app_pause_with_targets: bool,
+    ) -> Settings {
+        Settings {
+            work_window_enabled: work_window,
+            work_start_minutes: 9 * 60,
+            work_end_minutes: 17 * 60,
+            pause_during_dnd: dnd,
+            pause_during_camera: camera,
+            pause_during_video: video,
+            app_pause_enabled: app_pause_with_targets,
+            app_pause_list: if app_pause_with_targets {
+                vec!["zoom".to_string()]
+            } else {
+                Vec::new()
+            },
+            ..Settings::default()
+        }
+    }
+
+    const INSIDE_WORK_WINDOW: u32 = 10 * 60;
+    const OUTSIDE_WORK_WINDOW: u32 = 20 * 60;
+
+    #[test]
+    fn evaluate_guards_returns_none_when_all_off() {
+        let s = settings_for_guards(false, false, false, false, false);
+        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true).is_none());
+    }
+
+    #[test]
+    fn evaluate_guards_work_window_inside_returns_none() {
+        // work_window_enabled with a current minute inside [start,end)
+        // is the happy path — no suppression.
+        let s = settings_for_guards(true, false, false, false, false);
+        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false).is_none());
+    }
+
+    #[test]
+    fn evaluate_guards_work_window_outside_fires_silently() {
+        // Outside-hours suppression doesn't log — it's a scheduled
+        // silence, not an unexpected event.
+        let s = settings_for_guards(true, false, false, false, false);
+        let outcome = evaluate_guards(&s, OUTSIDE_WORK_WINDOW, false, false, false, false).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::WorkWindow);
+        assert!(
+            outcome.log_as.is_none(),
+            "work_window suppression must never log",
+        );
+    }
+
+    #[test]
+    fn evaluate_guards_dnd_fires_only_when_setting_and_state_both_true() {
+        let s_off = settings_for_guards(false, false, false, false, false);
+        assert!(evaluate_guards(&s_off, INSIDE_WORK_WINDOW, true, false, false, false).is_none());
+
+        let s_on = settings_for_guards(false, true, false, false, false);
+        let outcome =
+            evaluate_guards(&s_on, INSIDE_WORK_WINDOW, true, false, false, false).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Dnd);
+        assert_eq!(outcome.log_as, Some(GuardReason::Dnd));
+
+        // Setting on but state false → no suppression.
+        assert!(evaluate_guards(&s_on, INSIDE_WORK_WINDOW, false, false, false, false).is_none());
+    }
+
+    #[test]
+    fn evaluate_guards_camera_logs_camera_reason() {
+        let s = settings_for_guards(false, false, true, false, false);
+        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, false, false).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Camera);
+        assert_eq!(outcome.log_as, Some(GuardReason::Camera));
+    }
+
+    #[test]
+    fn evaluate_guards_video_logs_video_reason() {
+        let s = settings_for_guards(false, false, false, true, false);
+        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, false).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Video);
+        assert_eq!(outcome.log_as, Some(GuardReason::Video));
+    }
+
+    #[test]
+    fn evaluate_guards_app_pause_requires_nonempty_target_list() {
+        // app_pause_enabled but the list is empty → not a valid match,
+        // so the guard must not fire even when app_pause_active is true.
+        let mut s = settings_for_guards(false, false, false, false, true);
+        s.app_pause_list.clear();
+        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true).is_none());
+
+        let with_target = settings_for_guards(false, false, false, false, true);
+        let outcome =
+            evaluate_guards(&with_target, INSIDE_WORK_WINDOW, false, false, false, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::AppPause);
+        assert_eq!(outcome.log_as, Some(GuardReason::AppPause));
+    }
+
+    #[test]
+    fn evaluate_guards_work_window_outranks_every_other_guard() {
+        // First-match-wins precedence: even with every live signal
+        // firing simultaneously, work_window short-circuits the rest
+        // (and stays silent, per its no-log policy).
+        let s = settings_for_guards(true, true, true, true, true);
+        let outcome = evaluate_guards(&s, OUTSIDE_WORK_WINDOW, true, true, true, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::WorkWindow);
+        assert!(outcome.log_as.is_none());
+    }
+
+    #[test]
+    fn evaluate_guards_dnd_outranks_camera_video_app_pause() {
+        let s = settings_for_guards(true, true, true, true, true);
+        // Inside the work window, so work_window does NOT fire.
+        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Dnd);
+    }
+
+    #[test]
+    fn evaluate_guards_camera_outranks_video_and_app_pause() {
+        let s = settings_for_guards(true, true, true, true, true);
+        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, true, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Camera);
+    }
+
+    #[test]
+    fn evaluate_guards_video_outranks_app_pause() {
+        let s = settings_for_guards(true, true, true, true, true);
+        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Video);
+    }
+
+    #[test]
+    fn evaluate_guards_app_pause_only_when_higher_guards_quiet() {
+        let s = settings_for_guards(true, true, true, true, true);
+        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::AppPause);
     }
 }
