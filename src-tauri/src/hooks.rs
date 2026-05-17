@@ -529,6 +529,7 @@ mod tests {
                printf 'ENTRACTE_KIND=%s\\n' \"$ENTRACTE_KIND\"\n\
                printf 'ENTRACTE_DURATION_SECS=%s\\n' \"$ENTRACTE_DURATION_SECS\"\n\
                printf 'ENTRACTE_OUTCOME=%s\\n' \"$ENTRACTE_OUTCOME\"\n\
+               printf 'ENTRACTE_DONE=1\\n'\n\
              }} > '{}'\n",
             output.display()
         );
@@ -552,7 +553,10 @@ mod tests {
         let script = dir.join(format!("record-env-{stem}.bat"));
         // Quoting: `>` redirects, double-percent escapes the env-var sigil
         // for batch. The script writes one KEY=VALUE per line so the test
-        // can grep for substrings without parsing.
+        // can grep for substrings without parsing. The trailing
+        // `ENTRACTE_DONE=1` is the sentinel `wait_for_file` polls for —
+        // cmd.exe's redirect can flush mid-block on slow runners, so
+        // returning on first non-empty read produced partial contents.
         let body = format!(
             "@echo off\r\n\
              (\r\n\
@@ -560,6 +564,7 @@ mod tests {
                echo ENTRACTE_KIND=%ENTRACTE_KIND%\r\n\
                echo ENTRACTE_DURATION_SECS=%ENTRACTE_DURATION_SECS%\r\n\
                echo ENTRACTE_OUTCOME=%ENTRACTE_OUTCOME%\r\n\
+               echo ENTRACTE_DONE=1\r\n\
              ) > \"{}\"\r\n",
             output.display()
         );
@@ -583,10 +588,14 @@ mod tests {
     }
 
     fn wait_for_file(path: &std::path::Path) -> String {
+        // Wait for the recorder's `ENTRACTE_DONE=1` sentinel rather than
+        // just non-empty contents. On Windows, cmd.exe's `( ... ) > file`
+        // can flush mid-block, so a non-empty read can return only the
+        // first line and make later substring assertions fail.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             if let Ok(s) = std::fs::read_to_string(path) {
-                if !s.is_empty() {
+                if s.contains("ENTRACTE_DONE=1") {
                     return s;
                 }
             }
