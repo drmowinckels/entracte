@@ -87,7 +87,8 @@ CI runs all of these plus an `advisory` job (cargo-deny, lychee, npm audit) that
 - Branch off `main` for every change. PRs land via **Squash & merge**.
 - Feature branches use prefixes: `feat/...`, `fix/...`, `refactor/...`, `docs/...`, `chore/...`.
 - Keep PRs focused — one logical change per PR. Multiple unrelated cleanups in one PR are harder to review and harder to revert.
-- In the PR description, include what you changed, what you ran to verify it, and any platforms you couldn't test on.
+- **Tests are required for any PR that changes runtime behaviour.** Either add a test that fails before your change and passes after, or — if the change is genuinely untestable in isolation — explain why in the PR body. Pure-docs and pure-chore PRs are exempt.
+- **Use verification steps, not a "Test plan" header.** Record what you actually ran (`cargo test --lib`, `npm run audit:a11y`, a manual walkthrough), what changed, and any platforms you couldn't test on. If the reviewer needs to do something to validate the PR, name it directly — don't dress it up as an unchecked checklist for them to tick through.
 - Don't force-push to `main`. Force-pushing to your own feature branch during review is fine.
 
 ## Working with AI assistants
