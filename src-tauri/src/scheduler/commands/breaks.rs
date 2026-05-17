@@ -1,0 +1,972 @@
+use std::time::{Duration, Instant};
+
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::hooks::{self, HookContext, HookEvent};
+use crate::stats::{EventPayload, Outcome, SkipSource};
+
+use super::super::overlay::{deliver_break, fire_break};
+use super::super::pause::{persist_pause, PauseInfo, PauseState};
+use super::super::settings::{
+    delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode, Settings,
+};
+use super::super::timers::{clear_last_break, postpone_counter, reset_postpone_counter};
+use super::super::types::{BreakKind, LastBreakInfo, PostponeState};
+use super::super::Scheduler;
+
+/// Pause the scheduler. `duration_secs = None` pauses indefinitely;
+/// `Some(n)` pauses for `n` seconds. Fires `pause_start` hooks and
+/// emits the `pause:changed` event. Idempotent — a pause-while-paused
+/// updates the deadline but doesn't re-fire hooks.
+#[tauri::command]
+pub async fn pause(
+    app: AppHandle,
+    scheduler: tauri::State<'_, Scheduler>,
+    duration_secs: Option<u64>,
+) -> Result<(), String> {
+    pause_impl(scheduler.inner(), duration_secs).await;
+    let _ = app.emit("pause:changed", true);
+    Ok(())
+}
+
+/// Resume the scheduler from any pause state. Fires `pause_end` hooks
+/// and emits `pause:changed`. No-op if already running.
+#[tauri::command]
+pub async fn resume(app: AppHandle, scheduler: tauri::State<'_, Scheduler>) -> Result<(), String> {
+    resume_impl(scheduler.inner()).await;
+    let _ = app.emit("pause:changed", false);
+    Ok(())
+}
+
+/// Pause-state mutation core: updates the in-memory state, persists,
+/// logs the event, and fires `pause_start` hooks on a true running→paused
+/// edge. AppHandle-free so unit tests can drive it.
+pub async fn pause_impl(scheduler: &Scheduler, duration_secs: Option<u64>) {
+    let until = duration_secs.map(|s| Instant::now() + Duration::from_secs(s));
+    let new_state = PauseState::PausedUntil(until);
+    let was_running;
+    {
+        let mut guard = scheduler.pause_state.lock().await;
+        was_running = matches!(*guard, PauseState::Running);
+        *guard = new_state.clone();
+    }
+    persist_pause(&scheduler.pause_path, &new_state);
+    if was_running {
+        scheduler
+            .logger
+            .log(EventPayload::PauseStart { duration_secs });
+        let settings_snapshot = scheduler.settings.lock().await.clone();
+        hooks::run_hooks(
+            &settings_snapshot,
+            HookEvent::PauseStart,
+            HookContext::empty(),
+        );
+    }
+}
+
+/// Resume-state mutation core: clears the pause, persists, logs, and
+/// fires `pause_end` hooks on a true paused→running edge.
+pub async fn resume_impl(scheduler: &Scheduler) {
+    let was_paused;
+    {
+        let mut guard = scheduler.pause_state.lock().await;
+        was_paused = !matches!(*guard, PauseState::Running);
+        *guard = PauseState::Running;
+    }
+    persist_pause(&scheduler.pause_path, &PauseState::Running);
+    if was_paused {
+        scheduler.logger.log(EventPayload::PauseEnd);
+        let settings_snapshot = scheduler.settings.lock().await.clone();
+        hooks::run_hooks(
+            &settings_snapshot,
+            HookEvent::PauseEnd,
+            HookContext::empty(),
+        );
+    }
+}
+
+/// Current pause status for the renderer. While paused with a
+/// deadline, `remaining_secs` is the live countdown; while paused
+/// indefinitely it's `None`.
+#[tauri::command]
+pub async fn get_pause_info(scheduler: tauri::State<'_, Scheduler>) -> Result<PauseInfo, String> {
+    let state = scheduler.pause_state.lock().await;
+    Ok(match &*state {
+        PauseState::Running => PauseInfo {
+            paused: false,
+            remaining_secs: None,
+        },
+        PauseState::PausedUntil(None) => PauseInfo {
+            paused: true,
+            remaining_secs: None,
+        },
+        PauseState::PausedUntil(Some(t)) => {
+            let now = Instant::now();
+            let remaining = if *t > now { (*t - now).as_secs() } else { 0 };
+            PauseInfo {
+                paused: true,
+                remaining_secs: Some(remaining),
+            }
+        }
+    })
+}
+
+/// Mirrors the enforceability rule used by the scheduler's normal
+/// break-firing paths in `run_loop.rs`: micro/long obey their own
+/// `*_enforceable` flag OR `strict_mode`, while sleep is always
+/// enforceable.
+pub(crate) fn test_break_enforceable(kind: BreakKind, s: &Settings) -> bool {
+    match kind {
+        BreakKind::Micro => s.micro_enforceable || s.strict_mode,
+        BreakKind::Long => s.long_enforceable || s.strict_mode,
+        BreakKind::Sleep => true,
+    }
+}
+
+/// Fire a one-off break of the given kind right now. Shared by the
+/// renderer-facing `trigger_test_break` and the CLI's `trigger`
+/// command. Bypasses suppression checks (the user asked explicitly).
+pub async fn trigger_break_from_cli(
+    app: &AppHandle,
+    scheduler: &Scheduler,
+    kind: BreakKind,
+    duration_secs: u64,
+) {
+    let s = scheduler.settings.lock().await.clone();
+    let hints = match kind {
+        BreakKind::Micro => effective_micro_hints(&s),
+        BreakKind::Long => effective_long_hints(&s),
+        BreakKind::Sleep => s.sleep_hints.clone(),
+    };
+    let manual_finish = match kind {
+        BreakKind::Micro => s.micro_manual_finish,
+        BreakKind::Long => s.long_manual_finish,
+        BreakKind::Sleep => false,
+    };
+    let intensity = scheduler.stats.lock().await.intensity();
+    let delivery = delivery_for(kind, &s);
+    let enforceable = test_break_enforceable(kind, &s);
+    deliver_break(
+        app,
+        &scheduler.current_break,
+        delivery,
+        kind,
+        duration_secs,
+        enforceable,
+        s.monitor_placement,
+        manual_finish,
+        s.postpone_enabled && !s.strict_mode,
+        hints,
+        s.hint_rotate_seconds,
+        if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
+    );
+    hooks::run_hooks(
+        &s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(kind, duration_secs),
+    );
+}
+
+/// Renderer hook to fire a break immediately — used by the "Test now"
+/// buttons on the Schedule tab.
+#[tauri::command]
+pub async fn trigger_test_break(
+    app: AppHandle,
+    scheduler: tauri::State<'_, Scheduler>,
+    kind: BreakKind,
+    duration_secs: u64,
+) -> Result<(), String> {
+    trigger_break_from_cli(&app, &scheduler, kind, duration_secs).await;
+    Ok(())
+}
+
+/// Conclude the currently-active break. `reason` distinguishes
+/// `"completed"` (taken in full), `"dismissed"` (user closed it
+/// early), and `"postponed"` (countdown wasn't honoured). Updates the
+/// session counters, fires `break_end` hooks, hides every overlay
+/// window, and emits `break:end`.
+#[tauri::command]
+pub async fn end_break(
+    app: AppHandle,
+    scheduler: tauri::State<'_, Scheduler>,
+    reason: Option<String>,
+) -> Result<(), String> {
+    let reason = reason.unwrap_or_else(|| "completed".to_string());
+    {
+        let mut stats = scheduler.stats.lock().await;
+        match reason.as_str() {
+            "completed" => stats.taken = stats.taken.saturating_add(1),
+            "dismissed" => stats.skipped = stats.skipped.saturating_add(1),
+            "postponed" => stats.postponed = stats.postponed.saturating_add(1),
+            _ => {}
+        }
+    }
+
+    let active_kind = {
+        let mut t = scheduler.timers.lock().await;
+        t.active_break.take()
+    };
+    if let Some(kind) = active_kind {
+        if reason == "completed" {
+            let mut t = scheduler.timers.lock().await;
+            reset_postpone_counter(&mut t, kind);
+            let cleared = clear_last_break(&mut t);
+            drop(t);
+            if cleared {
+                let _ = app.emit("last_break:changed", LastBreakInfo { kind: None });
+            }
+        }
+        let outcome = match reason.as_str() {
+            "dismissed" => Some(Outcome::Dismissed),
+            "completed" => Some(Outcome::Completed),
+            _ => None,
+        };
+        if let Some(o) = outcome {
+            scheduler
+                .logger
+                .log(EventPayload::BreakEnd { kind, outcome: o });
+        }
+        if matches!(reason.as_str(), "completed" | "dismissed") {
+            let settings_snapshot = scheduler.settings.lock().await.clone();
+            hooks::run_hooks(
+                &settings_snapshot,
+                HookEvent::BreakEnd,
+                HookContext::with_kind_outcome(kind, reason.clone()),
+            );
+        }
+    }
+
+    if let Ok(mut slot) = scheduler.current_break.lock() {
+        *slot = None;
+    }
+    for (label, window) in app.webview_windows() {
+        if label.starts_with("overlay-") {
+            let _ = window.hide();
+        }
+    }
+    let _ = app.emit("break:end", ());
+    let stats = scheduler.stats.lock().await.clone();
+    let _ = app.emit("stats:changed", &stats);
+    Ok(())
+}
+
+/// Push the active break out by the configured postpone interval
+/// (with optional escalation by previous postpone count). Errors when
+/// `strict_mode` / `postpone_enabled = false` block postpone or when
+/// the per-break postpone cap is reached. Side-effects: bumps the
+/// per-kind postpone counter, fires `break_postponed` hooks, hides
+/// overlays.
+#[tauri::command]
+pub async fn postpone_break(
+    app: AppHandle,
+    scheduler: tauri::State<'_, Scheduler>,
+    kind: BreakKind,
+) -> Result<(), String> {
+    postpone_break_impl(scheduler.inner(), kind).await?;
+    for (label, window) in app.webview_windows() {
+        if label.starts_with("overlay-") {
+            let _ = window.hide();
+        }
+    }
+    let _ = app.emit("break:end", ());
+    let _ = app.emit("last_break:changed", LastBreakInfo { kind: Some(kind) });
+    Ok(())
+}
+
+/// Returned by `postpone_break_impl` so test callers can see what the
+/// command would have emitted. The shim discards this in production.
+#[derive(Debug, Clone, Copy)]
+pub struct PostponeOutcome {
+    #[allow(dead_code)]
+    pub postpone_secs: u64,
+}
+
+/// Postpone-state mutation core: validates the request, updates timers,
+/// bumps counters, logs, fires hooks. AppHandle-free; the calling
+/// `#[tauri::command]` wrapper handles overlay hides + IPC emits.
+pub async fn postpone_break_impl(
+    scheduler: &Scheduler,
+    kind: BreakKind,
+) -> Result<PostponeOutcome, String> {
+    let s = scheduler.settings.lock().await.clone();
+    if s.strict_mode || !s.postpone_enabled {
+        return Err("postpone disabled".to_string());
+    }
+    let counter_before = {
+        let t = scheduler.timers.lock().await;
+        postpone_counter(&t, kind)
+    };
+    if s.postpone_escalation_enabled
+        && matches!(kind, BreakKind::Micro | BreakKind::Long)
+        && counter_before >= s.postpone_max_count
+    {
+        return Err("postpone exhausted".to_string());
+    }
+    let postpone_secs = effective_postpone_secs(&s, counter_before, kind);
+    {
+        let mut t = scheduler.timers.lock().await;
+        let now = Instant::now();
+        match kind {
+            BreakKind::Micro => {
+                let target = Duration::from_secs(s.micro_interval_secs)
+                    .saturating_sub(Duration::from_secs(postpone_secs));
+                t.last_micro = now.checked_sub(target).unwrap_or(now);
+                t.micro_warned = false;
+                t.micro_deferred_since = None;
+                t.micro_postpone_count = t.micro_postpone_count.saturating_add(1);
+            }
+            BreakKind::Long => {
+                let target = Duration::from_secs(s.long_interval_secs)
+                    .saturating_sub(Duration::from_secs(postpone_secs));
+                t.last_long = now.checked_sub(target).unwrap_or(now);
+                t.long_warned = false;
+                t.long_deferred_since = None;
+                let micro_target = Duration::from_secs(s.micro_interval_secs)
+                    .saturating_sub(Duration::from_secs(postpone_secs));
+                t.last_micro = now.checked_sub(micro_target).unwrap_or(now);
+                t.micro_warned = false;
+                t.micro_deferred_since = None;
+                t.long_postpone_count = t.long_postpone_count.saturating_add(1);
+            }
+            BreakKind::Sleep => {
+                t.last_sleep = Some(now);
+            }
+        }
+        t.last_skipped_or_postponed = Some((kind, now));
+    }
+    {
+        let mut stats = scheduler.stats.lock().await;
+        stats.postponed = stats.postponed.saturating_add(1);
+    }
+    let minutes_logged = (postpone_secs / 60) as u32;
+    scheduler.logger.log(EventPayload::BreakPostponed {
+        kind,
+        minutes: minutes_logged.max(1),
+    });
+    hooks::run_hooks(&s, HookEvent::BreakPostponed, HookContext::with_kind(kind));
+    {
+        let mut t = scheduler.timers.lock().await;
+        t.active_break = None;
+    }
+    if let Ok(mut slot) = scheduler.current_break.lock() {
+        *slot = None;
+    }
+    Ok(PostponeOutcome { postpone_secs })
+}
+
+fn effective_postpone_secs(s: &Settings, counter: u32, kind: BreakKind) -> u64 {
+    let base = (s.postpone_minutes as u64) * 60;
+    if !s.postpone_escalation_enabled || matches!(kind, BreakKind::Sleep) {
+        return base;
+    }
+    let step = s
+        .postpone_escalation_step_secs
+        .saturating_mul(counter as u64);
+    base.saturating_add(step)
+}
+
+/// Reset the next-break timer for `kind` so the user "skips" the
+/// upcoming break. Shared by the renderer command and the CLI's
+/// `skip` subcommand. Errors when `strict_mode` is on.
+pub async fn skip_next_from_cli(
+    app: &AppHandle,
+    scheduler: &Scheduler,
+    kind: BreakKind,
+) -> Result<(), String> {
+    skip_next_break_impl(scheduler, kind).await?;
+    let stats = scheduler.stats.lock().await.clone();
+    let _ = app.emit("stats:changed", &stats);
+    let _ = app.emit("last_break:changed", LastBreakInfo { kind: Some(kind) });
+    Ok(())
+}
+
+/// Skip-next mutation core. Resets the per-kind interval anchor to
+/// `Instant::now()`, clears warn/deferred flags, zeroes the postpone
+/// counter, bumps the session skip total, logs, and fires hooks.
+/// AppHandle-free; the wrapper handles IPC emits.
+pub async fn skip_next_break_impl(scheduler: &Scheduler, kind: BreakKind) -> Result<(), String> {
+    let s = scheduler.settings.lock().await.clone();
+    if s.strict_mode {
+        return Err("strict mode active".to_string());
+    }
+    let now = Instant::now();
+    {
+        let mut t = scheduler.timers.lock().await;
+        match kind {
+            BreakKind::Micro => {
+                t.last_micro = now;
+                t.micro_warned = false;
+                t.micro_deferred_since = None;
+                t.micro_postpone_count = 0;
+            }
+            BreakKind::Long => {
+                t.last_long = now;
+                t.last_micro = now;
+                t.long_warned = false;
+                t.micro_warned = false;
+                t.long_deferred_since = None;
+                t.micro_deferred_since = None;
+                t.long_postpone_count = 0;
+            }
+            BreakKind::Sleep => {
+                t.last_sleep = Some(now);
+            }
+        }
+        t.last_skipped_or_postponed = Some((kind, now));
+    }
+    {
+        let mut stats = scheduler.stats.lock().await;
+        stats.skipped = stats.skipped.saturating_add(1);
+    }
+    scheduler.logger.log(EventPayload::BreakSkipped {
+        kind,
+        source: SkipSource::User,
+    });
+    hooks::run_hooks(&s, HookEvent::BreakSkipped, HookContext::with_kind(kind));
+    Ok(())
+}
+
+/// Renderer-facing skip. Thin wrapper over `skip_next_from_cli`.
+#[tauri::command]
+pub async fn skip_next_break(
+    app: AppHandle,
+    scheduler: tauri::State<'_, Scheduler>,
+    kind: BreakKind,
+) -> Result<(), String> {
+    skip_next_from_cli(&app, &scheduler, kind).await
+}
+
+/// Per-kind postpone budget snapshot for the overlay button label
+/// (e.g. "Postpone (2 of 3)").
+#[tauri::command]
+pub async fn get_postpone_state(
+    scheduler: tauri::State<'_, Scheduler>,
+    kind: BreakKind,
+) -> Result<PostponeState, String> {
+    Ok(compute_postpone_state(&scheduler.settings, &scheduler.timers, kind).await)
+}
+
+/// Lock-then-snapshot helper: settings first (cloned and released),
+/// then timers (read and released). Never holds two scheduler mutex
+/// guards across an `.await`, so two concurrent callers can't deadlock
+/// even if the rest of the codebase locks them in the opposite order.
+async fn compute_postpone_state(
+    settings: &tokio::sync::Mutex<Settings>,
+    timers: &tokio::sync::Mutex<super::super::timers::BreakTimers>,
+    kind: BreakKind,
+) -> PostponeState {
+    // Drop each guard before acquiring the next so we never hold
+    // `settings` across `timers.lock().await`. Two concurrent callers
+    // taking the locks in opposite orders would otherwise be a deadlock
+    // hazard. Reading them sequentially is fine: the postpone state is
+    // a renderer convenience; tiny window between reads can't cross a
+    // user-visible boundary (postpone count is bumped from the same
+    // task that fires the overlay button).
+    let s = settings.lock().await.clone();
+    let count = {
+        let t = timers.lock().await;
+        postpone_counter(&t, kind)
+    };
+    let max = if s.postpone_escalation_enabled && matches!(kind, BreakKind::Micro | BreakKind::Long)
+    {
+        s.postpone_max_count
+    } else {
+        u32::MAX
+    };
+    let remaining = max.saturating_sub(count);
+    PostponeState {
+        count,
+        max,
+        remaining,
+    }
+}
+
+/// The most recently skipped or postponed break — drives the tray's
+/// "Resume last skipped break" menu item.
+#[tauri::command]
+pub async fn get_last_break_info(
+    scheduler: tauri::State<'_, Scheduler>,
+) -> Result<LastBreakInfo, String> {
+    let t = scheduler.timers.lock().await;
+    Ok(LastBreakInfo {
+        kind: t.last_skipped_or_postponed.map(|(k, _)| k),
+    })
+}
+
+/// Re-fire the most recently skipped/postponed break with the current
+/// profile's full settings (duration, hints, enforceability). Shared
+/// by the renderer command and the tray menu handler. Errors with
+/// `"no break to resume"` when the slot is empty.
+pub async fn resume_last_break_impl(app: &AppHandle, scheduler: &Scheduler) -> Result<(), String> {
+    let stored = {
+        let mut t = scheduler.timers.lock().await;
+        t.last_skipped_or_postponed.take()
+    };
+    let Some((kind, _)) = stored else {
+        return Err("no break to resume".to_string());
+    };
+    let s = scheduler.settings.lock().await.clone();
+    let (duration_secs, enforceable, manual_finish, hints) = match kind {
+        BreakKind::Micro => (
+            s.micro_duration_secs,
+            s.micro_enforceable || s.strict_mode,
+            s.micro_manual_finish,
+            effective_micro_hints(&s),
+        ),
+        BreakKind::Long => (
+            s.long_duration_secs,
+            s.long_enforceable || s.strict_mode,
+            s.long_manual_finish,
+            effective_long_hints(&s),
+        ),
+        BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
+    };
+    let intensity = scheduler.stats.lock().await.intensity();
+    fire_break(
+        app,
+        &scheduler.current_break,
+        kind,
+        duration_secs,
+        enforceable,
+        s.monitor_placement,
+        is_windowed_mode(kind, &s),
+        manual_finish,
+        s.postpone_enabled && !s.strict_mode,
+        hints,
+        s.hint_rotate_seconds,
+        if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
+    );
+    scheduler.logger.log(EventPayload::BreakResumed { kind });
+    hooks::run_hooks(
+        &s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(kind, duration_secs),
+    );
+    {
+        let mut t = scheduler.timers.lock().await;
+        let now = Instant::now();
+        match kind {
+            BreakKind::Micro => {
+                t.last_micro = now;
+                t.micro_warned = false;
+            }
+            BreakKind::Long => {
+                t.last_long = now;
+                t.last_micro = now;
+                t.long_warned = false;
+                t.micro_warned = false;
+            }
+            BreakKind::Sleep => {
+                t.last_sleep = Some(now);
+            }
+        }
+        t.active_break = Some(kind);
+    }
+    let _ = app.emit("last_break:changed", LastBreakInfo { kind: None });
+    Ok(())
+}
+
+/// Renderer-facing resume. Thin wrapper over `resume_last_break_impl`.
+#[tauri::command]
+pub async fn resume_last_break(
+    app: AppHandle,
+    scheduler: tauri::State<'_, Scheduler>,
+) -> Result<(), String> {
+    resume_last_break_impl(&app, scheduler.inner()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::screen_time::ScreenTimeState;
+    use super::super::super::timers::BreakTimers;
+    use super::super::super::BreakStats;
+    use super::*;
+    use crate::config::{Profile, DEFAULT_PROFILE_NAME};
+    use crate::stats::Logger;
+    use crate::test_support::{temp_dir, TempDir};
+    use std::sync::atomic::{AtomicBool, AtomicU8};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn settings_with_postpone(
+        escalation: bool,
+        minutes: u32,
+        step: u64,
+        max_count: u32,
+    ) -> Settings {
+        Settings {
+            postpone_escalation_enabled: escalation,
+            postpone_minutes: minutes,
+            postpone_escalation_step_secs: step,
+            postpone_max_count: max_count,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn effective_postpone_secs_no_escalation_when_disabled() {
+        let s = settings_with_postpone(false, 5, 120, 3);
+        assert_eq!(effective_postpone_secs(&s, 0, BreakKind::Micro), 300);
+        assert_eq!(effective_postpone_secs(&s, 3, BreakKind::Micro), 300);
+    }
+
+    #[test]
+    fn effective_postpone_secs_grows_with_counter() {
+        let s = settings_with_postpone(true, 5, 120, 3);
+        assert_eq!(effective_postpone_secs(&s, 0, BreakKind::Micro), 300);
+        assert_eq!(effective_postpone_secs(&s, 1, BreakKind::Micro), 420);
+        assert_eq!(effective_postpone_secs(&s, 2, BreakKind::Micro), 540);
+        assert_eq!(effective_postpone_secs(&s, 1, BreakKind::Long), 420);
+    }
+
+    #[test]
+    fn test_break_enforceable_micro_off_when_no_strict_no_micro_enforceable() {
+        let s = Settings {
+            strict_mode: false,
+            micro_enforceable: false,
+            ..Settings::default()
+        };
+        assert!(!test_break_enforceable(BreakKind::Micro, &s));
+    }
+
+    #[test]
+    fn test_break_enforceable_micro_true_when_micro_enforceable() {
+        let s = Settings {
+            strict_mode: false,
+            micro_enforceable: true,
+            ..Settings::default()
+        };
+        assert!(test_break_enforceable(BreakKind::Micro, &s));
+    }
+
+    #[test]
+    fn test_break_enforceable_micro_true_when_strict_mode() {
+        let s = Settings {
+            strict_mode: true,
+            micro_enforceable: false,
+            ..Settings::default()
+        };
+        assert!(test_break_enforceable(BreakKind::Micro, &s));
+    }
+
+    #[test]
+    fn test_break_enforceable_long_mirrors_micro() {
+        let off = Settings {
+            strict_mode: false,
+            long_enforceable: false,
+            ..Settings::default()
+        };
+        assert!(!test_break_enforceable(BreakKind::Long, &off));
+
+        let opt_in = Settings {
+            strict_mode: false,
+            long_enforceable: true,
+            ..Settings::default()
+        };
+        assert!(test_break_enforceable(BreakKind::Long, &opt_in));
+
+        let strict = Settings {
+            strict_mode: true,
+            long_enforceable: false,
+            ..Settings::default()
+        };
+        assert!(test_break_enforceable(BreakKind::Long, &strict));
+    }
+
+    #[test]
+    fn test_break_enforceable_sleep_always_true() {
+        let lax = Settings {
+            strict_mode: false,
+            micro_enforceable: false,
+            long_enforceable: false,
+            ..Settings::default()
+        };
+        assert!(test_break_enforceable(BreakKind::Sleep, &lax));
+
+        let strict = Settings {
+            strict_mode: true,
+            ..Settings::default()
+        };
+        assert!(test_break_enforceable(BreakKind::Sleep, &strict));
+    }
+
+    #[test]
+    fn effective_postpone_secs_sleep_never_escalates() {
+        let s = settings_with_postpone(true, 5, 120, 3);
+        assert_eq!(effective_postpone_secs(&s, 0, BreakKind::Sleep), 300);
+        assert_eq!(effective_postpone_secs(&s, 3, BreakKind::Sleep), 300);
+    }
+
+    // Fix #3: `get_postpone_state` used to hold the `settings` guard
+    // across `timers.lock().await`. Two concurrent callers couldn't
+    // *actually* deadlock here (every other path takes settings first),
+    // but the doc convention says "no nested holds across await" — so
+    // the helper now drops settings first. These tests confirm both
+    // (a) no deadlock under concurrent calls and (b) consistent
+    // postpone-state values regardless of interleave.
+    use tokio::time::{timeout, Duration as TokioDuration};
+
+    fn timers_with_postpone(micro: u32, long: u32) -> BreakTimers {
+        let mut t = BreakTimers::new();
+        t.micro_postpone_count = micro;
+        t.long_postpone_count = long;
+        t
+    }
+
+    #[tokio::test]
+    async fn compute_postpone_state_does_not_deadlock_concurrent_callers() {
+        let settings = Arc::new(Mutex::new(settings_with_postpone(true, 5, 120, 3)));
+        let timers = Arc::new(Mutex::new(timers_with_postpone(2, 1)));
+
+        let mut handles = Vec::new();
+        for kind in [BreakKind::Micro, BreakKind::Long] {
+            for _ in 0..16 {
+                let s = settings.clone();
+                let t = timers.clone();
+                handles.push(tokio::spawn(async move {
+                    compute_postpone_state(&s, &t, kind).await
+                }));
+            }
+        }
+
+        // Bound the test so a real deadlock fails loudly instead of
+        // hanging the suite.
+        for h in handles {
+            let state = timeout(TokioDuration::from_secs(5), h)
+                .await
+                .expect("compute_postpone_state should not deadlock under concurrent calls")
+                .unwrap();
+            // Either kind's snapshot must be internally consistent.
+            assert_eq!(state.remaining, state.max.saturating_sub(state.count));
+        }
+    }
+
+    #[tokio::test]
+    async fn compute_postpone_state_returns_expected_snapshot() {
+        let settings = Arc::new(Mutex::new(settings_with_postpone(true, 5, 120, 3)));
+        let timers = Arc::new(Mutex::new(timers_with_postpone(2, 1)));
+
+        let micro = compute_postpone_state(&settings, &timers, BreakKind::Micro).await;
+        assert_eq!(micro.count, 2);
+        assert_eq!(micro.max, 3);
+        assert_eq!(micro.remaining, 1);
+
+        let long = compute_postpone_state(&settings, &timers, BreakKind::Long).await;
+        assert_eq!(long.count, 1);
+        assert_eq!(long.max, 3);
+        assert_eq!(long.remaining, 2);
+
+        // With escalation disabled the cap drops to u32::MAX.
+        let settings = Arc::new(Mutex::new(settings_with_postpone(false, 5, 120, 3)));
+        let micro_no_cap = compute_postpone_state(&settings, &timers, BreakKind::Micro).await;
+        assert_eq!(micro_no_cap.max, u32::MAX);
+        assert_eq!(micro_no_cap.remaining, u32::MAX - 2);
+
+        // Sleep is always uncapped because sleep prompts don't escalate.
+        let sleep = compute_postpone_state(&settings, &timers, BreakKind::Sleep).await;
+        assert_eq!(sleep.count, 0);
+        assert_eq!(sleep.max, u32::MAX);
+    }
+
+    /// Build a Scheduler instance without spinning up the
+    /// camera/video/run-loop side threads. The logger thread is still
+    /// started (it's how `EventPayload`s reach disk) but it writes into
+    /// the TempDir held by the caller, which is dropped on test exit.
+    fn build_test_scheduler(settings: Settings) -> (TempDir, Scheduler) {
+        let dir = temp_dir();
+        let config_path = dir.path().join("settings.json");
+        let pause_path = dir.path().join("pause.json");
+        let events_path = dir.path().join("events.jsonl");
+        let screen_time_path = dir.path().join("screen_time.json");
+        let logger = Logger::spawn(events_path.clone());
+        let sched = Scheduler {
+            settings: Arc::new(Mutex::new(settings)),
+            pause_state: Arc::new(Mutex::new(PauseState::Running)),
+            camera_active: Arc::new(AtomicBool::new(false)),
+            video_active: Arc::new(AtomicBool::new(false)),
+            auto_suppress_reason: Arc::new(AtomicU8::new(0)),
+            config_path,
+            pause_path,
+            events_path,
+            screen_time_path,
+            timers: Arc::new(Mutex::new(BreakTimers::new())),
+            stats: Arc::new(Mutex::new(BreakStats::default())),
+            screen_time: Arc::new(Mutex::new(ScreenTimeState::from_snapshot(
+                crate::screen_time_store::ScreenTimeSnapshot::default(),
+                "1970-01-01",
+            ))),
+            current_break: Arc::new(std::sync::Mutex::new(None)),
+            logger,
+            profiles: Arc::new(Mutex::new(vec![Profile {
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                settings: Settings::default(),
+            }])),
+            active_profile_name: Arc::new(Mutex::new(DEFAULT_PROFILE_NAME.to_string())),
+            hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+        };
+        (dir, sched)
+    }
+
+    #[tokio::test]
+    async fn pause_some_secs_transitions_running_to_timed_pause() {
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        pause_impl(&sched, Some(900)).await;
+        let state = sched.pause_state.lock().await.clone();
+        match state {
+            PauseState::PausedUntil(Some(deadline)) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(remaining.as_secs() >= 895 && remaining.as_secs() <= 900);
+            }
+            other => panic!("expected PausedUntil(Some), got {other:?}"),
+        }
+        // Persistence: the pause file on disk should report paused.
+        let snap = crate::pause_store::load(&sched.pause_path);
+        assert!(snap.paused);
+        assert!(snap.until_epoch_secs.is_some());
+    }
+
+    #[tokio::test]
+    async fn pause_none_transitions_running_to_indefinite() {
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        pause_impl(&sched, None).await;
+        assert!(matches!(
+            *sched.pause_state.lock().await,
+            PauseState::PausedUntil(None)
+        ));
+        let snap = crate::pause_store::load(&sched.pause_path);
+        assert!(snap.paused);
+        assert!(snap.until_epoch_secs.is_none());
+    }
+
+    #[tokio::test]
+    async fn resume_from_paused_returns_to_running() {
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        pause_impl(&sched, Some(60)).await;
+        resume_impl(&sched).await;
+        assert!(matches!(
+            *sched.pause_state.lock().await,
+            PauseState::Running
+        ));
+        let snap = crate::pause_store::load(&sched.pause_path);
+        assert!(!snap.paused);
+    }
+
+    #[tokio::test]
+    async fn postpone_break_bumps_counter_and_returns_delay() {
+        let settings = Settings {
+            postpone_enabled: true,
+            postpone_escalation_enabled: true,
+            postpone_minutes: 5,
+            postpone_escalation_step_secs: 120,
+            postpone_max_count: 3,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(settings);
+        let out = postpone_break_impl(&sched, BreakKind::Micro).await.unwrap();
+        assert_eq!(out.postpone_secs, 300);
+        let t = sched.timers.lock().await;
+        assert_eq!(t.micro_postpone_count, 1);
+        assert!(matches!(
+            t.last_skipped_or_postponed,
+            Some((BreakKind::Micro, _))
+        ));
+        drop(t);
+        // Second postpone escalates per `postpone_escalation_step_secs`.
+        let out2 = postpone_break_impl(&sched, BreakKind::Micro).await.unwrap();
+        assert_eq!(out2.postpone_secs, 420);
+        assert_eq!(sched.timers.lock().await.micro_postpone_count, 2);
+    }
+
+    #[tokio::test]
+    async fn postpone_break_errors_when_max_reached() {
+        let settings = Settings {
+            postpone_enabled: true,
+            postpone_escalation_enabled: true,
+            postpone_minutes: 5,
+            postpone_escalation_step_secs: 120,
+            postpone_max_count: 2,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(settings);
+        postpone_break_impl(&sched, BreakKind::Long).await.unwrap();
+        postpone_break_impl(&sched, BreakKind::Long).await.unwrap();
+        let err = postpone_break_impl(&sched, BreakKind::Long)
+            .await
+            .expect_err("third postpone should hit the cap");
+        assert_eq!(err, "postpone exhausted");
+    }
+
+    #[tokio::test]
+    async fn postpone_break_errors_when_strict_mode_or_disabled() {
+        let strict = Settings {
+            strict_mode: true,
+            postpone_enabled: true,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(strict);
+        let err = postpone_break_impl(&sched, BreakKind::Micro)
+            .await
+            .expect_err("strict mode blocks postpone");
+        assert_eq!(err, "postpone disabled");
+
+        let disabled = Settings {
+            strict_mode: false,
+            postpone_enabled: false,
+            ..Settings::default()
+        };
+        let (_dir2, sched2) = build_test_scheduler(disabled);
+        let err = postpone_break_impl(&sched2, BreakKind::Micro)
+            .await
+            .expect_err("postpone_enabled=false blocks postpone");
+        assert_eq!(err, "postpone disabled");
+    }
+
+    #[tokio::test]
+    async fn skip_next_break_resets_anchor_and_increments_stats() {
+        let (_dir, sched) = build_test_scheduler(Settings::default());
+        // Pre-set an older anchor so we can verify it was bumped.
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_micro = Instant::now()
+                .checked_sub(Duration::from_secs(3_600))
+                .unwrap_or_else(Instant::now);
+            t.micro_postpone_count = 5;
+            t.micro_warned = true;
+        }
+        skip_next_break_impl(&sched, BreakKind::Micro)
+            .await
+            .unwrap();
+        let t = sched.timers.lock().await;
+        assert_eq!(t.micro_postpone_count, 0);
+        assert!(!t.micro_warned);
+        // The anchor should be ~now (within 1s).
+        assert!(t.last_micro.elapsed() < Duration::from_secs(1));
+        assert!(matches!(
+            t.last_skipped_or_postponed,
+            Some((BreakKind::Micro, _))
+        ));
+        drop(t);
+        assert_eq!(sched.stats.lock().await.skipped, 1);
+    }
+
+    #[tokio::test]
+    async fn skip_next_break_errors_in_strict_mode() {
+        let strict = Settings {
+            strict_mode: true,
+            ..Settings::default()
+        };
+        let (_dir, sched) = build_test_scheduler(strict);
+        let err = skip_next_break_impl(&sched, BreakKind::Micro)
+            .await
+            .expect_err("strict mode blocks skip");
+        assert_eq!(err, "strict mode active");
+    }
+}

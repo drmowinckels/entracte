@@ -1,0 +1,78 @@
+html.overlay-window,
+body.overlay-window,
+#root.overlay-window {
+  background: transparent;
+}
+
+body.overlay-window {
+  margin: 0;
+}
+
+:root {
+  --primary-color: #2e545d;
+  --primary-color-hover: #3d6a73;
+  --primary-color-dark: #244249;
+
+  --secondary-color: #847aa2;
+  --secondary-color-hover: #6f6690;
+
+  --accent-color: #d28fa8;
+  --accent-color-hover: #b97594;
+
+  --light-primary-color: #81989d;
+
+  --brand-gradient: linear-gradient(
+    135deg,
+    var(--primary-color),
+    var(--primary-color-hover),
+    var(--secondary-color),
+    var(--secondary-color-hover),
+    var(--accent-color),
+    var(--accent-color-hover)
+  );
+}
+
+.error-boundary {
+  max-width: 32rem;
+  margin: 3rem auto;
+  padding: 1.5rem 2rem;
+  background: rgba(20, 24, 32, 0.92);
+  color: #f1f5f9;
+  border-radius: 12px;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+.error-boundary h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.2rem;
+}
+.error-boundary p {
+  margin: 0 0 1rem;
+  opacity: 0.85;
+}
+.error-boundary-message {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  overflow-x: auto;
+  max-height: 8rem;
+}
+.error-boundary-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.error-boundary-actions button {
+  padding: 0.45rem 0.95rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+}
+.error-boundary-actions button.secondary {
+  background: transparent;
+}

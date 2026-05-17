@@ -1,0 +1,212 @@
+use serde::{Deserialize, Serialize};
+
+/// Which kind of break a scheduled event represents.
+///
+/// `Micro` is the short eye-rest prompt, `Long` is the longer movement
+/// break, `Sleep` is the bedtime reminder fired inside the configured
+/// nighttime window.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BreakKind {
+    Micro,
+    Long,
+    Sleep,
+}
+
+/// How a break surfaces to the user. Driven by per-kind settings
+/// (`micro_break_mode` / `long_break_mode`).
+///
+/// - `Overlay`: full-screen overlay that the user cannot click past.
+/// - `Windowed`: same overlay sized to 80% of the monitor, desktop stays clickable.
+/// - `Notification`: system notification only; no overlay, no countdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakDelivery {
+    Overlay,
+    Windowed,
+    Notification,
+}
+
+/// Payload emitted to the renderer when a break starts.
+///
+/// Captures everything the overlay needs to render itself without
+/// re-querying the backend: duration, whether the user can dismiss or
+/// postpone, the hint pool, and the "health intensity" used for the
+/// skip-vignette effect.
+#[derive(Debug, Clone, Serialize)]
+pub struct BreakEvent {
+    pub kind: BreakKind,
+    pub duration_secs: u64,
+    pub enforceable: bool,
+    pub manual_finish: bool,
+    pub postpone_available: bool,
+    pub hints: Vec<String>,
+    pub hint_rotate_seconds: u64,
+    pub health_intensity: f32,
+}
+
+/// The most recently skipped or postponed break, or `None` if none yet
+/// in this session. Powers the tray's "Resume last skipped break" item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastBreakInfo {
+    pub kind: Option<BreakKind>,
+}
+
+/// Pixel rectangle for a monitor in the desktop's coordinate space.
+/// Used to position overlay windows. Origin can be negative on
+/// multi-monitor setups where the primary is not the top-left display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonitorRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Which auto-suppression rule is currently silencing breaks, exposed
+/// to the tray so the user can tell why the icon is inactive.
+///
+/// Set by `run_loop` whenever a guard branch fires (DND / camera /
+/// video / app-pause / outside work-window); cleared at the top of
+/// every tick before the guards re-evaluate. `None` (encoded as 0)
+/// means "not auto-suppressed".
+///
+/// Idle isn't tracked here because it can be partial (only one of
+/// micro/long suppressed at a time) and the user isn't watching the
+/// tray when idle anyway. Explicit user pause goes through
+/// `PauseState`, not this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuppressReason {
+    WorkWindow,
+    Dnd,
+    Camera,
+    Video,
+    AppPause,
+}
+
+impl SuppressReason {
+    /// Stable u8 encoding for the `AtomicU8` round-trip. `0` is reserved
+    /// for "not suppressed" — the inverse of `from_u8`.
+    pub const fn as_u8(self) -> u8 {
+        match self {
+            Self::WorkWindow => 1,
+            Self::Dnd => 2,
+            Self::Camera => 3,
+            Self::Video => 4,
+            Self::AppPause => 5,
+        }
+    }
+
+    /// Decode from the `AtomicU8`. Anything outside the encoded range
+    /// (including `0`) returns `None` — treat as "not suppressed".
+    pub fn from_u8(b: u8) -> Option<Self> {
+        match b {
+            1 => Some(Self::WorkWindow),
+            2 => Some(Self::Dnd),
+            3 => Some(Self::Camera),
+            4 => Some(Self::Video),
+            5 => Some(Self::AppPause),
+            _ => None,
+        }
+    }
+
+    /// Short label for the always-visible tray title (macOS / Linux).
+    /// Kept under ~12 chars so the menu-bar doesn't blow out.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::WorkWindow => "off-hours",
+            Self::Dnd => "DND",
+            Self::Camera => "camera",
+            Self::Video => "video",
+            Self::AppPause => "app paused",
+        }
+    }
+
+    /// Full sentence for tooltips. Explains both *what* and *which
+    /// setting* turns it off, so the user knows where to look.
+    pub fn human(self) -> &'static str {
+        match self {
+            Self::WorkWindow => "Outside work hours (Schedule → Work window)",
+            Self::Dnd => "Do Not Disturb is on (Quiet → Pause during DND)",
+            Self::Camera => "Camera in use (Quiet → Pause during camera)",
+            Self::Video => "Video keeping the display awake (Quiet → Pause during video)",
+            Self::AppPause => "A paused app is running (Quiet → App pause list)",
+        }
+    }
+}
+
+/// Per-break postpone budget exposed to the renderer.
+///
+/// `count` is how many times the active break has been postponed so far,
+/// `max` is the configured cap (or `u32::MAX` when escalation is off),
+/// `remaining` is `max - count` saturated at zero.
+#[derive(Debug, Clone, Serialize)]
+pub struct PostponeState {
+    pub count: u32,
+    pub max: u32,
+    pub remaining: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL_REASONS: [SuppressReason; 5] = [
+        SuppressReason::WorkWindow,
+        SuppressReason::Dnd,
+        SuppressReason::Camera,
+        SuppressReason::Video,
+        SuppressReason::AppPause,
+    ];
+
+    #[test]
+    fn suppress_reason_as_u8_round_trips_through_from_u8() {
+        // The AtomicU8 path depends on these two functions being exact
+        // inverses. A typo in either direction would silently mislabel
+        // tooltips ("camera" while DND is the real cause).
+        for r in ALL_REASONS {
+            assert_eq!(
+                SuppressReason::from_u8(r.as_u8()),
+                Some(r),
+                "{r:?} must round-trip",
+            );
+        }
+    }
+
+    #[test]
+    fn suppress_reason_zero_is_reserved_for_not_suppressed() {
+        // `0` must never decode to a real reason — it's the
+        // "everything's fine" sentinel for `auto_suppress_reason`.
+        assert_eq!(SuppressReason::from_u8(0), None);
+        for r in ALL_REASONS {
+            assert_ne!(r.as_u8(), 0, "{r:?} encoded as 0 collides with sentinel");
+        }
+    }
+
+    #[test]
+    fn suppress_reason_from_u8_rejects_out_of_range() {
+        // Anything past the highest assigned value should be `None`
+        // so a corrupted load doesn't crash or pick a random reason.
+        assert_eq!(SuppressReason::from_u8(99), None);
+        assert_eq!(SuppressReason::from_u8(u8::MAX), None);
+    }
+
+    #[test]
+    fn suppress_reason_short_label_is_compact() {
+        // Tray title space is tight on macOS; keep short labels under
+        // ~12 chars so the menu bar doesn't get truncated.
+        for r in ALL_REASONS {
+            let label = r.short_label();
+            assert!(label.len() <= 12, "{r:?} short_label {label:?} is too long",);
+            assert!(!label.is_empty());
+        }
+    }
+
+    #[test]
+    fn suppress_reason_human_strings_are_non_empty() {
+        // Tooltip lines — must always say something so a hover gives
+        // the user actionable info.
+        for r in ALL_REASONS {
+            assert!(!r.human().is_empty(), "{r:?} has empty human() string");
+        }
+    }
+}

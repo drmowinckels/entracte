@@ -1,0 +1,60 @@
+[package]
+name = "entracte"
+version = "0.0.1"
+description = "Cross-platform break reminder"
+authors = ["Athanasia Mowinckel"]
+license = "Apache-2.0"
+repository = "https://github.com/drmowinckels/entracte"
+edition = "2021"
+
+[lib]
+name = "entracte_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+user-idle = "0.6"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+shell-words = "1"
+getrandom = "0.2"
+hex = "0.4"
+subtle = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_Foundation", "Wdk_System_SystemServices"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSFont", "NSFontDescriptor", "NSAttributedString"] }
+objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSString", "NSDictionary", "NSArray", "NSValue"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+

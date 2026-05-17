@@ -1,0 +1,95 @@
+:root {
+  --entracte-teal-50: #e8eff1;
+  --entracte-teal-100: #cdddde;
+  --entracte-teal-300: #7ab0bc;
+  --entracte-teal-500: #2e545d;
+  --entracte-teal-600: #244249;
+  --entracte-teal-hover: #3d6a73;
+
+  --entracte-purple-300: #b4acc8;
+  --entracte-purple-500: #847aa2;
+  --entracte-purple-600: #6f6690;
+
+  --entracte-rose-300: #e4bccc;
+  --entracte-rose-500: #d28fa8;
+  --entracte-rose-600: #b97594;
+
+  --entracte-warn: #f7693a;
+
+  --entracte-gradient: linear-gradient(
+    135deg,
+    var(--entracte-teal-500),
+    var(--entracte-teal-hover),
+    var(--entracte-purple-500),
+    var(--entracte-purple-600),
+    var(--entracte-rose-500),
+    var(--entracte-rose-600)
+  );
+
+  --vp-c-brand-1: var(--entracte-teal-500);
+  --vp-c-brand-2: var(--entracte-teal-hover);
+  --vp-c-brand-3: var(--entracte-teal-500);
+  --vp-c-brand-soft: rgba(46, 84, 93, 0.14);
+
+  --vp-button-brand-border: var(--entracte-teal-500);
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: var(--entracte-teal-500);
+  --vp-button-brand-hover-border: var(--entracte-teal-hover);
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-hover-bg: var(--entracte-teal-hover);
+  --vp-button-brand-active-border: var(--entracte-teal-600);
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-brand-active-bg: var(--entracte-teal-600);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at center,
+    rgba(132, 122, 162, 0.55),
+    rgba(210, 143, 168, 0.25) 55%,
+    rgba(132, 122, 162, 0) 80%
+  );
+  --vp-home-hero-image-filter: blur(56px);
+
+  --vp-custom-block-tip-border: var(--entracte-teal-300);
+  --vp-custom-block-tip-text: var(--entracte-teal-600);
+  --vp-custom-block-tip-bg: var(--entracte-teal-50);
+
+  --vp-custom-block-info-border: var(--entracte-purple-300);
+  --vp-custom-block-info-text: var(--entracte-purple-600);
+  --vp-custom-block-info-bg: rgba(132, 122, 162, 0.08);
+}
+
+.dark {
+  --vp-c-brand-1: var(--entracte-teal-300);
+  --vp-c-brand-2: #9ec7d0;
+  --vp-c-brand-3: var(--entracte-teal-500);
+  --vp-c-brand-soft: rgba(122, 176, 188, 0.16);
+
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: var(--entracte-teal-500);
+  --vp-button-brand-hover-bg: var(--entracte-teal-hover);
+  --vp-button-brand-active-bg: var(--entracte-teal-600);
+
+  --vp-custom-block-tip-border: var(--entracte-teal-500);
+  --vp-custom-block-tip-text: #cdddde;
+  --vp-custom-block-tip-bg: rgba(46, 84, 93, 0.25);
+
+  --vp-custom-block-info-border: var(--entracte-purple-500);
+  --vp-custom-block-info-text: #d6cfe3;
+  --vp-custom-block-info-bg: rgba(132, 122, 162, 0.22);
+
+  --vp-home-hero-image-background-image: radial-gradient(
+    circle at center,
+    rgba(132, 122, 162, 0.35),
+    rgba(132, 122, 162, 0) 70%
+  );
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.VPHero .name {
+  background: var(--entracte-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}

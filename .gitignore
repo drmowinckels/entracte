@@ -1,0 +1,42 @@
+node_modules/
+dist/
+dist-ssr/
+target/
+*.local
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Coverage
+coverage/
+lcov.info
+src-tauri/lcov.info
+
+# Quarto-rendered README (regeneratable)
+README.html
+README_files/
+
+# Env
+.env
+.env.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local-only setup notes
+SIGNPATH_SETUP.md

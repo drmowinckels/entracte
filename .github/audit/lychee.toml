@@ -1,0 +1,32 @@
+cache = true
+max_cache_age = "1d"
+no_progress = true
+accept = ["200", "206", "429"]
+max_concurrency = 8
+timeout = 20
+retry_wait_time = 2
+fallback_extensions = ["md", "html"]
+
+exclude_loopback = true
+exclude_all_private = true
+
+exclude = [
+  '^https?://example\.com',
+  # Academic publishers bot-block link checkers but resolve fine in browsers.
+  # DOI is a canonical identifier; checking it adds no signal.
+  '^https?://(dx\.)?doi\.org/',
+  '^https?://(.*\.)?(wiley|tandfonline|sagepub|mdpi|apa|jstor|springer|frontiersin|elsevier|nature|sciencedirect)\.com',
+  # rustdoc / TypeDoc output: generated into the built site at /api/{rust,ts}/,
+  # not present in source.
+  '/api/(rust|ts)/',
+]
+
+exclude_path = [
+  "node_modules",
+  "target",
+  "dist",
+  "coverage",
+  "src-tauri/gen",
+  "docs/.vitepress/cache",
+  ".claude",
+]

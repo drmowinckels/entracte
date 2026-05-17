@@ -1,0 +1,29 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../../src"],
+  "entryPointStrategy": "expand",
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"],
+  "out": "../../target/typedoc",
+  "name": "Entracte (TypeScript)",
+  "tsconfig": "../../tsconfig.json",
+  "skipErrorChecking": true,
+  "excludePrivate": false,
+  "excludeInternal": false,
+  "readme": "none",
+  "hideGenerator": true,
+  "githubPages": false,
+  "customCss": "./typedoc-theme.css",
+  "validation": {
+    "notExported": false,
+    "invalidLink": true,
+    "notDocumented": false
+  },
+  "externalSymbolLinkMappings": {
+    "@types/react": {
+      "*": "https://react.dev/reference/react"
+    },
+    "react": {
+      "*": "https://react.dev/reference/react"
+    }
+  }
+}

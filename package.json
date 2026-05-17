@@ -1,0 +1,70 @@
+{
+  "name": "entracte-desktop",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "audit:a11y": "npm run build && node scripts/audit-a11y.mjs",
+    "audit:knip": "knip --config .github/audit/knip.json",
+    "audit:spell": "cspell --no-progress --config .github/audit/cspell.json \"**/*.{md,ts,tsx}\"",
+    "audit:size": "npm run build && size-limit",
+    "audit:links": "lychee --config .github/audit/lychee.toml \"**/*.md\"",
+    "audit:rust": "cd src-tauri && cargo deny check",
+    "doc": "typedoc --options .config/typedoc/typedoc.json",
+    "tauri": "tauri"
+  },
+  "size-limit": [
+    {
+      "name": "JS bundle (entry chunk)",
+      "path": "dist/assets/index-*.js",
+      "limit": "120 KB",
+      "gzip": true
+    },
+    {
+      "name": "CSS bundle",
+      "path": "dist/assets/index-*.css",
+      "limit": "8 KB",
+      "gzip": true
+    }
+  ],
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@size-limit/file": "^12.1.0",
+    "@tauri-apps/cli": "^2",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^25.8.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "axe-core": "^4.11.4",
+    "cspell": "^10.0.0",
+    "happy-dom": "^20.9.0",
+    "knip": "^6.14.1",
+    "puppeteer": "^25.0.2",
+    "size-limit": "^12.1.0",
+    "typedoc": "^0.28.19",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vitest": "^4.1.6"
+  }
+}

@@ -1,0 +1,158 @@
+<style>
+  :root {
+    --entracte-teal-50: #e8eff1;
+    --entracte-teal-100: #cdddde;
+    --entracte-teal-300: #7ab0bc;
+    --entracte-teal-500: #2e545c;
+    --entracte-teal-600: #244249;
+    --entracte-teal-hover: #3d6a73;
+
+    --entracte-purple-300: #b4acc8;
+    --entracte-purple-500: #847aa2;
+    --entracte-purple-600: #6f6690;
+
+    --entracte-rose-300: #e4bccc;
+    --entracte-rose-500: #d28fa8;
+    --entracte-rose-600: #b97594;
+
+    --entracte-warn: #f7693a;
+
+    /* VitePress surface colours — mirror them so navigating from the
+       docs site into rustdoc feels visually contiguous. */
+    --vp-light-bg: #ffffff;
+    --vp-light-bg-soft: #f6f6f7;
+    --vp-light-text-1: #3c3c43;
+    --vp-light-text-2: #67676c;
+    --vp-light-border: #c2c2c4;
+    --vp-dark-bg: #1b1b1f;
+    --vp-dark-bg-alt: #161618;
+    --vp-dark-bg-soft: #202127;
+    --vp-dark-text-1: #dfdfd6;
+    --vp-dark-text-2: #98989f;
+    --vp-dark-border: #3c3f44;
+  }
+
+  :root:not([data-theme]),
+  :root[data-theme="light"] {
+    --link-color: var(--entracte-teal-500);
+    --type-link-color: var(--entracte-teal-500);
+    --trait-link-color: var(--entracte-purple-500);
+    --assoc-item-link-color: var(--entracte-teal-500);
+    --function-link-color: var(--entracte-teal-500);
+    --macro-link-color: var(--entracte-teal-500);
+    --keyword-link-color: var(--entracte-purple-500);
+    --mod-link-color: var(--entracte-teal-500);
+    --attribute-link-color: var(--entracte-warn);
+    --struct-link-color: var(--entracte-teal-500);
+    --enum-link-color: var(--entracte-rose-500);
+    --union-link-color: var(--entracte-rose-500);
+    --primitive-link-color: var(--entracte-teal-500);
+    --constant-link-color: var(--entracte-teal-500);
+    --static-link-color: var(--entracte-teal-500);
+    --foreigntype-link-color: var(--entracte-rose-500);
+    --typedef-link-color: var(--entracte-rose-500);
+    --traitalias-link-color: var(--entracte-purple-500);
+    --opaque-link-color: var(--entracte-teal-500);
+    --derive-link-color: var(--entracte-teal-500);
+    --sidebar-link-color: var(--entracte-teal-500);
+
+    --main-background-color: var(--vp-light-bg);
+    --main-color: var(--vp-light-text-1);
+    --right-side-color: var(--vp-light-text-2);
+    --sidebar-background-color: var(--vp-light-bg-soft);
+    --sidebar-border-color: var(--vp-light-border);
+    --border-color: var(--vp-light-border);
+    --code-block-background-color: var(--vp-light-bg-soft);
+    --table-alt-row-background-color: var(--vp-light-bg-soft);
+
+    --sidebar-current-link-background-color: var(--entracte-teal-100);
+    --sidebar-background-color-hover: var(--entracte-teal-50);
+    --search-input-focused-border-color: var(--entracte-teal-500);
+    --search-tab-button-selected-background: var(--entracte-teal-100);
+    --search-tab-button-selected-border-top-color: var(--entracte-teal-500);
+    --button-background-color: var(--entracte-teal-50);
+    --scrollbar-thumb-background-color: var(--entracte-teal-300);
+    --headings-border-bottom-color: var(--entracte-teal-100);
+    --target-background-color: rgba(122, 176, 188, 0.18);
+    --target-border-color: var(--entracte-teal-500);
+  }
+
+  :root[data-theme="dark"] {
+    --link-color: var(--entracte-teal-300);
+    --type-link-color: var(--entracte-teal-300);
+    --trait-link-color: var(--entracte-purple-300);
+    --assoc-item-link-color: var(--entracte-teal-300);
+    --function-link-color: var(--entracte-teal-300);
+    --macro-link-color: var(--entracte-teal-300);
+    --keyword-link-color: var(--entracte-purple-300);
+    --mod-link-color: var(--entracte-teal-300);
+    --attribute-link-color: var(--entracte-warn);
+    --struct-link-color: var(--entracte-teal-300);
+    --enum-link-color: var(--entracte-rose-300);
+    --union-link-color: var(--entracte-rose-300);
+    --primitive-link-color: var(--entracte-teal-300);
+    --constant-link-color: var(--entracte-teal-300);
+    --static-link-color: var(--entracte-teal-300);
+    --foreigntype-link-color: var(--entracte-rose-300);
+    --typedef-link-color: var(--entracte-rose-300);
+    --traitalias-link-color: var(--entracte-purple-300);
+    --opaque-link-color: var(--entracte-teal-300);
+    --derive-link-color: var(--entracte-teal-300);
+    --sidebar-link-color: var(--entracte-teal-300);
+
+    --main-background-color: var(--vp-dark-bg);
+    --main-color: var(--vp-dark-text-1);
+    --right-side-color: var(--vp-dark-text-2);
+    --sidebar-background-color: var(--vp-dark-bg-alt);
+    --sidebar-border-color: var(--vp-dark-border);
+    --border-color: var(--vp-dark-border);
+    --code-block-background-color: var(--vp-dark-bg-soft);
+    --table-alt-row-background-color: var(--vp-dark-bg-soft);
+
+    --sidebar-current-link-background-color: rgba(46, 84, 92, 0.55);
+    --sidebar-background-color-hover: rgba(46, 84, 92, 0.35);
+    --search-input-focused-border-color: var(--entracte-teal-300);
+    --search-tab-button-selected-background: rgba(46, 84, 92, 0.55);
+    --search-tab-button-selected-border-top-color: var(--entracte-teal-300);
+    --button-background-color: rgba(46, 84, 92, 0.35);
+    --scrollbar-thumb-background-color: var(--entracte-teal-500);
+    --headings-border-bottom-color: rgba(122, 176, 188, 0.35);
+    --target-background-color: rgba(122, 176, 188, 0.22);
+    --target-border-color: var(--entracte-teal-300);
+  }
+
+  :root[data-theme="ayu"] {
+    --link-color: var(--entracte-teal-300);
+    --type-link-color: var(--entracte-teal-300);
+    --trait-link-color: var(--entracte-purple-300);
+    --assoc-item-link-color: var(--entracte-teal-300);
+    --function-link-color: var(--entracte-teal-300);
+    --macro-link-color: var(--entracte-teal-300);
+    --keyword-link-color: var(--entracte-purple-300);
+    --mod-link-color: var(--entracte-teal-300);
+    --attribute-link-color: var(--entracte-warn);
+    --struct-link-color: var(--entracte-teal-300);
+    --enum-link-color: var(--entracte-rose-300);
+    --union-link-color: var(--entracte-rose-300);
+    --primitive-link-color: var(--entracte-teal-300);
+    --constant-link-color: var(--entracte-teal-300);
+    --static-link-color: var(--entracte-teal-300);
+    --foreigntype-link-color: var(--entracte-rose-300);
+    --typedef-link-color: var(--entracte-rose-300);
+    --traitalias-link-color: var(--entracte-purple-300);
+    --opaque-link-color: var(--entracte-teal-300);
+    --derive-link-color: var(--entracte-teal-300);
+    --sidebar-link-color: var(--entracte-teal-300);
+
+    --sidebar-current-link-background-color: rgba(46, 84, 92, 0.45);
+    --sidebar-background-color-hover: rgba(46, 84, 92, 0.28);
+    --search-input-focused-border-color: var(--entracte-teal-300);
+    --search-tab-button-selected-background: rgba(46, 84, 92, 0.45);
+    --search-tab-button-selected-border-top-color: var(--entracte-teal-300);
+    --button-background-color: rgba(46, 84, 92, 0.28);
+    --scrollbar-thumb-background-color: var(--entracte-teal-500);
+    --headings-border-bottom-color: rgba(122, 176, 188, 0.3);
+    --target-background-color: rgba(122, 176, 188, 0.2);
+    --target-border-color: var(--entracte-teal-300);
+  }
+</style>

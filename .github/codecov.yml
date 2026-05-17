@@ -1,0 +1,51 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+        informational: true
+
+comment:
+  layout: "header, diff, flags, components, files"
+  behavior: default
+  require_changes: false
+  show_carryforward_flags: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: frontend
+      paths:
+        - src/
+    - name: rust
+      paths:
+        - src-tauri/src/
+
+component_management:
+  individual_components:
+    - component_id: frontend
+      name: Frontend (TypeScript)
+      paths:
+        - src/**
+    - component_id: rust
+      name: Backend (Rust)
+      paths:
+        - src-tauri/src/**
+
+ignore:
+  - "src/**/*.test.*"
+  - "src/**/*.spec.*"
+  - "src/test-setup.ts"
+  - "src/main.tsx"
+  - "src/vite-env.d.ts"
+  - "src-tauri/target/**"
+  - "src-tauri/gen/**"
+  - "scripts/**"
+  - "docs/**"

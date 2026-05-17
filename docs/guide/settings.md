@@ -1,0 +1,145 @@
+# Settings
+
+All settings live in the Preferences window, reachable from the tray menu. They're grouped into seven tabs by intent: **Schedule** (when breaks fire), **Breaks** (what they look and sound like), **Quiet times** (when not to interrupt), **System** (app and OS integration), **Insights** (stats and history), **Profiles**, and **About**.
+
+::: warning Not yet persisted
+Settings reset to defaults every time the app restarts. A config-file backing store is on the roadmap.
+:::
+
+::: tip Info icons
+Most non-obvious settings carry a small ⓘ icon next to the label — hover or focus it for a short explanation. Power-user options are tucked behind a **Show advanced** disclosure in each section.
+:::
+
+## Schedule
+
+The Schedule tab covers when breaks happen.
+
+- **Active hours** — limit breaks to a daily time range (Bedtime ignores this and uses its own window).
+- **Micro breaks** — per-kind **mode** (Overlay or Notification, or Off), **schedule** (interval, fixed times, or both), interval / duration, plus advanced controls for idle reset, enforceability, and manual finish.
+- **Long breaks** — same shape as Micro breaks.
+- **Bedtime** — start/end window and reminder cadence. Inside the window, Entracte fires a Sleep prompt instead of Micro/Long breaks. Sleep prompts are always enforceable — they ignore Do Not Disturb and camera state.
+- **Daily screen time** — a cumulative-budget nudge that fires once you've accumulated a configurable amount of active time across the day. Different from breaks. The counter ticks only while you're actually at the keyboard, resets at local midnight, and survives restarts. A small progress bar in the same section shows today's total against the budget.
+- **Show advanced scheduling** (collapsible) — **Input-aware scheduling**: delay a break if you're mid-keystroke (with grace and max deferral), and pause the break countdown while you're typing.
+
+### Break mode (per kind)
+
+Each break kind picks its presentation from a single **Mode** dropdown:
+
+- **Off** — disable this break kind entirely.
+- **Overlay** (default) — full-screen prompt covering the monitor.
+- **Windowed** — same overlay sized to 80% of the monitor and centered, with `always_on_top` dropped so the surrounding desktop stays reachable. Useful when you want a visible, focus-grabbing reminder without losing access to urgent things. Composes with **Show break on**: e.g. `Monitor under cursor` + `Windowed` shows one 80% overlay only on the display your cursor is on.
+- **Notification** — skip the overlay entirely and post a non-blocking system notification with the break title and duration; the timer keeps ticking on the normal cadence. Because there's no overlay to interact with, break-engagement metrics (completion, skip, postpone) aren't recorded for that break type while notification mode is active.
+
+Bedtime (Sleep) is hard-coded to full-screen Overlay and ignores this setting.
+
+## Breaks
+
+The Breaks tab covers what breaks look and sound like, and the escape hatches.
+
+- **Overlay** — transparency, text size, theme (Dark / Midnight / Forest / Rose / Sunset / Rotate / Custom), wellness hints toggle, current time toggle. Advanced disclosure adds **monitor placement**, **high contrast**, and the **break-health vignette** that intensifies as you skip more breaks. (Whether a break renders full-screen or windowed is part of the per-kind **Mode** dropdown in the Schedule tab — see [Break mode](#break-mode-per-kind) below.)
+- **Sound** — chime theme and volume, with a Preview button.
+- **Break ideas** — optional rotation toggle (off by default — one idea is picked per break and stays on screen; turn on to cycle through the pool every N seconds), plus the line-per-idea pools for Micro (split into Physical and Psychological, with a Mix selector), Long (split into Solo and Social, with a Mix selector — Social prompts you to call someone, walk with a colleague, or share a coffee), and Bedtime.
+- **Skip & postpone** — Strict mode (no skip, no postpone, all breaks enforced), postpone toggle and minutes, optional postpone escalation (each postpone of the same break adds extra delay), and one-shot **Skip next micro / Skip next long** buttons.
+
+### Monitor placement
+
+`Show break on` chooses where overlays appear: `Primary monitor`, `Monitor under cursor` (the display the mouse cursor is on at break-fire time), or `All monitors`. If active-monitor detection fails for any reason, Entracte falls back to the primary monitor.
+
+## Quiet times
+
+The Quiet times tab covers when breaks should _not_ fire.
+
+- **Auto-pause** — suppress breaks while Do Not Disturb / Focus is on (macOS, Windows), while the camera is in use (all OSes), or while fullscreen video is playing.
+- **Pause for specific apps** — toggle on and list app name fragments (one per line, partial case-insensitive match). Whenever any listed app is running, breaks are suppressed. A quick-add chip row offers common candidates for your platform.
+- **Manual pause** — shows the current pause state and a Resume button when you've paused from the tray icon.
+
+## System
+
+The System tab covers app/OS integration.
+
+- **Startup** — Start Entracte at login.
+- **Notifications** — pre-break heads-up toggle and lead time (seconds).
+- **Tray countdown** — show a live `M:SS` / `MM:SS` countdown next to the tray icon, ticking down to the next break. Choose whether it tracks the next micro break, the next long break, or whichever is sooner. Defaults to on, target "next". Cleared while paused (shows "paused") and during an active break. macOS shows the text right next to the menu-bar icon; Linux shows it where the tray applet renders titles (varies by desktop environment). Windows does not support tray titles, so the toggle has no visible effect there.
+- **Show advanced (hooks)** (collapsible) — bind shell commands to break events. Off by default; only enable if you understand the security risk of letting arbitrary commands run.
+
+## Insights
+
+The Insights tab gathers all stats.
+
+- **Range** — past week or past month.
+- **Summary** — breaks taken, dismissal rate, time paused, top suppression reason.
+- **Breaks suppressed by** — per-reason breakdown.
+- **Time of day** — 24-hour histogram of when breaks fired.
+- **Past 12 weeks** — a per-day heatmap.
+- **Manage data** — Export CSV, Clear history.
+- **This session** — in-memory counters since the current run started (Taken / Skipped / Postponed / Skip rate), with a Reset button.
+
+## Profiles
+
+Each profile keeps its own copy of every setting on the previous tabs (break cadence, hints, overlay, quiet times, hooks, etc.). Switching between profiles is instant — the active one drives every other tab here and appears in the tray under "Active profile".
+
+Per-row controls in the Profiles tab:
+
+- **▲ / ▼** — reorder. Profiles render in their stored order across the tab and the tray menu.
+- **Use** — make this profile the active one (hidden on the row that's already active).
+- **Rename** — inline rename; Enter to confirm, Esc to cancel.
+- **Duplicate** — clones the profile and appends ` copy` (or ` copy 2`, …) to the name.
+- **Reset to defaults** — two-click confirm. Replaces this profile's settings with the app defaults. The profile name and the rest of your profiles are untouched. If the reset profile is currently active, the change takes effect immediately.
+- **Delete** — two-click confirm. Hidden for the active profile and for the last remaining profile.
+
+## Overlay themes
+
+These controls live under **Breaks → Overlay**. The overlay is always dark (it has to dim everything else), but the accent colour and background tone follow your choice. The Preferences window itself follows your system light/dark preference.
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;" role="group" aria-label="Overlay theme previews">
+
+![Dark theme: deep slate background with off-white text and a teal countdown ring](../screenshots/break-overlay-dark.png)
+
+![Midnight theme: very dark navy-blue background with off-white text and a teal countdown ring](../screenshots/break-overlay-midnight.png)
+
+![Forest theme: dark green-tinted background with off-white text and a teal countdown ring](../screenshots/break-overlay-forest.png)
+
+![Sunset theme: warm dark brown background with off-white text and a teal countdown ring](../screenshots/break-overlay-sunset.png)
+
+![Rose theme: dark wine-rose background with off-white text and a teal countdown ring](../screenshots/break-overlay-rose.png)
+
+</div>
+
+The **Theme** dropdown ships with five presets — Dark, Midnight, Forest, Rose, Sunset — plus a **Rotate** option that picks a different preset for every break (never the same preset twice in a row), and a **Custom…** option. Picking Custom reveals two synchronized controls:
+
+- a native colour picker for visual selection from a gradient map
+- a hex input (e.g. `#1f293a`) for paste-in precision; three-digit shortcuts like `#abc` expand to `#aabbcc`
+
+Both controls write the same setting, so editing one updates the other. Invalid hex strings are rejected on blur and the field reverts to the previous value. The chosen colour is per-profile, so different profiles can have different overlay tints.
+
+Colours that are too bright are automatically darkened — the overlay's job is to dim the rest of the screen, so a near-white tint would defeat the purpose. The cap is on perceived luminance, not channel-wise, so hue stays as you picked it; you might just see your `#ffeecc` come back as a deeper warm tone.
+
+## Supporter
+
+Entracte is free to use. The **customisation pack** is unlocked by becoming a supporter — a one-time purchase that supports continued development.
+
+The pack covers:
+
+- **Custom overlay colour** (the `Custom…` theme + hex/colour-picker controls in Appearance)
+- **Rotate** theme (per-break random preset)
+- **Editable break hints** on the Break ideas tab (default hints stay available either way)
+- **Custom sounds** (planned)
+
+To activate: go to **About → Supporter** in Preferences, click **Become a supporter →** to open the purchase page, then paste the license key you receive into the Verify box. The app calls Lemon Squeezy's licensing API once to confirm and stores a small file at `app_data_dir/supporter.json` containing the license key, an instance ID, and the activation timestamp. The file is machine-local (not in `settings.json`, so it doesn't follow dotfile sync) and the app re-validates against Lemon Squeezy roughly once a day.
+
+If you lose network access for a stretch, the app keeps trusting the local activation for 30 days. After 30 days without a successful re-validation it locks the pack again until the next online check.
+
+**Remove license** removes the local file and re-locks the pack — useful when moving to a new machine. Lemon Squeezy treats this as a deactivation, freeing an activation slot.
+
+## Accessibility
+
+The overlay tries to be friendly to a range of needs.
+
+- **High contrast** toggle under **Breaks → Overlay → Show advanced** forces a pure black background, white text, a solid white countdown ring, and bordered buttons with focus rings. It overrides the theme colour and transparency until you turn it off.
+- **System preferences are respected automatically**, regardless of the High contrast toggle:
+  - `prefers-contrast: more` (macOS Settings → Accessibility → Display → Increase contrast; Windows High contrast mode) auto-enables the high-contrast styling for that break.
+  - `prefers-reduced-transparency: reduce` (macOS Reduce transparency) forces the overlay opaque, ignoring the Transparency slider.
+  - `prefers-reduced-motion: reduce` is already honoured app-wide — the overlay fade-in is skipped.
+- **Screen readers** get a `role="dialog"` overlay with an `aria-live="polite"` announcement when each break starts ("Long break started. 10 minutes remaining."). The countdown timer carries an `aria-label` that reads as e.g. "9 minutes 30 seconds remaining" so navigating to it via screen-reader cursor speaks something meaningful.
+- **Keyboard** — `Esc` skips the break. Postpone, Skip, and "I'm back" reach focus in DOM order; the high-contrast theme adds a yellow focus ring for visibility.
+- **Font size** — the **Text size** slider under **Breaks → Overlay** scales every text element in the overlay from 80% to 160%, so users who prefer larger text don't have to squint at hint or countdown.
