@@ -134,8 +134,12 @@ valuenow
 osascript
 powerpnt
 quicktime
-chrono
-eprintln
-marocchino
+unstub
+unstubs
 macrotask
 macrotasks
+microtask
+microtasks
+effecty
+shinephoenixstormcrow
+Daitokuji
