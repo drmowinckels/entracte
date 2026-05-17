@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a new behaviour, setting, or quality-of-life improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Before filing, a quick check of the existing issues and the [out-of-scope list in CONTRIBUTING.md](../blob/main/CONTRIBUTING.md#what-were-looking-for) will save us both time — Entracte is intentionally narrow on plugins, cloud sync, and per-user scheduler forks.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the friction or missing capability, not the feature. "Bedtime reminders ignore my work calendar" is more useful than "add calendar integration" — it leaves room for solutions you may not have thought of.
+      placeholder: |
+        I work nights and the bedtime window is fixed to a single daily start/end. On my schedule I want bedtime to start at 11am and run until 4pm, which the current input doesn't allow because it can't cross noon without crossing midnight first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+      description: If you have a concrete idea, sketch it here. UI mockups, similar features in other tools, or a rough behaviour spec all help.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: Workarounds you tried, why they fell short, or other shapes the feature could take.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else?
+      description: Links to related issues, screenshots, accessibility considerations, or platform-specific concerns.
+    validations:
+      required: false
