@@ -134,3 +134,12 @@ valuenow
 osascript
 powerpnt
 quicktime
+unstub
+unstubs
+macrotask
+macrotasks
+microtask
+microtasks
+effecty
+shinephoenixstormcrow
+Daitokuji

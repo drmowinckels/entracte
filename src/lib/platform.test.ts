@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+
 import { detectPlatform, normalisePlatform, PLATFORM_LABELS } from "./platform";
 
 describe("detectPlatform", () => {
@@ -47,5 +49,106 @@ describe("PLATFORM_LABELS", () => {
     expect(PLATFORM_LABELS.windows).toBe("Windows");
     expect(PLATFORM_LABELS.linux).toBe("Linux");
     expect(PLATFORM_LABELS.other).toBeDefined();
+  });
+});
+
+// usePlatform covers the async upgrade path: render with the UA guess,
+// then re-render with the authoritative Rust answer once `invoke` resolves.
+// The module caches across calls, so each test resets modules + the invoke
+// mock to start from a clean slate.
+
+describe("usePlatform", () => {
+  const invokeMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    invokeMock.mockReset();
+    vi.doMock("@tauri-apps/api/core", () => ({
+      invoke: (cmd: string) => invokeMock(cmd),
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock("@tauri-apps/api/core");
+  });
+
+  it("returns the UA guess synchronously, then upgrades to the Rust answer", async () => {
+    // Pretend we're on a macOS WebView (UA says mac) but Rust says
+    // linux — the hook should publish the Rust answer once it lands.
+    invokeMock.mockResolvedValueOnce("linux");
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)",
+    });
+
+    const { usePlatform } = await import("./platform");
+    const { result } = renderHook(() => usePlatform());
+
+    expect(result.current).toBe("macos");
+    await waitFor(() => expect(result.current).toBe("linux"));
+    expect(invokeMock).toHaveBeenCalledWith("get_platform");
+  });
+
+  it("falls back to the UA guess when the Tauri invoke fails (e.g. running in a plain browser)", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("tauri unavailable"));
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    });
+
+    const { usePlatform } = await import("./platform");
+    const { result } = renderHook(() => usePlatform());
+
+    expect(result.current).toBe("windows");
+    // Even though the rejection happens, the hook must settle on a
+    // valid Platform — re-asserting after a microtask ensures the
+    // .catch path doesn't accidentally publish `undefined`.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current).toBe("windows");
+  });
+
+  it("invokes get_platform only once even when many components subscribe", async () => {
+    invokeMock.mockResolvedValueOnce("macos");
+    const { usePlatform } = await import("./platform");
+
+    renderHook(() => usePlatform());
+    renderHook(() => usePlatform());
+    renderHook(() => usePlatform());
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("re-renders pick up the cached value without re-invoking", async () => {
+    invokeMock.mockResolvedValueOnce("linux");
+    const { usePlatform } = await import("./platform");
+
+    const first = renderHook(() => usePlatform());
+    await waitFor(() => expect(first.result.current).toBe("linux"));
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    const second = renderHook(() => usePlatform());
+    expect(second.result.current).toBe("linux"); // synchronous, from cache
+    expect(invokeMock).toHaveBeenCalledTimes(1); // not invoked again
+  });
+
+  it("normalises a Rust answer the renderer doesn't know about into 'other'", async () => {
+    // If Rust ever returns a value outside the renderer's enum (e.g.
+    // "FreeBSD"), the hook must still settle on a valid Platform so
+    // platform-gated UI doesn't crash trying to render PLATFORM_LABELS[raw].
+    invokeMock.mockResolvedValueOnce("freebsd");
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64)",
+    });
+
+    const { usePlatform } = await import("./platform");
+    const { result } = renderHook(() => usePlatform());
+
+    expect(result.current).toBe("linux"); // UA guess first
+    await waitFor(() => expect(result.current).toBe("other"));
   });
 });
