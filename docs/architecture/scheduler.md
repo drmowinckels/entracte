@@ -1,6 +1,6 @@
 # Scheduler
 
-The scheduler is a 1 Hz Tokio loop in [scheduler.rs](https://github.com/drmowinckels/entracte/blob/main/src-tauri/src/scheduler.rs). Every second it walks a priority cascade. First match wins; all other timers reset.
+The scheduler is a 1 Hz Tokio loop in [scheduler/run_loop.rs](https://github.com/drmowinckels/entracte/blob/main/src-tauri/src/scheduler/run_loop.rs), part of the [scheduler module](https://github.com/drmowinckels/entracte/tree/main/src-tauri/src/scheduler). Every second it walks a priority cascade. First match wins; all other timers reset.
 
 ## The cascade
 
