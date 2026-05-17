@@ -138,6 +138,20 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 **The hint-rotate-clamp shape of bug:** if a field uses `0` as a sentinel meaning "disabled," `normalize()` / `clamp()` must use `.min(N)` not `.clamp(1, N)`. The latter bumps 0 → 1 and silently re-enables the feature for users who turned it off. See `clamp_keeps_zero_*_as_disabled` tests in [settings.rs](../src-tauri/src/scheduler/settings.rs).
 
+## Branch / PR workflow
+
+- Branch off `main` for every change. PRs land via **Squash & merge**.
+- **Branch naming** uses one of these prefixes (any further `/`-separated segments are free-form):
+  - `feat/...` — new user-visible behaviour or settings
+  - `fix/...` — bug fixes
+  - `refactor/...` — code restructuring with no behaviour change
+  - `docs/...` — docs / AGENTS.md / CONTRIBUTING.md / docstrings only
+  - `chore/...` — CI, tooling, dependency bumps, repo housekeeping
+- **Tests are required on every PR that changes runtime behaviour.** Either add a test that fails before the change and passes after, or — if the change is genuinely untestable in isolation (a Tauri Builder rewire, a new OS-native syscall path with no mockable surface) — call out why in the PR body. Pure-docs and pure-chore PRs are exempt; everything else needs at least one new or updated test alongside the code.
+- **PR descriptions list verification steps, not a "Test plan" header.** Don't include unchecked test-plan checkboxes for a reviewer to walk through — that's CI's job. Use the body to record what you actually ran (`cargo test --lib`, `npm run audit:a11y`, manual UI walk on macOS), what changed at a high level, and any platforms you couldn't test on. If a reviewer needs to do something to validate the PR, name it directly ("please trigger a long break on Windows to confirm the resize lock") rather than dressing it up as a checklist.
+- Keep PRs focused — one logical change per PR. Multiple unrelated cleanups in one PR are harder to review and harder to revert.
+- Don't force-push to `main`. Force-pushing to your own feature branch during review is fine.
+
 ## Audit infrastructure
 
 Audits run in CI but every one is invokable locally. Configs live in [.github/audit/](audit/) (TS-side) and [src-tauri/deny.toml](../src-tauri/deny.toml) (Rust-side).
