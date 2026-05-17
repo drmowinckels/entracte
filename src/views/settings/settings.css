@@ -137,6 +137,7 @@ body,
 
 .settings input[type="time"],
 .settings input[type="number"],
+.settings input.time-input,
 .settings select {
   background: var(--input-bg);
   border: 1px solid var(--input-border);
@@ -154,8 +155,16 @@ body,
   padding: 0.4rem 0.6rem;
 }
 
+.settings input.time-input {
+  width: 110px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 0.4rem 0.6rem;
+}
+
 .settings input[type="time"]:focus,
 .settings input[type="number"]:focus,
+.settings input.time-input:focus,
 .settings select:focus {
   outline: none;
   border-color: var(--accent);

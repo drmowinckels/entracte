@@ -23,18 +23,22 @@ export function ScheduleTab({
   updateMany: UseSettings["updateMany"];
 }) {
   const [microFixedTimesText, setMicroFixedTimesText] = useState(
-    formatClockList(settings.micro_fixed_times),
+    formatClockList(settings.micro_fixed_times, settings.clock_format),
   );
   const [longFixedTimesText, setLongFixedTimesText] = useState(
-    formatClockList(settings.long_fixed_times),
+    formatClockList(settings.long_fixed_times, settings.clock_format),
   );
 
   useEffect(() => {
-    setMicroFixedTimesText(formatClockList(settings.micro_fixed_times));
-  }, [settings.micro_fixed_times]);
+    setMicroFixedTimesText(
+      formatClockList(settings.micro_fixed_times, settings.clock_format),
+    );
+  }, [settings.micro_fixed_times, settings.clock_format]);
   useEffect(() => {
-    setLongFixedTimesText(formatClockList(settings.long_fixed_times));
-  }, [settings.long_fixed_times]);
+    setLongFixedTimesText(
+      formatClockList(settings.long_fixed_times, settings.clock_format),
+    );
+  }, [settings.long_fixed_times, settings.clock_format]);
 
   const screenTime = useScreenTime(settings.daily_screen_time_enabled);
 
@@ -53,12 +57,14 @@ export function ScheduleTab({
           value={settings.work_start_minutes}
           onChange={(v) => update("work_start_minutes", v)}
           disabled={!settings.work_window_enabled}
+          format={settings.clock_format}
         />
         <TimeRow
           label="End"
           value={settings.work_end_minutes}
           onChange={(v) => update("work_end_minutes", v)}
           disabled={!settings.work_window_enabled}
+          format={settings.clock_format}
         />
       </section>
 
@@ -99,14 +105,19 @@ export function ScheduleTab({
             {(settings.micro_schedule_mode === "fixed" ||
               settings.micro_schedule_mode === "both") && (
               <label className="row">
-                <span>Fixed times (comma-separated, hh:mm)</span>
+                <span>
+                  Fixed times (comma-separated,{" "}
+                  {settings.clock_format === "12h" ? "h:mm AM/PM" : "hh:mm"})
+                </span>
                 <input
                   type="text"
                   value={microFixedTimesText}
                   onChange={(e) => setMicroFixedTimesText(e.target.value)}
                   onBlur={() => {
                     const parsed = parseClockList(microFixedTimesText);
-                    setMicroFixedTimesText(formatClockList(parsed));
+                    setMicroFixedTimesText(
+                      formatClockList(parsed, settings.clock_format),
+                    );
                     update("micro_fixed_times", parsed);
                   }}
                 />
@@ -196,14 +207,19 @@ export function ScheduleTab({
             {(settings.long_schedule_mode === "fixed" ||
               settings.long_schedule_mode === "both") && (
               <label className="row">
-                <span>Fixed times (comma-separated, hh:mm)</span>
+                <span>
+                  Fixed times (comma-separated,{" "}
+                  {settings.clock_format === "12h" ? "h:mm AM/PM" : "hh:mm"})
+                </span>
                 <input
                   type="text"
                   value={longFixedTimesText}
                   onChange={(e) => setLongFixedTimesText(e.target.value)}
                   onBlur={() => {
                     const parsed = parseClockList(longFixedTimesText);
-                    setLongFixedTimesText(formatClockList(parsed));
+                    setLongFixedTimesText(
+                      formatClockList(parsed, settings.clock_format),
+                    );
                     update("long_fixed_times", parsed);
                   }}
                 />
@@ -270,11 +286,13 @@ export function ScheduleTab({
               label="Start"
               value={settings.bedtime_start_minutes}
               onChange={(v) => update("bedtime_start_minutes", v)}
+              format={settings.clock_format}
             />
             <TimeRow
               label="End"
               value={settings.bedtime_end_minutes}
               onChange={(v) => update("bedtime_end_minutes", v)}
+              format={settings.clock_format}
             />
             <NumberRow
               label="Reminder interval (minutes)"

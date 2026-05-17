@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
-import { minutesToTime, timeToMinutes } from "../../../lib/time";
+import { useEffect, useState, type ReactNode } from "react";
+import { formatMinutesOfDay, parseMinutesOfDay } from "../../../lib/time";
 import { PLATFORM_LABELS, type Platform, usePlatform } from "../../../lib/platform";
 import { InfoTip } from "./info-tip";
+import type { ClockFormat } from "../types";
 
 type RowLabelProps = {
   label: ReactNode;
@@ -57,17 +58,51 @@ export type TimeRowProps = {
   onChange: (next: number) => void;
   disabled?: boolean;
   tip?: string;
+  format?: ClockFormat;
 };
 
-export function TimeRow({ label, value, onChange, disabled, tip }: TimeRowProps) {
+export function TimeRow({
+  label,
+  value,
+  onChange,
+  disabled,
+  tip,
+  format = "24h",
+}: TimeRowProps) {
+  // Local draft state so the user can edit freely; commit on blur/Enter.
+  // <input type="time"> can't be forced off the OS locale on WebKit, so
+  // we own the rendering instead.
+  const [draft, setDraft] = useState(() => formatMinutesOfDay(value, format));
+  useEffect(() => {
+    setDraft(formatMinutesOfDay(value, format));
+  }, [value, format]);
+
+  const commit = () => {
+    const parsed = parseMinutesOfDay(draft);
+    if (parsed === null) {
+      setDraft(formatMinutesOfDay(value, format));
+      return;
+    }
+    if (parsed !== value) onChange(parsed);
+    setDraft(formatMinutesOfDay(parsed, format));
+  };
+
   return (
     <label className={`row${disabled ? " disabled" : ""}`}>
       <RowLabel label={label} tip={tip} />
       <input
-        type="time"
-        value={minutesToTime(value)}
+        type="text"
+        className="time-input"
+        inputMode="numeric"
+        spellCheck={false}
+        placeholder={format === "12h" ? "h:mm AM/PM" : "HH:MM"}
+        value={draft}
         disabled={disabled}
-        onChange={(e) => onChange(timeToMinutes(e.target.value))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
       />
     </label>
   );
