@@ -74,7 +74,7 @@ See the [IPC contract](./ipc) for the existing surface.
 3. Render a control on the relevant tab under `src/views/settings/tabs/`.
 4. If you're adding a new field that the scheduler should react to, wire it into `run_loop.rs` and add a test.
 
-The serde defaults make missing fields harmless on older `settings.json` files, but the TS type drift is not enforced by anything yet (see [#31](https://github.com/drmowinckels/entracte/issues/31) for the parity-test idea).
+The serde defaults make missing fields harmless on older `settings.json` files, but the TS type drift is not enforced by anything yet (see [#13](https://github.com/drmowinckels/entracte/issues/13) for the parity-test idea).
 
 ## Adding a break suppression / guard
 
