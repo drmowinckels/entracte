@@ -62,6 +62,7 @@ const schedulerSettingsSchema = z.object({
   postpone_enabled: z.boolean(),
   postpone_minutes: z.number(),
   show_current_time: z.boolean(),
+  clock_format: z.enum(["12h", "24h"]),
   micro_manual_finish: z.boolean(),
   long_manual_finish: z.boolean(),
   autostart_enabled: z.boolean(),

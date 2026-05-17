@@ -62,6 +62,7 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
           overlay_font_scale: s.overlay_font_scale,
           show_hint: s.show_hint,
           show_current_time: s.show_current_time,
+          clock_format: s.clock_format,
           micro_sound: s.micro_sound,
           long_sound: s.long_sound,
           sound_volume: s.sound_volume,

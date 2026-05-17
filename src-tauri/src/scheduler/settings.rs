@@ -64,6 +64,10 @@ fn default_tray_countdown_target() -> String {
     "next".to_string()
 }
 
+fn default_clock_format() -> String {
+    "24h".to_string()
+}
+
 fn default_micro_hint_mix() -> String {
     "both".to_string()
 }
@@ -240,6 +244,8 @@ pub struct Settings {
     pub postpone_enabled: bool,
     pub postpone_minutes: u32,
     pub show_current_time: bool,
+    #[serde(default = "default_clock_format")]
+    pub clock_format: String,
     pub micro_manual_finish: bool,
     pub long_manual_finish: bool,
     pub autostart_enabled: bool,
@@ -322,6 +328,7 @@ impl Default for Settings {
             postpone_enabled: true,
             postpone_minutes: 5,
             show_current_time: true,
+            clock_format: default_clock_format(),
             micro_manual_finish: false,
             long_manual_finish: false,
             autostart_enabled: false,
@@ -415,9 +422,15 @@ impl Settings {
         self.bedtime_start_minutes = self.bedtime_start_minutes.min(1_439);
         self.bedtime_end_minutes = self.bedtime_end_minutes.min(1_439);
         // Visual: opacity / volume in [0, 1]; font scale in [0.5, 3.0].
-        self.overlay_opacity = self.overlay_opacity.clamp(0.0, 1.0);
+        // Opacity floor 0.8 caps UI transparency at 20%.
+        self.overlay_opacity = self.overlay_opacity.clamp(0.8, 1.0);
         self.sound_volume = self.sound_volume.clamp(0.0, 1.0);
         self.overlay_font_scale = self.overlay_font_scale.clamp(0.5, 3.0);
+        // Reject unknown clock_format values so the renderer's zod
+        // enum doesn't reject the entire settings payload.
+        if self.clock_format != "12h" && self.clock_format != "24h" {
+            self.clock_format = default_clock_format();
+        }
     }
 }
 
@@ -596,8 +609,47 @@ mod tests {
             ..Settings::default()
         };
         s.clamp();
-        assert!((0.0..=1.0).contains(&s.overlay_opacity));
+        // Opacity floor is 0.8 (caps transparency at 20%).
+        assert!((0.8..=1.0).contains(&s.overlay_opacity));
         assert!((0.0..=1.0).contains(&s.sound_volume));
+    }
+
+    #[test]
+    fn clamp_caps_transparency_at_twenty_percent() {
+        // Hand-edited settings.json with 50% transparency must be
+        // clamped back to the 20% cap (opacity 0.8).
+        let mut s = Settings {
+            overlay_opacity: 0.5,
+            ..Settings::default()
+        };
+        s.clamp();
+        assert!((s.overlay_opacity - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn clock_format_defaults_to_24h() {
+        let s = Settings::default();
+        assert_eq!(s.clock_format, "24h");
+    }
+
+    #[test]
+    fn clamp_normalises_unknown_clock_format() {
+        let mut s = Settings {
+            clock_format: "garbage".to_string(),
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.clock_format, "24h");
+    }
+
+    #[test]
+    fn clamp_leaves_valid_clock_format_alone() {
+        let mut s = Settings {
+            clock_format: "12h".to_string(),
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.clock_format, "12h");
     }
 
     #[test]
