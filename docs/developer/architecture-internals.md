@@ -105,7 +105,7 @@ All user files are written via `secure_io::write_user_only` — an atomic `tempf
 
 `Scheduler` holds seven `tokio::sync::Mutex` fields (settings, pause_state, timers, stats, screen_time, profiles, active_profile_name) plus one `std::sync::Mutex<Option<BreakEvent>>` for the renderer-bound `current_break` slot. The struct is `Clone` — each clone bumps the inner `Arc`s, no deep copy.
 
-Most handlers acquire several locks in sequence. **There's no documented lock order yet** (see [#31](https://github.com/drmowinckels/entracte/issues/31)). The convention in practice:
+Most handlers acquire several locks in sequence. **There's no documented lock order yet** (see [#14](https://github.com/drmowinckels/entracte/issues/14)). The convention in practice:
 
 1. `settings` first (cloned out immediately so it's not held across awaits).
 2. `pause_state` and the AtomicBools (`camera_active`, `video_active`, `auto_suppressed`, `hook_dialog_busy`) next.
@@ -152,7 +152,5 @@ The backend → renderer / tray surface is just Tauri events. The renderer subsc
 
 What's _not_ covered yet:
 
-- Integration test driving `run_loop` with a frozen clock.
-- Serde roundtrip parity between the Rust `Settings` and the TS `SchedulerSettings`.
-
-Both are tracked in [#31](https://github.com/drmowinckels/entracte/issues/31).
+- Integration test driving `run_loop` with a frozen clock — tracked in [#10](https://github.com/drmowinckels/entracte/issues/10).
+- Serde roundtrip parity between the Rust `Settings` and the TS `SchedulerSettings` — tracked in [#13](https://github.com/drmowinckels/entracte/issues/13).
