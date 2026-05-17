@@ -210,18 +210,18 @@ describe("SystemTab — Notifications", () => {
 
 describe("SystemTab — Tray countdown", () => {
   it("disables the 'count down to' select when the tray countdown checkbox is off", () => {
-    const { container } = renderTab({
+    renderTab({
       settings: { tray_countdown_enabled: false },
     });
-    const select = container.querySelector("select") as HTMLSelectElement;
+    const select = screen.getByLabelText("Count down to") as HTMLSelectElement;
     expect(select.disabled).toBe(true);
   });
 
   it("enables the select once the checkbox is on", () => {
-    const { container } = renderTab({
+    renderTab({
       settings: { tray_countdown_enabled: true },
     });
-    const select = container.querySelector("select") as HTMLSelectElement;
+    const select = screen.getByLabelText("Count down to") as HTMLSelectElement;
     expect(select.disabled).toBe(false);
   });
 
@@ -240,11 +240,11 @@ describe("SystemTab — Tray countdown", () => {
 
   it("changing the 'count down to' target dispatches the new value", () => {
     const update = vi.fn();
-    const { container } = renderTab({
+    renderTab({
       settings: { tray_countdown_enabled: true, tray_countdown_target: "next" },
       update,
     });
-    const select = container.querySelector("select") as HTMLSelectElement;
+    const select = screen.getByLabelText("Count down to") as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "short" } });
     expect(update).toHaveBeenCalledWith("tray_countdown_target", "short");
   });

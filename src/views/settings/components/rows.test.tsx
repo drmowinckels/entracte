@@ -140,20 +140,53 @@ describe("NumberRow", () => {
 });
 
 describe("TimeRow", () => {
-  it("renders a time input pre-filled from minutes-since-midnight", () => {
-    // 9:30 = 9*60+30 = 570
+  it("renders a text input pre-filled from minutes-since-midnight in 24h form by default", () => {
+    // 9:30 = 9*60+30 = 570. The input is `type="text"` (not `type="time"`)
+    // so we can control the rendering off the OS locale — see the comment
+    // in rows.tsx.
     render(<TimeRow label="Start" value={570} onChange={() => {}} />);
     const input = screen.getByLabelText("Start") as HTMLInputElement;
-    expect(input.type).toBe("time");
+    expect(input.type).toBe("text");
     expect(input.value).toBe("09:30");
   });
 
-  it("calls onChange with minutes-since-midnight (parses HH:MM)", () => {
+  it("renders in 12h form (`9:30 AM`) when `format='12h'` is passed", () => {
+    render(<TimeRow label="Start" value={570} onChange={() => {}} format="12h" />);
+    const input = screen.getByLabelText("Start") as HTMLInputElement;
+    expect(input.value).toBe("9:30 AM");
+  });
+
+  it("commits parsed minutes-since-midnight on blur (not on each keystroke)", () => {
+    // Local draft state means onChange only fires when the user commits
+    // (blur or Enter). A regression to "fire on every change" would
+    // round-trip half-typed strings through `parseMinutesOfDay` and
+    // reset the field mid-edit.
     const onChange = vi.fn();
     render(<TimeRow label="Start" value={0} onChange={onChange} />);
     const input = screen.getByLabelText("Start") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "17:45" } });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.blur(input);
     expect(onChange).toHaveBeenCalledWith(17 * 60 + 45);
+  });
+
+  it("accepts 12h input (`2:30 PM`) regardless of display format", () => {
+    const onChange = vi.fn();
+    render(<TimeRow label="Start" value={0} onChange={onChange} />);
+    const input = screen.getByLabelText("Start") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "2:30 PM" } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith(14 * 60 + 30);
+  });
+
+  it("reseeds the field from the previous value when the user types garbage", () => {
+    const onChange = vi.fn();
+    render(<TimeRow label="Start" value={570} onChange={onChange} />);
+    const input = screen.getByLabelText("Start") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "not a time" } });
+    fireEvent.blur(input);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input.value).toBe("09:30");
   });
 
   it("disables the input when `disabled` is set", () => {
