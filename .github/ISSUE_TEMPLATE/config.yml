@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation site
+    url: https://drmowinckels.github.io/entracte/
+    about: User guide, settings reference, and the developer / contributing guide.
+  - name: Contributing guide
+    url: https://github.com/drmowinckels/entracte/blob/main/CONTRIBUTING.md
+    about: Architecture overview, dev setup, what's in and out of scope, and how to send a patch.

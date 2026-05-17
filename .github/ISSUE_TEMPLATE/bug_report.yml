@@ -1,0 +1,73 @@
+name: Bug report
+description: Something isn't working — breaks aren't firing, the overlay misbehaves, settings won't save, etc.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Real-world reports are how Entracte gets sharper.
+
+        **Before you write everything by hand, please grab the diagnostics report:**
+
+        1. Open Entracte → **Settings → About**.
+        2. Click **Copy diagnostics report**.
+        3. Paste it into the "Diagnostics report" field below.
+
+        The report includes the app version, your OS, the active settings, recent stats, and the last 50 KB of the log file. It saves you having to dig those out yourself and gives the maintainer enough context to triage without follow-up questions.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A short description of the bug, and what you expected to happen instead.
+      placeholder: |
+        I clicked "Skip" on a long break and the overlay stayed on screen for another ten seconds before closing. I expected it to close immediately.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: As precise as you can manage. If you can't reproduce it reliably, say so — intermittent reports are still useful.
+      placeholder: |
+        1. Open Settings → Breaks
+        2. Set long break duration to 10 minutes
+        3. Wait for the long break overlay
+        4. Click "Skip"
+        5. Observe the overlay lingering
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: |
+        Paste the output of **Settings → About → Copy diagnostics report**. If the app is so broken you can't reach that screen, paste the contents of the log file directly — see the dropdown below for its location.
+      render: text
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        <details><summary>Where is the log file if I can't open the app?</summary>
+
+        Entracte writes to `entracte.log` in the OS-standard app log directory:
+
+        - **macOS**: `~/Library/Logs/app.entracte/entracte.log`
+        - **Linux**: `~/.local/share/app.entracte/logs/entracte.log` (XDG, may vary)
+        - **Windows**: `%LOCALAPPDATA%\app.entracte\logs\entracte.log`
+
+        The last few rotated files (`entracte.log.1`, `.2`, …) live in the same directory if the bug pre-dates the most recent restart.
+
+        </details>
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else?
+      description: Screenshots, screen recordings, related issues, unusual hardware (multi-monitor, HiDPI, external keyboard), or anything you tried that helped or didn't.
+    validations:
+      required: false
