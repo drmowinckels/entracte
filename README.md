@@ -89,16 +89,6 @@ If you'd like to support development, a **Supporter pack** unlocks personalisati
 - Rust + [Tauri 2](https://tauri.app) + Tokio backend.
 - Per-OS native hooks for Do Not Disturb, camera-in-use, and idle detection.
 
-## Repo layout
-
-```
-src/          React UI (settings window + break overlay)
-src-tauri/    Rust core (scheduler, tray, per-OS detection)
-.github/
-  AGENTS.md   Architecture and conventions
-  workflows/  ci.yml, release.yml
-```
-
 ## Development
 
 ```sh
@@ -116,15 +106,6 @@ Platform support matrix, scheduler internals, and OS-specific quirks are documen
 ## Contributing
 
 Bug reports, ideas, and patches are all welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, test, and PR workflow. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md), which — among the usual things — requires a real human reviewer in the loop on every contribution.
-
-## Releases
-
-Tag-driven via GitHub Actions. Pushing a `v*` tag builds signed (when secrets are configured) bundles for macOS aarch64 + x86_64, Windows, and Linux, and attaches them to a draft release.
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
 
 ## Status
 

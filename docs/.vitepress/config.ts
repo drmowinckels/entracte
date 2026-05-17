@@ -57,6 +57,7 @@ export default defineConfig({
               link: "/developer/architecture-internals",
             },
             { text: "IPC contract", link: "/developer/ipc" },
+            { text: "Releases", link: "/developer/releases" },
           ],
         },
         {
