@@ -8,7 +8,12 @@ import { CheckboxRow, NumberRow } from "../components/rows";
 import { HOOK_EVENTS } from "../constants";
 import type { UseHooks } from "../hooks/use-hooks";
 import type { UseSettings } from "../hooks/use-settings";
-import type { HookConfig, HookEvent, SchedulerSettings } from "../types";
+import type {
+  ClockFormat,
+  HookConfig,
+  HookEvent,
+  SchedulerSettings,
+} from "../types";
 
 function newUiId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -80,6 +85,22 @@ export function SystemTab({
           value={settings.autostart_enabled}
           onChange={(v) => setAutostart(v)}
         />
+      </section>
+
+      <h2>Display</h2>
+      <section>
+        <label className="row">
+          <span>Time format</span>
+          <select
+            value={settings.clock_format}
+            onChange={(e) =>
+              update("clock_format", e.target.value as ClockFormat)
+            }
+          >
+            <option value="24h">24-hour (14:30)</option>
+            <option value="12h">12-hour (2:30 PM)</option>
+          </select>
+        </label>
       </section>
 
       <h2>Notifications</h2>

@@ -5,6 +5,8 @@ export type { BreakSound, BreakSoundMode } from "../../lib/break-sound";
 
 export type MonitorPlacement = "primary" | "active" | "all";
 
+export type ClockFormat = "12h" | "24h";
+
 export type HookEvent =
   | "break_start"
   | "break_end"
@@ -53,6 +55,7 @@ export type SchedulerSettings = {
   postpone_enabled: boolean;
   postpone_minutes: number;
   show_current_time: boolean;
+  clock_format: ClockFormat;
   micro_manual_finish: boolean;
   long_manual_finish: boolean;
   autostart_enabled: boolean;

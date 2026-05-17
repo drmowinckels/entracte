@@ -91,6 +91,7 @@ fn ensure_overlay(app: &AppHandle, idx: usize) -> Option<tauri::WebviewWindow> {
     .always_on_top(true)
     .skip_taskbar(true)
     .transparent(true)
+    .resizable(false)
     .visible(false)
     .focused(false)
     .build()

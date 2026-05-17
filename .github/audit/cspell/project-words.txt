@@ -39,8 +39,10 @@ codecov
 lcov
 notarized
 notarization
+codesigned
 SignPath
 signpath
+TEAMID
 Bootswatch
 proscenium
 Lemon

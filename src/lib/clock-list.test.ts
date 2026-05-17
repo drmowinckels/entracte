@@ -40,11 +40,25 @@ describe("parseClockList", () => {
   it("dedupes equal entries after normalization", () => {
     expect(parseClockList("9:00, 09:00, 9:00")).toEqual(["09:00"]);
   });
+
+  it("accepts 12h entries alongside 24h ones", () => {
+    expect(parseClockList("9:00 AM, 2:30 PM, 17:45")).toEqual([
+      "09:00",
+      "14:30",
+      "17:45",
+    ]);
+  });
 });
 
 describe("formatClockList", () => {
-  it("joins with comma-space", () => {
+  it("joins with comma-space in 24h by default", () => {
     expect(formatClockList(["09:15", "12:30", "17:00"])).toBe("09:15, 12:30, 17:00");
+  });
+
+  it("renders the list in 12h when asked", () => {
+    expect(formatClockList(["09:15", "12:30", "17:00"], "12h")).toBe(
+      "9:15 AM, 12:30 PM, 5:00 PM",
+    );
   });
 
   it("returns empty string for empty list", () => {

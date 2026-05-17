@@ -42,7 +42,11 @@ export default function BreakOverlay() {
   } = useBreakState();
 
   const paused = useTypingPause(active, appearance.pause_countdown_if_typing);
-  const clock = useClock(Boolean(active) && appearance.show_current_time);
+  const clock = useClock(
+    Boolean(active) && appearance.show_current_time,
+    1000,
+    appearance.clock_format,
+  );
 
   useAmbientSound(active, appearance);
   useHintRotation(active, setHintIndex);

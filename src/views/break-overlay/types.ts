@@ -3,6 +3,8 @@ import type { BreakSound } from "../../lib/break-sound";
 
 export type BreakKind = "micro" | "long" | "sleep";
 
+export type ClockFormat = "12h" | "24h";
+
 export type BreakEvent = {
   kind: BreakKind;
   duration_secs: number;
@@ -22,6 +24,7 @@ export type OverlaySettings = {
   overlay_font_scale: number;
   show_hint: boolean;
   show_current_time: boolean;
+  clock_format: ClockFormat;
   micro_sound: BreakSound;
   long_sound: BreakSound;
   sound_volume: number;
@@ -43,6 +46,7 @@ export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
   overlay_font_scale: 1.0,
   show_hint: true,
   show_current_time: true,
+  clock_format: "24h",
   micro_sound: { mode: "end_chime", sound_id: "337048" },
   long_sound: { mode: "end_chime", sound_id: "337048" },
   sound_volume: 0.5,

@@ -70,7 +70,7 @@ export function BreaksTab({
             <input
               type="range"
               min={0}
-              max={50}
+              max={20}
               step={1}
               value={Math.round((1 - settings.overlay_opacity) * 100)}
               onChange={(e) =>
