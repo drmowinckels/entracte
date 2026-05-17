@@ -134,3 +134,8 @@ valuenow
 osascript
 powerpnt
 quicktime
+chrono
+eprintln
+marocchino
+macrotask
+macrotasks

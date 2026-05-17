@@ -24,6 +24,9 @@ src-tauri/lcov.info
 README.html
 README_files/
 
+# Lychee link-checker cache
+.lycheecache
+
 # Env
 .env
 .env.local
