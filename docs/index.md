@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Entracte
   text: Breaks that respect your flow.
-  tagline: A cross-platform break reminder app, named after the theatre interval between acts.
+  tagline: A cross-platform break reminder app, named after the theatre interval between acts. Pronounced "ahn-TRAHKT", not "en-tract".
   image:
     src: /logo_gradient.svg
     alt: Entracte logo
