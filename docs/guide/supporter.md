@@ -1,5 +1,11 @@
 # Supporter pack
 
+::: warning Coming soon — work in progress
+The supporter pack itself is wired end-to-end in the app, but the [Lemon Squeezy](https://lemonsqueezy.com/) storefront is still under review. **Purchase and license activation are temporarily hidden** in the **About → Supporter** tab while we wait for approval — expected within ~10 days from this note.
+
+In the meantime the pack ships as source-only: every gated feature is in the codebase and unlocks for anyone running a build with a valid record, but there's no way to buy a key yet. Nothing in the free experience is affected.
+:::
+
 Entracte is free and open source under Apache 2.0. If you'd like to support development, the supporter pack unlocks a few personalisation extras and helps keep the project moving.
 
 It's intentionally light: nothing core depends on it. Every scheduling, suppression, profile, hooks, stats, accessibility, and CLI feature stays available to everyone, regardless of whether you have a supporter key.
@@ -9,7 +15,8 @@ It's intentionally light: nothing core depends on it. Every scheduling, suppress
 - **Custom overlay colour** — pick any hex or use the colour picker, on top of the built-in themes.
 - **Theme rotation** — the `Rotate` option shuffles between your preset palettes break to break.
 - **Editable break hints** — customise the prompts shown during a break, or rotate your own list.
-- **Custom sounds** _(planned)_ — point each break kind at your own audio file.
+- **Custom sounds** — point each break kind at your own audio file (end-chime or looping ambient).
+- **Custom CSS** — freeform stylesheet injected into the settings window and the break overlay for full visual customisation.
 
 The defaults remain available even after your key expires, so you'll never lose access to a break you've configured — only the ability to edit personalisation while the key is inactive.
 
