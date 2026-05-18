@@ -30,20 +30,28 @@ features:
     linkText: Why each kind matters
   - icon: 🤫
     title: Knows when to stay quiet
-    details: Skips when Do Not Disturb is on, your camera is in use, you've gone idle, or you're outside your work hours.
-  - icon: ⏸
-    title: Pause from the tray
-    details: One-click pause for 15m, 30m, 1h, 2h, 4h, until tomorrow 6am, or indefinitely.
-  - icon: 🖥
-    title: Multi-monitor aware
-    details: One borderless overlay per display, no Space-hopping fullscreen tricks.
-  - icon: 🔔
-    title: Pre-break heads-up
-    details: Optional notification a configurable number of seconds before each break, so the overlay never surprises you.
+    details: Skips when Do Not Disturb is on, your camera is in use, you've gone idle, or you're outside your work hours. One borderless overlay per monitor when it does fire.
+  - icon: 👤
+    title: Profiles for every mode
+    details: Switch from the tray between "Deep work", "Meetings", "Weekend"… each carries its own intervals, hint pool, and sound. Inherit-from-active when you create a new one.
+  - icon: 💭
+    title: Wellness hints, not nag screens
+    details: Each break shows one of a rotating pool of prompts — physical stretches, breathing cues, social nudges. Edit the pool, mix the categories, swap in your own.
+  - icon: 📊
+    title: Insights you can actually use
+    details: 84-day heatmap, time-of-day distribution, suppression-reason breakdown, daily screen-time budget with reminders. Export to CSV when you want it elsewhere.
   - icon: 🦀
     title: Native and lightweight
-    details: Rust + Tauri 2 core. Small binary, low idle CPU, no Electron.
+    details: Rust + Tauri 2 core. Small binary, low idle CPU, no Electron. Local-only — no telemetry, no cloud sync, no account.
 ---
+
+<div style="text-align: center; margin: 3rem 0 1rem;">
+  <img src="/screenshots/break-overlay-active.png" alt="A micro break overlay: countdown ring at 10 seconds with the prompt 'Sip some water.' and Postpone / Skip buttons" style="max-width: 720px; width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
+</div>
+
+::: warning Pre-release
+No tagged binaries yet — installing currently means [building from source](/guide/install). The release pipeline is in place; the first `v0.1.0` will land on the [Releases page](https://github.com/drmowinckels/entracte/releases) once it's cut.
+:::
 
 <div style="text-align: center; margin-top: 2rem;">
 
