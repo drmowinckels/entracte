@@ -902,3 +902,165 @@ mod tests {
         assert!(s.pause_countdown_if_typing);
     }
 }
+
+/// Rust ↔ TypeScript Settings parity test (issue #13).
+///
+/// Anyone adding a setting has to update:
+///   1. `Settings` (this file) + `Default`
+///   2. `SchedulerSettings` in `src/views/settings/types.ts`
+///   3. The Zod schema in `src/views/settings/hooks/use-settings.ts`
+///   4. (sometimes) `OverlaySettings` in `src/views/break-overlay/types.ts`
+///   5. (sometimes) the a11y audit fixture
+///
+/// Forgetting (2) is a silent break — the renderer's IPC validation
+/// rejects the response at runtime in a way CI doesn't catch on the
+/// PR that introduced it (saw this happen with `custom_css` recently).
+/// This test compares the *top-level* field-name sets of (1) and (2)
+/// and fails with a useful diff so the drift surfaces at unit-test time.
+///
+/// What it does NOT check:
+///   - Field types (Rust `u64` vs TS `number` — out of scope; the Zod
+///     schema enforces this at runtime).
+///   - Nested struct shapes (`BreakSound`, `HookConfig`) — those have
+///     their own Zod schemas, and adding a nested field would still be
+///     caught when it crosses the wire.
+///   - The Zod schema or the OverlaySettings mirror — see issue #13
+///     follow-ups if drift between (1) and (3)/(4) becomes a problem.
+#[cfg(test)]
+mod parity_tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    use super::Settings;
+
+    fn rust_settings_keys() -> BTreeSet<String> {
+        let value = serde_json::to_value(Settings::default())
+            .expect("Settings serialises to a JSON object");
+        let obj = value.as_object().expect("top-level Settings is an object");
+        obj.keys().cloned().collect()
+    }
+
+    fn ts_settings_keys() -> BTreeSet<String> {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let path = PathBuf::from(manifest).join("../src/views/settings/types.ts");
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "could not read TS source at {} — has the layout moved? \
+                 If yes, update the parity test path. ({e})",
+                path.display()
+            )
+        });
+        let body = extract_type_body(&source, "SchedulerSettings");
+        extract_field_names(body)
+    }
+
+    /// Pull the body of `export type <name> = { ... };` out of the
+    /// source. Whitespace-tolerant; assumes the type is a flat
+    /// `{ key: type; }` block with one field per line. If the TS file
+    /// grows nested-object types inline (e.g., `foo: { bar: number }`),
+    /// this needs to learn brace-depth tracking — but right now every
+    /// nested type is named (BreakSound, HookConfig) so we're safe.
+    fn extract_type_body<'a>(source: &'a str, name: &str) -> &'a str {
+        let needle = format!("export type {name} = {{");
+        let start = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("`{name}` not found in TS source"))
+            + needle.len();
+        let after_open = &source[start..];
+        let end = after_open
+            .find("\n};")
+            .unwrap_or_else(|| panic!("end of `{name}` body not found"));
+        &after_open[..end]
+    }
+
+    fn extract_field_names(body: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for line in body.lines() {
+            let trimmed = line.trim();
+            // Skip blank lines and `//` comments.
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+            // Match `field_name:` at the start of the trimmed line.
+            // `take_while` over the chars is enough — no regex dep.
+            let name: String = trimmed
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() {
+                continue;
+            }
+            // Confirm a `:` follows (possibly with whitespace).
+            let after = &trimmed[name.len()..];
+            if after.trim_start().starts_with(':') {
+                out.insert(name);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn rust_and_ts_settings_have_the_same_top_level_keys() {
+        let rust = rust_settings_keys();
+        let ts = ts_settings_keys();
+
+        let missing_from_ts: Vec<_> = rust.difference(&ts).collect();
+        let missing_from_rust: Vec<_> = ts.difference(&rust).collect();
+
+        assert!(
+            missing_from_ts.is_empty() && missing_from_rust.is_empty(),
+            "Rust ↔ TS Settings parity drift:\n  \
+             present in Rust, missing from TS ({} keys): {missing_from_ts:?}\n  \
+             present in TS, missing from Rust ({} keys): {missing_from_rust:?}\n  \
+             Add or remove the field in BOTH places. See `src-tauri/src/scheduler/settings.rs` \
+             and `src/views/settings/types.ts`.",
+            missing_from_ts.len(),
+            missing_from_rust.len(),
+        );
+    }
+
+    // -- Tests for the TS-source extraction helpers, so a malformed
+    //    types.ts (or a refactor of the helpers) doesn't silently
+    //    return an empty set and make the parity test trivially pass.
+
+    #[test]
+    fn extract_type_body_handles_typical_block() {
+        let src = "import x from 'y';\n\
+                   export type Foo = {\n  \
+                     a: number;\n  \
+                     b: string;\n\
+                   };\n\
+                   export type Bar = { c: boolean };\n";
+        let body = extract_type_body(src, "Foo");
+        assert!(body.contains("a: number;"));
+        assert!(body.contains("b: string;"));
+        assert!(!body.contains("Bar"));
+    }
+
+    #[test]
+    fn extract_field_names_parses_canonical_form() {
+        let body = "\n  micro_interval_secs: number;\n  \
+                    hooks: HookConfig[];\n  \
+                    micro_sound: BreakSound;\n";
+        let names = extract_field_names(body);
+        assert!(names.contains("micro_interval_secs"));
+        assert!(names.contains("hooks"));
+        assert!(names.contains("micro_sound"));
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn extract_field_names_skips_blank_and_comment_lines() {
+        let body = "\n  // intentionally a comment\n\n  foo: number;\n";
+        let names = extract_field_names(body);
+        assert_eq!(names.len(), 1);
+        assert!(names.contains("foo"));
+    }
+
+    #[test]
+    fn ts_settings_keys_returns_nonempty_set() {
+        // Sanity: if the extractor returns nothing, the parity test
+        // would falsely "pass" the diff (both sides equal-empty).
+        assert!(!ts_settings_keys().is_empty());
+    }
+}
