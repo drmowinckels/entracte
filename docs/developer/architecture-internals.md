@@ -105,13 +105,69 @@ All user files are written via `secure_io::write_user_only` — an atomic `tempf
 
 `Scheduler` holds seven `tokio::sync::Mutex` fields (settings, pause_state, timers, stats, screen_time, profiles, active_profile_name) plus one `std::sync::Mutex<Option<BreakEvent>>` for the renderer-bound `current_break` slot. The struct is `Clone` — each clone bumps the inner `Arc`s, no deep copy.
 
-Most handlers acquire several locks in sequence. **There's no documented lock order yet** (see [#14](https://github.com/drmowinckels/entracte/issues/14)). The convention in practice:
+### Locking convention: snapshot then act
 
-1. `settings` first (cloned out immediately so it's not held across awaits).
-2. `pause_state` and the AtomicBools (`camera_active`, `video_active`, `auto_suppressed`, `hook_dialog_busy`) next.
-3. `timers` last, often held across the whole fire-decision block.
+**Rule:** every call site releases its `tokio::Mutex` guard before acquiring the next one across an `.await` point. The canonical version of this rule lives on the `Scheduler` docstring in [`src-tauri/src/scheduler/mod.rs`](https://github.com/drmowinckels/entracte/blob/main/src-tauri/src/scheduler/mod.rs); this section is the readable expansion.
 
-`current_break` uses a `std::sync::Mutex` rather than tokio's because its critical sections are short and the lock can be acquired from sync contexts (the renderer-facing `get_current_break` command is `#[tauri::command]` `pub fn`, not `async`).
+The pattern in code:
+
+```rust
+let s = sched.settings.lock().await.clone();      // released at `;`
+let name = sched.active_profile_name.lock().await.clone();
+let mut profiles = sched.profiles.lock().await;   // safe — others released
+```
+
+Following this rule, deadlock becomes structurally impossible — the classic "A holds X waiting for Y, B holds Y waiting for X" cycle cannot form if guards never overlap on `.await`.
+
+**What it rules out:**
+
+- `let s = sched.settings.lock().await; let p = sched.profiles.lock().await;` (holding `settings` across the `profiles` acquisition).
+- `let g = sched.timers.lock().await; some_async_fn(&sched).await;` (holding any guard across a call that may itself lock the same scheduler).
+
+**What it allows:**
+
+- Re-acquiring the same lock back-to-back to mutate after an awaited side-effect (write to disk, emit event). Each scope drops first.
+- The `std::sync::Mutex` on `current_break`, which is only ever taken inside short non-async blocks.
+- Short synchronous emits (`app.emit("evt", &single_field)`) that borrow a guard expression in the argument list and drop it at the end of the statement — the emit itself does not `.await`.
+- Reading two unrelated single-field snapshots back-to-back inside one command (see `commands::breaks::get_postpone_state`): clone the first, drop, then acquire the second. Brief observational skew is fine for renderer queries that never make causal decisions across the pair.
+
+### Acquisition order
+
+When a handler genuinely takes more than one lock in sequence (each held in its own scope, never overlapping `.await`), it does so in this order:
+
+1. `profiles` / `active_profile_name` (the meta layer — which profile is live)
+2. `settings` (the live config; almost always `.clone()`d out immediately)
+3. `pause_state` and the AtomicBools (`camera_active`, `video_active`, `auto_suppress_reason`, `hook_dialog_busy`)
+4. `timers` (often the longest-held guard inside fire-decision blocks)
+5. `stats` / `screen_time`
+6. `current_break` (the sync mutex; short scope, no `.await` inside)
+
+This is the order in which it's safe to _re-acquire_ across a handler when several distinct snapshots are needed. Anything that takes a lower-numbered lock after a higher-numbered one in the same handler is suspect — flag in review.
+
+Example of a correct multi-lock handler — `commands::hooks::set_hooks`:
+
+```rust
+{
+    let mut current = scheduler.settings.lock().await;            // (2)
+    current.hooks_enabled = hooks_enabled;
+    current.hooks = hooks.clone();
+}
+{
+    let active = scheduler.active_profile_name.lock().await.clone(); // (1)
+    let mut profiles = scheduler.profiles.lock().await;              // (1)
+    // … find active profile and mirror the change …
+}
+```
+
+The order looks "wrong" (2 then 1) at first glance, but each scope drops its guards before the next opens — so the acquisition graph never forms a cycle. Re-acquiring `settings` after `profiles` in the same handler _would_ be a problem.
+
+### Why `current_break` is a `std::sync::Mutex`
+
+`current_break` holds the most recent `BreakEvent` so the overlay can rehydrate after a window reload (it doesn't get the historic `break:start` event). Its critical sections are short (a single read or `set/clear`), and it's accessed from the renderer-facing `get_current_break` command, which is `#[tauri::command]` `pub fn` (not `async`). A `tokio::Mutex` would require an async context the call site doesn't have. The std mutex never enters an `.await`, so it can't deadlock with anything else.
+
+### What to do when nested holds genuinely seem necessary
+
+If a new code path needs an atomic read-modify-write across two pieces of state — say, mutate `settings` and `timers` in lockstep — consolidate them into one struct under one mutex instead of introducing the nesting. Once the snapshot-then-act rule has held for the whole module, the first violation is the one that destabilises the invariant.
 
 ## Event channels
 
