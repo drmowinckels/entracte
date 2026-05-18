@@ -4,11 +4,11 @@ export default defineConfig({
   title: "Entracte",
   description:
     "Cross-platform break reminder app, named after the theatre interval between acts.",
-  base: "/entracte/",
+  base: "/",
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ["link", { rel: "icon", href: "/entracte/logo.svg", type: "image/svg+xml" }],
+    ["link", { rel: "icon", href: "/logo.svg", type: "image/svg+xml" }],
     ["meta", { name: "theme-color", content: "#2e545c" }],
   ],
   themeConfig: {
