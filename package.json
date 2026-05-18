@@ -19,7 +19,7 @@
     "audit:knip": "knip --config .github/audit/knip.json",
     "audit:spell": "cspell --no-progress --config .github/audit/cspell.json \"**/*.{md,ts,tsx}\"",
     "audit:size": "npm run build && size-limit",
-    "audit:links": "lychee --config .github/audit/lychee.toml \"**/*.md\"",
+    "audit:links": "lychee --config .github/audit/lychee.toml --root-dir \"$PWD/docs\" \"**/*.md\"",
     "audit:rust": "cd src-tauri && cargo deny check",
     "doc": "typedoc --options .config/typedoc/typedoc.json",
     "tauri": "tauri"
