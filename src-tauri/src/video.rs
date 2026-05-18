@@ -78,6 +78,42 @@ pub(crate) fn any_window_is_fullscreen(windows: &[Rect], monitors: &[Rect]) -> b
         .any(|w| monitors.iter().any(|m| rect_matches(*w, *m)))
 }
 
+/// Whether the platform can answer "is a fullscreen window present?".
+/// Linux Wayland uses `Unknowable`; everywhere else passes a concrete
+/// `Fullscreen(bool)`. Exists so the combining logic in
+/// [`pause_decision`] is one pure function with one truth-table test,
+/// instead of three near-identical chains duplicated per platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowKnowledge {
+    Fullscreen(bool),
+    // Only constructed on Linux Wayland; the truth-table tests exercise
+    // it everywhere, but in non-test builds on macOS / Windows nothing
+    // produces this variant — silence the dead-code lint.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Unknowable,
+}
+
+/// Should breaks pause right now, given the two signals?
+///
+/// Locked truth table — touch with care:
+/// - `(false, _)`                        → false (no media keeping screen awake)
+/// - `(true, Fullscreen(true))`          → true (real fullscreen video)
+/// - `(true, Fullscreen(false))`         → false (small-window video → DON'T pause)
+/// - `(true, Unknowable)`                → true (Wayland fallback: assertion-only)
+///
+/// The `Fullscreen(false) → false` row is the bug fix in the parent
+/// PR. If a contributor "simplifies" this back to `assertion`, the
+/// unit test catches it before merge.
+pub(crate) fn pause_decision(assertion_active: bool, window: WindowKnowledge) -> bool {
+    if !assertion_active {
+        return false;
+    }
+    match window {
+        WindowKnowledge::Fullscreen(b) => b,
+        WindowKnowledge::Unknowable => true,
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::process::Command;
@@ -96,7 +132,7 @@ mod macos {
         kCGWindowListOptionOnScreenOnly, CGWindowListCopyWindowInfo,
     };
 
-    use super::{any_window_is_fullscreen, Rect};
+    use super::{any_window_is_fullscreen, pause_decision, Rect, WindowKnowledge};
 
     // Pin to the absolute path so `$PATH` shenanigans can't swap in a
     // shim. `/usr/bin/pmset` is the OS-shipped location on every
@@ -111,12 +147,16 @@ mod macos {
     }
 
     fn check() -> bool {
+        let assertion = display_assertion_active();
         // Fast path: skip the (more expensive) window enumeration when
         // nothing is even claiming to play media.
-        if !display_assertion_active() {
+        if !assertion {
             return false;
         }
-        fullscreen_window_present()
+        pause_decision(
+            assertion,
+            WindowKnowledge::Fullscreen(fullscreen_window_present()),
+        )
     }
 
     fn display_assertion_active() -> bool {
@@ -246,7 +286,7 @@ mod windows {
         EnumWindows, GetWindowRect, IsWindowVisible,
     };
 
-    use super::{any_window_is_fullscreen, Rect};
+    use super::{any_window_is_fullscreen, pause_decision, Rect, WindowKnowledge};
 
     // Absolute `System32` path so a planted `powercfg.exe` earlier in
     // `%PATH%` can't intercept the call. Raw string keeps the
@@ -261,10 +301,14 @@ mod windows {
     }
 
     fn check() -> bool {
-        if !display_request_active() {
+        let assertion = display_request_active();
+        if !assertion {
             return false;
         }
-        fullscreen_window_present()
+        pause_decision(
+            assertion,
+            WindowKnowledge::Fullscreen(fullscreen_window_present()),
+        )
     }
 
     fn display_request_active() -> bool {
@@ -384,7 +428,7 @@ mod linux {
     use std::sync::OnceLock;
     use std::thread;
 
-    use super::{any_window_is_fullscreen, Rect};
+    use super::{pause_decision, WindowKnowledge};
 
     // `/usr/bin/systemd-inhibit` is the consistent location on every
     // systemd-based distro we ship to. Pinning the absolute path keeps
@@ -406,15 +450,19 @@ mod linux {
     }
 
     fn check() -> bool {
-        if !inhibitor_active() {
+        let assertion = inhibitor_active();
+        if !assertion {
             return false;
         }
         // On Wayland there's no portable way to enumerate windows from
-        // outside the compositor — fall back to assertion-only.
-        if is_wayland_session() {
-            return true;
-        }
-        fullscreen_window_present()
+        // outside the compositor — signal `Unknowable` so `pause_decision`
+        // falls back to assertion-only behaviour.
+        let window = if is_wayland_session() {
+            WindowKnowledge::Unknowable
+        } else {
+            WindowKnowledge::Fullscreen(fullscreen_window_present())
+        };
+        pause_decision(assertion, window)
     }
 
     fn inhibitor_active() -> bool {
@@ -474,7 +522,7 @@ mod linux {
         let Some(state) = xprop_window_state(&active_id) else {
             return false;
         };
-        state.contains("_NET_WM_STATE_FULLSCREEN")
+        parse_net_wm_state_fullscreen(&state)
     }
 
     fn xprop_active_window_id() -> Option<String> {
@@ -491,13 +539,14 @@ mod linux {
 
     pub(super) fn parse_active_window_id(text: &str) -> Option<String> {
         // Expected line: `_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3c00006`
+        // `0x0` is the "no active window" sentinel — reject it so we
+        // don't follow up with a useless xprop call.
         let (_, after) = text.trim().rsplit_once('#')?;
         let id = after.trim();
-        if id.starts_with("0x") {
-            Some(id.to_string())
-        } else {
-            None
+        if !id.starts_with("0x") || id == "0x0" {
+            return None;
         }
+        Some(id.to_string())
     }
 
     fn xprop_window_state(id: &str) -> Option<String> {
@@ -511,14 +560,12 @@ mod linux {
         std::str::from_utf8(&out.stdout).ok().map(str::to_string)
     }
 
-    // `any_window_is_fullscreen` is exported by the parent module so the
-    // bounds-comparison tests can exercise it via the shared helper.
-    // The Linux path uses xprop's `_NET_WM_STATE_FULLSCREEN` flag rather
-    // than bounds comparison, but the import keeps the warning silent
-    // and the helper available if we ever swap in xcb-based enumeration.
-    #[allow(dead_code)]
-    fn _ensure_helper_used() {
-        let _ = any_window_is_fullscreen as fn(&[Rect], &[Rect]) -> bool;
+    /// True iff `_NET_WM_STATE_FULLSCREEN` appears in xprop output for
+    /// `_NET_WM_STATE`. Crucially, `_NET_WM_STATE_MAXIMIZED_*` must NOT
+    /// match — a maximised window with the taskbar visible is the exact
+    /// case we want to exclude.
+    pub(super) fn parse_net_wm_state_fullscreen(text: &str) -> bool {
+        text.contains("_NET_WM_STATE_FULLSCREEN")
     }
 }
 
@@ -576,6 +623,37 @@ mod tests {
         let windows = [Rect { x: 0, y: 0, w: 1920, h: 1040 }];
         let monitors = [Rect { x: 0, y: 0, w: 1920, h: 1080 }];
         assert!(!any_window_is_fullscreen(&windows, &monitors));
+    }
+
+    // -- `pause_decision` truth-table regression guards. The whole
+    //    point of this PR is the `Fullscreen(false) → false` row;
+    //    every row below is a regression someone could re-introduce by
+    //    "simplifying" the combining logic.
+
+    #[test]
+    fn pause_decision_no_pause_without_assertion() {
+        assert!(!pause_decision(false, WindowKnowledge::Fullscreen(true)));
+        assert!(!pause_decision(false, WindowKnowledge::Fullscreen(false)));
+        assert!(!pause_decision(false, WindowKnowledge::Unknowable));
+    }
+
+    #[test]
+    fn pause_decision_pauses_when_assertion_and_fullscreen() {
+        assert!(pause_decision(true, WindowKnowledge::Fullscreen(true)));
+    }
+
+    #[test]
+    fn pause_decision_does_not_pause_for_small_window_video() {
+        // The original bug: assertion-only pause for a small-window
+        // video. Must stay false.
+        assert!(!pause_decision(true, WindowKnowledge::Fullscreen(false)));
+    }
+
+    #[test]
+    fn pause_decision_falls_back_to_assertion_only_when_window_unknowable() {
+        // Linux Wayland: we can't enumerate windows, so an active
+        // assertion is the strongest signal we have.
+        assert!(pause_decision(true, WindowKnowledge::Unknowable));
     }
 }
 
@@ -713,5 +791,52 @@ mod linux_tests {
     fn parse_active_window_id_rejects_non_hex() {
         let sample = "_NET_ACTIVE_WINDOW(WINDOW): not set\n";
         assert_eq!(parse_active_window_id(sample), None);
+    }
+
+    #[test]
+    fn parse_active_window_id_rejects_zero_sentinel() {
+        // `0x0` is what xprop returns when no window is focused (e.g.,
+        // the desktop has focus). We must not chain a second xprop
+        // call against that bogus id.
+        let sample = "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0\n";
+        assert_eq!(parse_active_window_id(sample), None);
+    }
+
+    use super::linux::parse_net_wm_state_fullscreen;
+
+    #[test]
+    fn parse_net_wm_state_true_when_fullscreen_present() {
+        let sample = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN\n";
+        assert!(parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn parse_net_wm_state_true_when_fullscreen_combined_with_other_states() {
+        // Common Picture-in-Picture / always-on-top combo from Firefox.
+        let sample =
+            "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_ABOVE\n";
+        assert!(parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn parse_net_wm_state_false_for_maximised() {
+        // Maximised is NOT fullscreen — the taskbar / dock is still
+        // visible and the user isn't committed to a video. This is the
+        // exact regression we're guarding against.
+        let sample =
+            "_NET_WM_STATE(ATOM) = _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_MAXIMIZED_VERT\n";
+        assert!(!parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn parse_net_wm_state_false_when_property_missing() {
+        // xprop's "no such property" output. Must not match.
+        let sample = "_NET_WM_STATE:  not found.\n";
+        assert!(!parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn parse_net_wm_state_false_for_empty_output() {
+        assert!(!parse_net_wm_state_fullscreen(""));
     }
 }
