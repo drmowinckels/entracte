@@ -1,13 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
+import type { Sound } from "./sounds";
+
+// `convertFileSrc` is what bridges user-supplied filesystem paths into
+// the Tauri asset protocol. The lib uses it for the custom-sound
+// variants below — mocked here so tests don't need a Tauri runtime.
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (p: string) => `mocked-asset://${p}`,
+}));
+
+const {
+  playCustomSound,
   playSound,
   previewAmbient,
+  previewCustomAmbient,
   soundById,
   soundDisplayName,
   soundsForMode,
   startAmbient,
-  type Sound,
-} from "./sounds";
+  startCustomAmbient,
+} = await import("./sounds");
 
 // We don't mock the catalogue — these tests assert against the real
 // `credits.json` so a careless edit to that file (missing category,
@@ -295,5 +306,124 @@ describe("previewAmbient", () => {
     // the fade would later fire and call pause() a second time.
     await new Promise((r) => setTimeout(r, 50));
     expect(audio.pause).toHaveBeenCalledTimes(1);
+  });
+});
+
+// -- Custom-file (Supporter-pack) variants. Same playback semantics as
+//    the bundled-id variants above, but the URL is resolved through
+//    `convertFileSrc` (mocked to `mocked-asset://${path}` at the top of
+//    this file) instead of Vite's lazy URL loader.
+
+describe("playCustomSound", () => {
+  beforeEach(() => {
+    installFakeAudio();
+  });
+
+  afterEach(() => {
+    restoreAudio();
+  });
+
+  it("is a no-op when volume is zero", async () => {
+    await playCustomSound("/Users/me/chime.mp3", 0);
+    expect(createdAudios.length).toBe(0);
+  });
+
+  it("is a no-op when the path is empty", async () => {
+    await playCustomSound("", 0.5);
+    expect(createdAudios.length).toBe(0);
+  });
+
+  it("resolves the path through the asset protocol and plays once", async () => {
+    const promise = playCustomSound("/Users/me/chime.mp3", 0.5);
+    const audio = await waitForAudio();
+    expect(audio.src).toBe("mocked-asset:///Users/me/chime.mp3");
+    expect(audio.volume).toBe(0.5);
+    audio.fire("ended");
+    await expect(promise).resolves.toBeUndefined();
+  });
+});
+
+describe("startCustomAmbient", () => {
+  beforeEach(() => {
+    installFakeAudio();
+  });
+
+  afterEach(() => {
+    restoreAudio();
+  });
+
+  it("returns null when volume is zero", () => {
+    expect(startCustomAmbient("/Users/me/loop.mp3", 0)).toBeNull();
+    expect(createdAudios.length).toBe(0);
+  });
+
+  it("returns null when the path is empty", () => {
+    expect(startCustomAmbient("", 0.4)).toBeNull();
+    expect(createdAudios.length).toBe(0);
+  });
+
+  it("loops the asset-protocol URL at the requested volume", async () => {
+    const handle = startCustomAmbient("/Users/me/loop.mp3", 0.3);
+    expect(handle).not.toBeNull();
+    const audio = await waitForAudio();
+    expect(audio.src).toBe("mocked-asset:///Users/me/loop.mp3");
+    expect(audio.loop).toBe(true);
+    expect(audio.volume).toBe(0.3);
+    handle!.stop();
+  });
+
+  it("stop() pauses the audio and clears src", async () => {
+    const handle = startCustomAmbient("/Users/me/loop.mp3", 0.3);
+    const audio = await waitForAudio();
+    handle!.stop();
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.src).toBe("");
+  });
+});
+
+describe("previewCustomAmbient", () => {
+  beforeEach(() => {
+    installFakeAudio();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    restoreAudio();
+  });
+
+  it("returns null when volume is zero", () => {
+    expect(previewCustomAmbient("/Users/me/loop.mp3", 0)).toBeNull();
+    expect(createdAudios.length).toBe(0);
+  });
+
+  it("returns null when the path is empty", () => {
+    expect(previewCustomAmbient("", 0.6)).toBeNull();
+    expect(createdAudios.length).toBe(0);
+  });
+
+  it("starts looping the asset-protocol URL at the requested volume", async () => {
+    const handle = previewCustomAmbient("/Users/me/loop.mp3", 0.6, 2, 0.5);
+    expect(handle).not.toBeNull();
+    const audio = await waitForAudio();
+    expect(audio.src).toBe("mocked-asset:///Users/me/loop.mp3");
+    expect(audio.loop).toBe(true);
+    expect(audio.volume).toBe(0.6);
+    handle!.stop();
+  });
+
+  it("auto-stops after maxSecs by fading and pausing", async () => {
+    const maxSecs = 0.15;
+    const fadeSecs = 0.05;
+    const handle = previewCustomAmbient(
+      "/Users/me/loop.mp3",
+      0.6,
+      maxSecs,
+      fadeSecs,
+    );
+    const audio = await waitForAudio();
+    expect(handle).not.toBeNull();
+    await new Promise((r) => setTimeout(r, (maxSecs + 0.1) * 1000));
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.volume).toBeCloseTo(0, 1);
   });
 });
