@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation site
-    url: https://drmowinckels.github.io/entracte/
+    url: https://entracte.drmowinckels.io/
     about: User guide, settings reference, and the developer / contributing guide.
   - name: Contributing guide
     url: https://github.com/drmowinckels/entracte/blob/main/CONTRIBUTING.md

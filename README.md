@@ -6,7 +6,7 @@
 
 <p align="center">
   <em>Pronounced "ahn-TRAHKT" (French <em>entracte</em>, IPA /ɑ̃.tʁakt/) — not "en-tract".</em><br/>
-  <sub><a href="https://drmowinckels.github.io/entracte/#how-to-say-it">🔊 Hear it on the docs site</a></sub>
+  <sub><a href="https://entracte.drmowinckels.io/#how-to-say-it">🔊 Hear it on the docs site</a></sub>
 </p>
 
 <p align="center">
