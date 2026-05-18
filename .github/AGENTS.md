@@ -184,6 +184,7 @@ Three workflows in [.github/workflows/](workflows/):
   - **audit** (ubuntu, hard-fail): knip + cspell + size-limit.
   - **advisory** (ubuntu, `continue-on-error: true`): cargo-deny + lychee + npm audit, results posted as a sticky PR comment.
 - **[docs.yml](workflows/docs.yml)** — runs on push to `main` when `docs/**`, `src/**`, `src-tauri/**`, or `.config/typedoc/**` change. Builds the VitePress site + rustdoc + TypeDoc, deploys to GitHub Pages.
+- **[docs-preview.yml](workflows/docs-preview.yml)** — runs on `pull_request` against the same path set. Mirrors the production docs build and pushes the result to Netlify as a per-PR preview, then sticky-comments the URL on the PR. Requires `NETLIFY_AUTH_TOKEN` (user token) and `NETLIFY_SITE_ID` (per-site) repo secrets. Skips fork PRs (no secret access). Production deploys stay on GitHub Pages via `docs.yml` — Netlify is preview-only.
 - **[release.yml](workflows/release.yml)** — runs on `v*` tag push (or `workflow_dispatch`). Full bundle via `tauri-action` across all platforms, creates a draft GitHub release.
 
 Codecov targets: project + patch, both `informational: true` (no merge block on coverage drops) — see [.github/codecov.yml](codecov.yml).
