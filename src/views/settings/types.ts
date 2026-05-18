@@ -94,6 +94,7 @@ export type SchedulerSettings = {
   tray_countdown_target: TrayCountdownTarget;
   micro_break_mode: string;
   long_break_mode: string;
+  custom_css: string;
 };
 
 export type ScreenTimeState = {

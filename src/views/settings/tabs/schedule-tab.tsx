@@ -11,17 +11,20 @@ import { CheckboxRow, NumberRow, TimeRow } from "../components/rows";
 import { SoundControls } from "../components/sound-controls";
 import type { UseSettings } from "../hooks/use-settings";
 import { useScreenTime } from "../hooks/use-screen-time";
-import type { SchedulerSettings } from "../types";
+import type { SchedulerSettings, SupporterStatus } from "../types";
 
 export function ScheduleTab({
   settings,
   update,
   updateMany,
+  supporter,
 }: {
   settings: SchedulerSettings;
   update: UseSettings["update"];
   updateMany: UseSettings["updateMany"];
+  supporter: SupporterStatus;
 }) {
+  const isSupporter = supporter.is_supporter;
   const [microFixedTimesText, setMicroFixedTimesText] = useState(
     formatClockList(settings.micro_fixed_times, settings.clock_format),
   );
@@ -134,6 +137,7 @@ export function ScheduleTab({
               sound={settings.micro_sound}
               volume={settings.sound_volume}
               onChange={(next) => update("micro_sound", next)}
+              isSupporter={isSupporter}
             />
             <div className="actions inline">
               <button
@@ -236,6 +240,7 @@ export function ScheduleTab({
               sound={settings.long_sound}
               volume={settings.sound_volume}
               onChange={(next) => update("long_sound", next)}
+              isSupporter={isSupporter}
             />
             <div className="actions inline">
               <button

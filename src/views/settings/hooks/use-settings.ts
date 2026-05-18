@@ -13,6 +13,7 @@ import type { SchedulerSettings } from "../types";
 const breakSoundSchema = z.object({
   mode: z.enum(["off", "end_chime", "ambient"]),
   sound_id: z.string(),
+  custom_path: z.string().optional(),
 });
 
 const hookConfigSchema = z.object({
@@ -28,7 +29,7 @@ const hookConfigSchema = z.object({
   enabled: z.boolean(),
 });
 
-const schedulerSettingsSchema = z.object({
+export const schedulerSettingsSchema = z.object({
   micro_interval_secs: z.number(),
   micro_duration_secs: z.number(),
   long_interval_secs: z.number(),
@@ -101,6 +102,7 @@ const schedulerSettingsSchema = z.object({
   tray_countdown_target: z.enum(["next", "short", "long"]),
   micro_break_mode: z.string(),
   long_break_mode: z.string(),
+  custom_css: z.string(),
 }) satisfies z.ZodType<SchedulerSettings>;
 
 const PERSIST_DEBOUNCE_MS = 250;

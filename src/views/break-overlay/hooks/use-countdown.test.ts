@@ -164,6 +164,78 @@ describe("useCountdown", () => {
     });
   });
 
+  it("routes to playCustomSound when end-chime sound_id is the custom sentinel", async () => {
+    const invoke = vi.fn(async () => null);
+    const playSound = vi.fn(() => Promise.resolve());
+    const playCustomSound = vi.fn(() => Promise.resolve());
+    const settings: OverlaySettings = {
+      ...DEFAULT_OVERLAY_SETTINGS,
+      micro_sound: {
+        mode: "end_chime",
+        sound_id: "custom",
+        custom_path: "/Users/me/chime.mp3",
+      },
+      sound_volume: 0.7,
+    };
+    renderHook(() =>
+      useCountdown(
+        makeBreak(),
+        0,
+        false,
+        settings,
+        vi.fn(),
+        vi.fn(),
+        vi.fn(),
+        {
+          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          playSound,
+          playCustomSound,
+        },
+      ),
+    );
+    await vi.waitFor(() => {
+      expect(playCustomSound).toHaveBeenCalledWith("/Users/me/chime.mp3", 0.7);
+    });
+    expect(playSound).not.toHaveBeenCalled();
+  });
+
+  it("skips end-chime entirely when custom is selected but custom_path is empty", async () => {
+    const invoke = vi.fn(async () => null);
+    const playSound = vi.fn(() => Promise.resolve());
+    const playCustomSound = vi.fn(() => Promise.resolve());
+    const clearBreak = vi.fn();
+    const settings: OverlaySettings = {
+      ...DEFAULT_OVERLAY_SETTINGS,
+      micro_sound: {
+        mode: "end_chime",
+        sound_id: "custom",
+        custom_path: "",
+      },
+    };
+    renderHook(() =>
+      useCountdown(
+        makeBreak(),
+        0,
+        false,
+        settings,
+        vi.fn(),
+        vi.fn(),
+        clearBreak,
+        {
+          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          playSound,
+          playCustomSound,
+        },
+      ),
+    );
+    await vi.waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
+      expect(clearBreak).toHaveBeenCalled();
+    });
+    expect(playSound).not.toHaveBeenCalled();
+    expect(playCustomSound).not.toHaveBeenCalled();
+  });
+
   it("triggerFinish is a no-op when no break is active", () => {
     const invoke = vi.fn();
     const playSound = vi.fn();

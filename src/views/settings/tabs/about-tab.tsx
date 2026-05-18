@@ -7,18 +7,10 @@ import type { UseSupporter } from "../hooks/use-supporter";
 import { writeToClipboard } from "../utils";
 
 const TOAST_MS = 3000;
-const SUPPORTER_PRODUCT_URL = "https://entracte.lemonsqueezy.com/";
 
-export function AboutTab({
-  supporter,
-  reloadFromActive,
-}: {
-  supporter: UseSupporter;
-  reloadFromActive: () => Promise<unknown>;
-}) {
+export function AboutTab({ supporter }: { supporter: UseSupporter }) {
   const [version, setVersion] = useState("");
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
-  const [licenseKeyInput, setLicenseKeyInput] = useState("");
   const update = useUpdateCheck();
 
   useEffect(() => {
@@ -95,10 +87,7 @@ export function AboutTab({
             <div className="actions inline">
               <button
                 className="secondary"
-                onClick={async () => {
-                  await supporter.remove();
-                  setLicenseKeyInput("");
-                }}
+                onClick={() => supporter.remove()}
                 disabled={supporter.pending}
               >
                 Remove license
@@ -109,43 +98,15 @@ export function AboutTab({
           <>
             <p className="about-meta">
               Entracte is free to use. The customisation pack — custom overlay
-              colours, rotating themes, and editable break hints — is unlocked
-              by becoming a supporter once, forever.
+              colours, rotating themes, custom sounds, custom CSS, and editable
+              break hints — is unlocked by becoming a supporter once, forever.
             </p>
-            <div className="actions inline">
-              <button onClick={() => openUrl(SUPPORTER_PRODUCT_URL)}>
-                Become a supporter →
-              </button>
-            </div>
-            <label className="row stacked">
-              <span>Paste your license key</span>
-              <span className="actions inline">
-                <input
-                  type="text"
-                  className="color-hex"
-                  spellCheck={false}
-                  value={licenseKeyInput}
-                  placeholder="XXXX-XXXX-XXXX-XXXX"
-                  onChange={(e) => setLicenseKeyInput(e.target.value)}
-                  style={{ width: "20ch" }}
-                />
-                <button
-                  className="secondary"
-                  disabled={
-                    supporter.pending || licenseKeyInput.trim().length === 0
-                  }
-                  onClick={async () => {
-                    const ok = await supporter.verify(licenseKeyInput.trim());
-                    if (ok) {
-                      setLicenseKeyInput("");
-                      await reloadFromActive();
-                    }
-                  }}
-                >
-                  {supporter.pending ? "Verifying…" : "Verify"}
-                </button>
-              </span>
-            </label>
+            <p className="about-meta">
+              <strong>Coming soon.</strong> The Lemon Squeezy store is still
+              under review; purchase and license activation will go live once
+              the storefront is approved. Until then, the pack ships as
+              source-only.
+            </p>
           </>
         )}
         {supporter.message && (

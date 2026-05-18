@@ -39,6 +39,7 @@ export function BreaksTab({
     listToLines(settings.long_social_hints),
   );
   const [sleep, setSleep] = useState(listToLines(settings.sleep_hints));
+  const [customCss, setCustomCss] = useState(settings.custom_css);
 
   // Re-seed when the active profile changes underneath us.
   useEffect(() => {
@@ -56,6 +57,9 @@ export function BreaksTab({
   useEffect(() => {
     setSleep(listToLines(settings.sleep_hints));
   }, [settings.sleep_hints]);
+  useEffect(() => {
+    setCustomCss(settings.custom_css);
+  }, [settings.custom_css]);
 
   return (
     <>
@@ -128,28 +132,22 @@ export function BreaksTab({
             >
               {OVERLAY_THEMES.map((t) => {
                 const supporterOnly = t.id === "rotate" || t.id === "custom";
-                const disabled =
+                if (
                   supporterOnly &&
                   !isSupporter &&
-                  settings.overlay_color !== t.id;
+                  settings.overlay_color !== t.id
+                ) {
+                  return null;
+                }
                 return (
-                  <option key={t.id} value={t.id} disabled={disabled}>
+                  <option key={t.id} value={t.id}>
                     {t.label}
-                    {supporterOnly ? " (Supporter)" : ""}
                   </option>
                 );
               })}
             </select>
           </span>
         </label>
-        {!isSupporter &&
-          (settings.overlay_color === "rotate" ||
-            settings.overlay_color === "custom") && (
-            <p className="placeholder">
-              This theme is part of the Supporter pack — see the About tab to
-              unlock it.
-            </p>
-          )}
         {settings.overlay_color === "custom" && (
           <label className="row">
             <span>Custom color</span>
@@ -192,6 +190,32 @@ export function BreaksTab({
           value={settings.show_hint}
           onChange={(v) => update("show_hint", v)}
         />
+        {settings.show_hint && (
+          <>
+            <label className="row checkbox-row">
+              <span>
+                Rotate hints during the break
+                <InfoTip text="Off: one idea is picked per break and stays on screen. On: the overlay cycles through the remaining ideas in the pool every N seconds." />
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.hint_rotate_seconds > 0}
+                onChange={(e) =>
+                  update("hint_rotate_seconds", e.target.checked ? 12 : 0)
+                }
+              />
+            </label>
+            {settings.hint_rotate_seconds > 0 && (
+              <NumberRow
+                label="Rotate every (seconds)"
+                value={settings.hint_rotate_seconds}
+                min={3}
+                multiplier={1}
+                onChange={(v) => update("hint_rotate_seconds", v)}
+              />
+            )}
+          </>
+        )}
         <CheckboxRow
           label="Show current time on overlay"
           value={settings.show_current_time}
@@ -323,128 +347,124 @@ export function BreaksTab({
         </div>
       </section>
 
-      <h2>Break ideas</h2>
-      <section>
-        <p className="placeholder">
-          One idea per line. Each break picks a random starting idea from the
-          pool.
-        </p>
-        {!isSupporter && (
-          <p className="placeholder">
-            Editing the hint pools is part of the Supporter pack — see the About
-            tab to unlock. The default hints stay available either way.
-          </p>
-        )}
-        <label className="row checkbox-row">
-          <span>
-            Rotate hints during the break
-            <InfoTip text="Off: one idea is picked per break and stays on screen. On: the overlay cycles through the remaining ideas in the pool every N seconds." />
-          </span>
-          <input
-            type="checkbox"
-            checked={settings.hint_rotate_seconds > 0}
-            onChange={(e) =>
-              update("hint_rotate_seconds", e.target.checked ? 12 : 0)
-            }
-          />
-        </label>
-        {settings.hint_rotate_seconds > 0 && (
-          <NumberRow
-            label="Rotate every (seconds)"
-            value={settings.hint_rotate_seconds}
-            min={3}
-            multiplier={1}
-            onChange={(v) => update("hint_rotate_seconds", v)}
-          />
-        )}
-        <h3>Micro breaks</h3>
-        <label className="row">
-          <span>Mix</span>
-          <select
-            value={settings.micro_hint_mix}
-            onChange={(e) => update("micro_hint_mix", e.target.value)}
-            disabled={!isSupporter}
-          >
-            <option value="both">Both</option>
-            <option value="physical">Physical only</option>
-            <option value="psychological">Psychological only</option>
-          </select>
-        </label>
-        <label className="row stacked">
-          <span>Physical (stretches, eye rest, movement)</span>
-          <textarea
-            className="textarea"
-            rows={6}
-            value={microPhysical}
-            onChange={(e) => setMicroPhysical(e.target.value)}
-            onBlur={() => update("micro_physical_hints", linesToList(microPhysical))}
-            readOnly={!isSupporter}
-          />
-        </label>
-        <label className="row stacked">
-          <span>Psychological (breathing, awareness, tension release)</span>
-          <textarea
-            className="textarea"
-            rows={6}
-            value={microPsychological}
-            onChange={(e) => setMicroPsychological(e.target.value)}
-            onBlur={() =>
-              update("micro_psychological_hints", linesToList(microPsychological))
-            }
-            readOnly={!isSupporter}
-          />
-        </label>
-        <h3>Long breaks</h3>
-        <label className="row">
-          <span>
-            Mix
-            <InfoTip text="Solo: things to do on your own (stretch, fresh air, snack). Social: things to do with someone (call, walk together, sit outside)." />
-          </span>
-          <select
-            value={settings.long_hint_mix}
-            onChange={(e) => update("long_hint_mix", e.target.value)}
-            disabled={!isSupporter}
-          >
-            <option value="both">Both</option>
-            <option value="solo">Solo only</option>
-            <option value="social">Social only</option>
-          </select>
-        </label>
-        <label className="row stacked">
-          <span>Solo (stretch, fresh air, snack, tidy)</span>
-          <textarea
-            className="textarea"
-            rows={8}
-            value={longSolo}
-            onChange={(e) => setLongSolo(e.target.value)}
-            onBlur={() => update("long_hints", linesToList(longSolo))}
-            readOnly={!isSupporter}
-          />
-        </label>
-        <label className="row stacked">
-          <span>Social (call, walk together, share a coffee)</span>
-          <textarea
-            className="textarea"
-            rows={6}
-            value={longSocial}
-            onChange={(e) => setLongSocial(e.target.value)}
-            onBlur={() => update("long_social_hints", linesToList(longSocial))}
-            readOnly={!isSupporter}
-          />
-        </label>
-        <h3>Bedtime</h3>
-        <label className="row stacked">
-          <span>One idea per line</span>
-          <textarea
-            className="textarea"
-            rows={6}
-            value={sleep}
-            onChange={(e) => setSleep(e.target.value)}
-            onBlur={() => update("sleep_hints", linesToList(sleep))}
-            readOnly={!isSupporter}
-          />
-        </label>
-      </section>
+      {isSupporter && (
+        <>
+          <h2>Break ideas</h2>
+          <section>
+            <p className="placeholder">
+              One idea per line. Each break picks a random starting idea from
+              the pool.
+            </p>
+            <h3>Micro breaks</h3>
+            <label className="row">
+              <span>Mix</span>
+              <select
+                value={settings.micro_hint_mix}
+                onChange={(e) => update("micro_hint_mix", e.target.value)}
+              >
+                <option value="both">Both</option>
+                <option value="physical">Physical only</option>
+                <option value="psychological">Psychological only</option>
+              </select>
+            </label>
+            <label className="row stacked">
+              <span>Physical (stretches, eye rest, movement)</span>
+              <textarea
+                className="textarea"
+                rows={6}
+                value={microPhysical}
+                onChange={(e) => setMicroPhysical(e.target.value)}
+                onBlur={() =>
+                  update("micro_physical_hints", linesToList(microPhysical))
+                }
+              />
+            </label>
+            <label className="row stacked">
+              <span>Psychological (breathing, awareness, tension release)</span>
+              <textarea
+                className="textarea"
+                rows={6}
+                value={microPsychological}
+                onChange={(e) => setMicroPsychological(e.target.value)}
+                onBlur={() =>
+                  update(
+                    "micro_psychological_hints",
+                    linesToList(microPsychological),
+                  )
+                }
+              />
+            </label>
+            <h3>Long breaks</h3>
+            <label className="row">
+              <span>
+                Mix
+                <InfoTip text="Solo: things to do on your own (stretch, fresh air, snack). Social: things to do with someone (call, walk together, sit outside)." />
+              </span>
+              <select
+                value={settings.long_hint_mix}
+                onChange={(e) => update("long_hint_mix", e.target.value)}
+              >
+                <option value="both">Both</option>
+                <option value="solo">Solo only</option>
+                <option value="social">Social only</option>
+              </select>
+            </label>
+            <label className="row stacked">
+              <span>Solo (stretch, fresh air, snack, tidy)</span>
+              <textarea
+                className="textarea"
+                rows={8}
+                value={longSolo}
+                onChange={(e) => setLongSolo(e.target.value)}
+                onBlur={() => update("long_hints", linesToList(longSolo))}
+              />
+            </label>
+            <label className="row stacked">
+              <span>Social (call, walk together, share a coffee)</span>
+              <textarea
+                className="textarea"
+                rows={6}
+                value={longSocial}
+                onChange={(e) => setLongSocial(e.target.value)}
+                onBlur={() =>
+                  update("long_social_hints", linesToList(longSocial))
+                }
+              />
+            </label>
+            <h3>Bedtime</h3>
+            <label className="row stacked">
+              <span>One idea per line</span>
+              <textarea
+                className="textarea"
+                rows={6}
+                value={sleep}
+                onChange={(e) => setSleep(e.target.value)}
+                onBlur={() => update("sleep_hints", linesToList(sleep))}
+              />
+            </label>
+          </section>
+
+          <h2>Custom CSS</h2>
+          <section>
+            <p className="placeholder">
+              Applied to the settings window and the break overlay. Bad CSS can
+              hide controls — clear this field if anything breaks.
+            </p>
+            <label className="row stacked">
+              <span>Stylesheet</span>
+              <textarea
+                className="textarea"
+                rows={12}
+                spellCheck={false}
+                placeholder=".overlay-card { background: #111; }"
+                value={customCss}
+                onChange={(e) => setCustomCss(e.target.value)}
+                onBlur={() => update("custom_css", customCss)}
+              />
+            </label>
+          </section>
+        </>
+      )}
     </>
   );
 }

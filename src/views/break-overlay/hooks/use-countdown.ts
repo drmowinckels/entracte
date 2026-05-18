@@ -6,11 +6,16 @@ import {
   type BreakSound,
   type OverlaySettings,
 } from "../types";
-import { playSound as defaultPlaySound } from "../../../lib/sounds";
+import {
+  playCustomSound as defaultPlayCustomSound,
+  playSound as defaultPlaySound,
+} from "../../../lib/sounds";
+import { CUSTOM_SOUND_ID } from "../../../lib/break-sound";
 
 export type CountdownDeps = {
   invoke?: typeof invoke;
   playSound?: typeof defaultPlaySound;
+  playCustomSound?: typeof defaultPlayCustomSound;
 };
 
 export type CountdownApi = {
@@ -23,7 +28,11 @@ function endChimeConfig(
 ): BreakSound | null {
   if (!active) return null;
   const cfg = breakSoundFor(active.kind, appearance);
-  if (!cfg || cfg.mode !== "end_chime" || !cfg.sound_id) return null;
+  if (!cfg || cfg.mode !== "end_chime") return null;
+  if (cfg.sound_id === CUSTOM_SOUND_ID) {
+    return cfg.custom_path ? cfg : null;
+  }
+  if (!cfg.sound_id) return null;
   return cfg;
 }
 
@@ -46,6 +55,7 @@ export function useCountdown(
 ): CountdownApi {
   const invokeFn = deps.invoke ?? invoke;
   const playSoundFn = deps.playSound ?? defaultPlaySound;
+  const playCustomSoundFn = deps.playCustomSound ?? defaultPlayCustomSound;
 
   const endChimeRef = useRef<{ sound: BreakSound | null; volume: number }>({
     sound: null,
@@ -61,6 +71,9 @@ export function useCountdown(
   const playEndChime = (): Promise<void> => {
     const snap = endChimeRef.current;
     if (!snap.sound) return Promise.resolve();
+    if (snap.sound.sound_id === CUSTOM_SOUND_ID) {
+      return playCustomSoundFn(snap.sound.custom_path ?? "", snap.volume);
+    }
     return playSoundFn(snap.sound.sound_id, snap.volume);
   };
 

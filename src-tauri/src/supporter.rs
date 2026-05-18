@@ -75,6 +75,17 @@ pub fn delete(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Single-call answer to "is this install a supporter right now?".
+/// Reads the on-disk record and applies the offline grace window so
+/// callers don't have to thread `now`/grace logic of their own.
+/// Used by gated IPC paths (e.g. `custom_css`) to authorise per-call.
+pub fn is_supporter_now(path: &Path) -> bool {
+    match load(path) {
+        Some(r) => is_within_grace(r.last_validated_at, Utc::now()),
+        None => false,
+    }
+}
+
 pub fn is_within_grace(last_validated_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     let elapsed = now.signed_duration_since(last_validated_at);
     elapsed >= chrono::Duration::zero()
@@ -300,6 +311,53 @@ mod tests {
         let p = std::env::temp_dir().join("entracte-supporter-delete-test.json");
         let _ = fs::remove_file(&p);
         delete(&p).unwrap();
+    }
+
+    fn unique_temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "entracte-supporter-{tag}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn is_supporter_now_false_when_no_record_on_disk() {
+        let p = unique_temp_path("isnow-missing");
+        let _ = fs::remove_file(&p);
+        assert!(!is_supporter_now(&p));
+    }
+
+    #[test]
+    fn is_supporter_now_true_for_fresh_record() {
+        let p = unique_temp_path("isnow-fresh");
+        let rec = SupporterRecord {
+            license_key: "ABCD-1111-2222-3333".to_string(),
+            instance_id: "i-fresh".to_string(),
+            activated_at: Utc::now() - chrono::Duration::days(1),
+            last_validated_at: Utc::now() - chrono::Duration::minutes(5),
+        };
+        save(&p, &rec).unwrap();
+        assert!(is_supporter_now(&p));
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn is_supporter_now_false_for_stale_record_past_grace_window() {
+        // 45 days since last_validated_at — outside the 30-day offline grace.
+        let p = unique_temp_path("isnow-stale");
+        let rec = SupporterRecord {
+            license_key: "ZZZZ-9999-8888-7777".to_string(),
+            instance_id: "i-stale".to_string(),
+            activated_at: Utc::now() - chrono::Duration::days(60),
+            last_validated_at: Utc::now() - chrono::Duration::days(45),
+        };
+        save(&p, &rec).unwrap();
+        assert!(!is_supporter_now(&p));
+        let _ = fs::remove_file(&p);
     }
 
     // ----- HTTP-layer tests for activate_remote_at / validate_remote_at -----

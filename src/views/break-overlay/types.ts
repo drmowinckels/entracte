@@ -30,6 +30,7 @@ export type OverlaySettings = {
   sound_volume: number;
   pause_countdown_if_typing: boolean;
   strict_mode: boolean;
+  custom_css: string;
 };
 
 export type PostponeState = {
@@ -52,6 +53,7 @@ export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
   sound_volume: 0.5,
   pause_countdown_if_typing: true,
   strict_mode: false,
+  custom_css: "",
 };
 
 export const TYPING_PAUSE_THRESHOLD_SECS = 2;
