@@ -1,0 +1,95 @@
+name: Docs preview
+
+# Per-PR Netlify deploy preview for the VitePress site. Mirrors the
+# production build in `docs.yml` (VitePress + rustdoc + TypeDoc, all
+# stitched into one dist) so the preview is the same artefact that
+# would land on GitHub Pages if the PR merged.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   NETLIFY_AUTH_TOKEN  Personal access token from
+#                       https://app.netlify.com/user/applications#personal-access-tokens
+#   NETLIFY_SITE_ID     API ID of the Netlify site that hosts previews
+#                       (Site Settings → General → Site information → Site ID).
+#
+# The site does not need to be connected to the GitHub repo on the
+# Netlify side — `netlify deploy` pushes the prebuilt dist directly.
+# Fork PRs are skipped because secrets aren't exposed to them.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".config/typedoc/**"
+      - ".github/workflows/docs-preview.yml"
+
+concurrency:
+  group: docs-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    # Skip PRs from forks — they don't have access to the Netlify secrets
+    # and would otherwise fail the deploy step loudly.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - name: Install Linux deps (Tauri toolchain)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Build VitePress site
+        working-directory: docs
+        run: |
+          npm ci || npm install
+          npm run build
+      - name: Install desktop app dependencies
+        run: npm ci || npm install
+      - name: Build cargo doc
+        env:
+          RUSTDOCFLAGS: -D warnings --html-in-header rustdoc-header.html
+        run: cargo doc --manifest-path src-tauri/Cargo.toml --no-deps --document-private-items
+      - name: Build TypeDoc
+        run: npm run doc
+      - name: Copy rustdoc into VitePress dist
+        run: |
+          mkdir -p docs/.vitepress/dist/api/rust
+          cp -r src-tauri/target/doc/. docs/.vitepress/dist/api/rust/
+      - name: Copy typedoc into VitePress dist
+        run: |
+          mkdir -p docs/.vitepress/dist/api/ts
+          cp -r target/typedoc/. docs/.vitepress/dist/api/ts/
+      - name: Deploy preview to Netlify
+        uses: nwtgck/actions-netlify@v3
+        with:
+          publish-dir: docs/.vitepress/dist
+          # Each PR gets its own alias so successive pushes overwrite
+          # the same URL rather than creating new ones.
+          alias: pr-${{ github.event.pull_request.number }}
+          deploy-message: "PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
+          enable-pull-request-comment: true
+          overwrites-pull-request-comment: true
+          # Production deploy stays on GitHub Pages — this is a preview only.
+          production-deploy: false
+          # Don't try to flip the alias to be the production URL.
+          production-branch: main
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        timeout-minutes: 5
