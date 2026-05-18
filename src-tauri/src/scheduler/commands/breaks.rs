@@ -1153,8 +1153,13 @@ mod tests {
 // the rig (Tauri `mock_runtime` + a real `Scheduler` under `State`)
 // wires up correctly and reaches the AppHandle-emit branches that
 // were previously uncovered.
+//
+// Not compiled on Windows — `tauri = { features = ["test"] }` pulls
+// in `wry`/WebView2 bindings whose `WebView2Loader.dll` entry-point
+// doesn't match the GitHub Actions Windows image. macOS + Ubuntu CI
+// still exercises these tests.
 // =====================================================================
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 mod rig_smoke_tests {
     use super::*;
     use crate::test_support::mock_app_with_scheduler;

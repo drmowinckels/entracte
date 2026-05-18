@@ -18,9 +18,12 @@
 use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 
-use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
-use tauri::{App, Manager};
 use tokio::sync::Mutex;
+
+#[cfg(not(target_os = "windows"))]
+use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
+#[cfg(not(target_os = "windows"))]
+use tauri::{App, Manager};
 
 pub use tempfile::TempDir;
 
@@ -105,6 +108,10 @@ pub fn test_scheduler_with_profiles(profiles: Vec<Profile>, active: &str) -> (Te
 /// Single-profile convenience; for multi-profile setups, build the
 /// scheduler with [`test_scheduler_with_profiles`] and call
 /// [`wrap_in_mock_app`].
+///
+/// Not compiled on Windows — see `Cargo.toml`'s target-gated
+/// `tauri = { features = ["test"] }` dep for the rationale.
+#[cfg(not(target_os = "windows"))]
 pub fn mock_app_with_scheduler(settings: Settings) -> (TempDir, App<MockRuntime>, Scheduler) {
     let (dir, sched) = test_scheduler(settings);
     let app = wrap_in_mock_app(sched.clone());
@@ -113,6 +120,9 @@ pub fn mock_app_with_scheduler(settings: Settings) -> (TempDir, App<MockRuntime>
 
 /// Wrap an already-constructed `Scheduler` in a mock app. Useful when
 /// the test needs to mutate the scheduler before the app sees it.
+///
+/// Not compiled on Windows — see `mock_app_with_scheduler`.
+#[cfg(not(target_os = "windows"))]
 pub fn wrap_in_mock_app(scheduler: Scheduler) -> App<MockRuntime> {
     let app = mock_builder()
         .build(mock_context(noop_assets()))

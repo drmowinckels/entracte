@@ -59,9 +59,16 @@ panic = "abort"
 tempfile = "3"
 mockito = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
 # Enables `tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime}`
-# for the integration-test rig (test_support::mock_app_with_scheduler).
+# for the integration-test rig (`test_support::mock_app_with_scheduler`).
 # Kept out of [dependencies] so the release binary doesn't carry the
-# mock runtime.
+# mock runtime, and target-gated off Windows because the `test` feature
+# transitively pulls in `wry`/WebView2 bindings whose `WebView2Loader.dll`
+# entry-point doesn't match the GitHub Actions Windows image — the test
+# binary fails to load with `STATUS_ENTRYPOINT_NOT_FOUND`. Rig coverage
+# still runs on macOS + Ubuntu, which is sufficient for these tests
+# (they exercise OS-agnostic Scheduler / Tauri-event paths).
+[target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 
