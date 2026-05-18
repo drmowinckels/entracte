@@ -936,9 +936,7 @@ mod parity_tests {
     fn rust_settings_keys() -> BTreeSet<String> {
         let value = serde_json::to_value(Settings::default())
             .expect("Settings serialises to a JSON object");
-        let obj = value
-            .as_object()
-            .expect("top-level Settings is an object");
+        let obj = value.as_object().expect("top-level Settings is an object");
         obj.keys().cloned().collect()
     }
 
