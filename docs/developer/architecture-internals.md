@@ -112,17 +112,17 @@ All user files are written via `secure_io::write_user_only` — an atomic `tempf
 The pattern in code:
 
 ```rust
-let s = sched.settings.lock().await.clone();      // released at `;`
-let name = sched.active_profile_name.lock().await.clone();
-let mut profiles = sched.profiles.lock().await;   // safe — others released
+let s = scheduler.settings.lock().await.clone();      // released at `;`
+let name = scheduler.active_profile_name.lock().await.clone();
+let mut profiles = scheduler.profiles.lock().await;   // safe — others released
 ```
 
 Following this rule, deadlock becomes structurally impossible — the classic "A holds X waiting for Y, B holds Y waiting for X" cycle cannot form if guards never overlap on `.await`.
 
 **What it rules out:**
 
-- `let s = sched.settings.lock().await; let p = sched.profiles.lock().await;` (holding `settings` across the `profiles` acquisition).
-- `let g = sched.timers.lock().await; some_async_fn(&sched).await;` (holding any guard across a call that may itself lock the same scheduler).
+- `let s = scheduler.settings.lock().await; let p = scheduler.profiles.lock().await;` (holding `settings` across the `profiles` acquisition).
+- `let g = scheduler.timers.lock().await; some_async_fn(&scheduler).await;` (holding any guard across a call that may itself lock the same scheduler).
 
 **What it allows:**
 
