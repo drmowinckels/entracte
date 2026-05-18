@@ -59,4 +59,9 @@ panic = "abort"
 tempfile = "3"
 mockito = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Enables `tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime}`
+# for the integration-test rig (test_support::mock_app_with_scheduler).
+# Kept out of [dependencies] so the release binary doesn't carry the
+# mock runtime.
+tauri = { version = "2", features = ["test"] }
 

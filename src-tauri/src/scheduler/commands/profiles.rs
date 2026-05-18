@@ -476,53 +476,7 @@ mod tests {
     // -------- impl-level tests over a built-in test Scheduler --------
 
     use crate::config::DEFAULT_PROFILE_NAME;
-    use crate::scheduler::break_stats::BreakStats;
-    use crate::scheduler::pause::PauseState;
-    use crate::scheduler::screen_time::ScreenTimeState;
-    use crate::scheduler::timers::BreakTimers;
-    use crate::screen_time_store::ScreenTimeSnapshot;
-    use crate::stats::Logger;
-    use crate::test_support::{temp_dir, TempDir};
-    use std::sync::atomic::{AtomicBool, AtomicU8};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
-    fn build_test_scheduler(profiles: Vec<Profile>, active: &str) -> (TempDir, Scheduler) {
-        let dir = temp_dir();
-        let config_path = dir.path().join("settings.json");
-        let pause_path = dir.path().join("pause.json");
-        let events_path = dir.path().join("events.jsonl");
-        let screen_time_path = dir.path().join("screen_time.json");
-        let logger = Logger::spawn(events_path.clone());
-        let active_settings = profiles
-            .iter()
-            .find(|p| p.name == active)
-            .map(|p| p.settings.clone())
-            .unwrap_or_default();
-        let sched = Scheduler {
-            settings: Arc::new(Mutex::new(active_settings)),
-            pause_state: Arc::new(Mutex::new(PauseState::Running)),
-            camera_active: Arc::new(AtomicBool::new(false)),
-            video_active: Arc::new(AtomicBool::new(false)),
-            auto_suppress_reason: Arc::new(AtomicU8::new(0)),
-            config_path,
-            pause_path,
-            events_path,
-            screen_time_path,
-            timers: Arc::new(Mutex::new(BreakTimers::new())),
-            stats: Arc::new(Mutex::new(BreakStats::default())),
-            screen_time: Arc::new(Mutex::new(ScreenTimeState::from_snapshot(
-                ScreenTimeSnapshot::default(),
-                "1970-01-01",
-            ))),
-            current_break: Arc::new(std::sync::Mutex::new(None)),
-            logger,
-            profiles: Arc::new(Mutex::new(profiles)),
-            active_profile_name: Arc::new(Mutex::new(active.to_string())),
-            hook_dialog_busy: Arc::new(AtomicBool::new(false)),
-        };
-        (dir, sched)
-    }
+    use crate::test_support::test_scheduler_with_profiles;
 
     fn one_profile() -> Vec<Profile> {
         vec![Profile {
@@ -555,7 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_profile_appends_copy_of_active_settings() {
-        let (_dir, sched) = build_test_scheduler(one_profile(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
         create_profile_impl(&sched, "Focus".to_string())
             .await
             .unwrap();
@@ -568,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_profile_rejects_empty_name() {
-        let (_dir, sched) = build_test_scheduler(one_profile(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
         let err = create_profile_impl(&sched, "  ".to_string())
             .await
             .unwrap_err();
@@ -578,7 +532,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_profile_rejects_duplicate_name() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         let err = create_profile_impl(&sched, "Work".to_string())
             .await
             .unwrap_err();
@@ -587,7 +541,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_profile_clones_named_source_without_switching_active() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         duplicate_profile_impl(&sched, "Work".to_string(), "Focus".to_string())
             .await
             .unwrap();
@@ -603,7 +557,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_profile_errors_when_source_missing() {
-        let (_dir, sched) = build_test_scheduler(one_profile(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
         let err = duplicate_profile_impl(&sched, "Missing".to_string(), "Focus".to_string())
             .await
             .unwrap_err();
@@ -613,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn rename_profile_renames_in_place_and_follows_active_pointer() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         rename_profile_impl(
             &sched,
             DEFAULT_PROFILE_NAME.to_string(),
@@ -630,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn rename_profile_leaves_active_alone_when_renaming_inactive() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         rename_profile_impl(&sched, "Work".to_string(), "Office".to_string())
             .await
             .unwrap();
@@ -642,7 +596,7 @@ mod tests {
 
     #[tokio::test]
     async fn rename_profile_noop_on_same_name() {
-        let (_dir, sched) = build_test_scheduler(one_profile(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
         rename_profile_impl(
             &sched,
             DEFAULT_PROFILE_NAME.to_string(),
@@ -655,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_profile_removes_inactive_entry() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         delete_profile_impl(&sched, "Work".to_string())
             .await
             .unwrap();
@@ -666,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_profile_rejects_active() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         let err = delete_profile_impl(&sched, DEFAULT_PROFILE_NAME.to_string())
             .await
             .unwrap_err();
@@ -676,7 +630,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_profile_rejects_only_profile() {
-        let (_dir, sched) = build_test_scheduler(one_profile(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
         let err = delete_profile_impl(&sched, DEFAULT_PROFILE_NAME.to_string())
             .await
             .unwrap_err();
@@ -699,7 +653,7 @@ mod tests {
                 settings: Settings::default(),
             },
         ];
-        let (_dir, sched) = build_test_scheduler(three, "a");
+        let (_dir, sched) = test_scheduler_with_profiles(three, "a");
         reorder_profiles_impl(&sched, vec!["c".into(), "a".into(), "b".into()])
             .await
             .unwrap();
@@ -715,7 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn reorder_profiles_rejects_unknown_name() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         let err = reorder_profiles_impl(&sched, vec!["Work".into(), "Missing".into()])
             .await
             .unwrap_err();
@@ -724,7 +678,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_profile_to_defaults_resets_inactive_only_on_disk() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         reset_profile_to_defaults_impl(&sched, "Work".to_string())
             .await
             .unwrap();
@@ -745,7 +699,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_profile_to_defaults_also_resets_live_settings_when_active() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         reset_profile_to_defaults_impl(&sched, DEFAULT_PROFILE_NAME.to_string())
             .await
             .unwrap();
@@ -757,7 +711,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_profile_to_defaults_errors_when_missing() {
-        let (_dir, sched) = build_test_scheduler(one_profile(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
         let err = reset_profile_to_defaults_impl(&sched, "Missing".to_string())
             .await
             .unwrap_err();
@@ -766,7 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_active_profile_switches_settings_and_resets_timers() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         // Stash a stale timer state so we can prove reset_timers_keep_sleep ran.
         {
             let mut t = sched.timers.lock().await;
@@ -809,7 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_profiles_returns_names_in_storage_order() {
-        let (_dir, sched) = build_test_scheduler(two_profiles(), DEFAULT_PROFILE_NAME);
+        let (_dir, sched) = test_scheduler_with_profiles(two_profiles(), DEFAULT_PROFILE_NAME);
         let names: Vec<String> = sched
             .profiles
             .lock()

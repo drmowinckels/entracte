@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::hooks::{self, HookContext, HookEvent};
 use crate::stats::{EventPayload, Outcome, SkipSource};
@@ -19,8 +19,8 @@ use super::super::Scheduler;
 /// emits the `pause:changed` event. Idempotent — a pause-while-paused
 /// updates the deadline but doesn't re-fire hooks.
 #[tauri::command]
-pub async fn pause(
-    app: AppHandle,
+pub async fn pause<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     duration_secs: Option<u64>,
 ) -> Result<(), String> {
@@ -32,7 +32,10 @@ pub async fn pause(
 /// Resume the scheduler from any pause state. Fires `pause_end` hooks
 /// and emits `pause:changed`. No-op if already running.
 #[tauri::command]
-pub async fn resume(app: AppHandle, scheduler: tauri::State<'_, Scheduler>) -> Result<(), String> {
+pub async fn resume<R: Runtime>(
+    app: AppHandle<R>,
+    scheduler: tauri::State<'_, Scheduler>,
+) -> Result<(), String> {
     resume_impl(scheduler.inner()).await;
     let _ = app.emit("pause:changed", false);
     Ok(())
@@ -190,8 +193,8 @@ pub async fn trigger_test_break(
 /// session counters, fires `break_end` hooks, hides every overlay
 /// window, and emits `break:end`.
 #[tauri::command]
-pub async fn end_break(
-    app: AppHandle,
+pub async fn end_break<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     reason: Option<String>,
 ) -> Result<(), String> {
@@ -585,14 +588,9 @@ pub async fn resume_last_break(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::screen_time::ScreenTimeState;
-    use super::super::super::timers::BreakTimers;
-    use super::super::super::BreakStats;
+    use super::super::super::BreakTimers;
     use super::*;
-    use crate::config::{Profile, DEFAULT_PROFILE_NAME};
-    use crate::stats::Logger;
-    use crate::test_support::{temp_dir, TempDir};
-    use std::sync::atomic::{AtomicBool, AtomicU8};
+    use crate::test_support::test_scheduler;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -776,48 +774,9 @@ mod tests {
         assert_eq!(sleep.max, u32::MAX);
     }
 
-    /// Build a Scheduler instance without spinning up the
-    /// camera/video/run-loop side threads. The logger thread is still
-    /// started (it's how `EventPayload`s reach disk) but it writes into
-    /// the TempDir held by the caller, which is dropped on test exit.
-    fn build_test_scheduler(settings: Settings) -> (TempDir, Scheduler) {
-        let dir = temp_dir();
-        let config_path = dir.path().join("settings.json");
-        let pause_path = dir.path().join("pause.json");
-        let events_path = dir.path().join("events.jsonl");
-        let screen_time_path = dir.path().join("screen_time.json");
-        let logger = Logger::spawn(events_path.clone());
-        let sched = Scheduler {
-            settings: Arc::new(Mutex::new(settings)),
-            pause_state: Arc::new(Mutex::new(PauseState::Running)),
-            camera_active: Arc::new(AtomicBool::new(false)),
-            video_active: Arc::new(AtomicBool::new(false)),
-            auto_suppress_reason: Arc::new(AtomicU8::new(0)),
-            config_path,
-            pause_path,
-            events_path,
-            screen_time_path,
-            timers: Arc::new(Mutex::new(BreakTimers::new())),
-            stats: Arc::new(Mutex::new(BreakStats::default())),
-            screen_time: Arc::new(Mutex::new(ScreenTimeState::from_snapshot(
-                crate::screen_time_store::ScreenTimeSnapshot::default(),
-                "1970-01-01",
-            ))),
-            current_break: Arc::new(std::sync::Mutex::new(None)),
-            logger,
-            profiles: Arc::new(Mutex::new(vec![Profile {
-                name: DEFAULT_PROFILE_NAME.to_string(),
-                settings: Settings::default(),
-            }])),
-            active_profile_name: Arc::new(Mutex::new(DEFAULT_PROFILE_NAME.to_string())),
-            hook_dialog_busy: Arc::new(AtomicBool::new(false)),
-        };
-        (dir, sched)
-    }
-
     #[tokio::test]
     async fn pause_some_secs_transitions_running_to_timed_pause() {
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         pause_impl(&sched, Some(900)).await;
         let state = sched.pause_state.lock().await.clone();
         match state {
@@ -835,7 +794,7 @@ mod tests {
 
     #[tokio::test]
     async fn pause_none_transitions_running_to_indefinite() {
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         pause_impl(&sched, None).await;
         assert!(matches!(
             *sched.pause_state.lock().await,
@@ -848,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn resume_from_paused_returns_to_running() {
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         pause_impl(&sched, Some(60)).await;
         resume_impl(&sched).await;
         assert!(matches!(
@@ -869,7 +828,7 @@ mod tests {
             postpone_max_count: 3,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(settings);
+        let (_dir, sched) = test_scheduler(settings);
         let out = postpone_break_impl(&sched, BreakKind::Micro).await.unwrap();
         assert_eq!(out.postpone_secs, 300);
         let t = sched.timers.lock().await;
@@ -895,7 +854,7 @@ mod tests {
             postpone_max_count: 2,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(settings);
+        let (_dir, sched) = test_scheduler(settings);
         postpone_break_impl(&sched, BreakKind::Long).await.unwrap();
         postpone_break_impl(&sched, BreakKind::Long).await.unwrap();
         let err = postpone_break_impl(&sched, BreakKind::Long)
@@ -911,7 +870,7 @@ mod tests {
             postpone_enabled: true,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(strict);
+        let (_dir, sched) = test_scheduler(strict);
         let err = postpone_break_impl(&sched, BreakKind::Micro)
             .await
             .expect_err("strict mode blocks postpone");
@@ -922,7 +881,7 @@ mod tests {
             postpone_enabled: false,
             ..Settings::default()
         };
-        let (_dir2, sched2) = build_test_scheduler(disabled);
+        let (_dir2, sched2) = test_scheduler(disabled);
         let err = postpone_break_impl(&sched2, BreakKind::Micro)
             .await
             .expect_err("postpone_enabled=false blocks postpone");
@@ -931,7 +890,7 @@ mod tests {
 
     #[tokio::test]
     async fn skip_next_break_resets_anchor_and_increments_stats() {
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         // Pre-set an older anchor so we can verify it was bumped.
         {
             let mut t = sched.timers.lock().await;
@@ -963,7 +922,7 @@ mod tests {
             strict_mode: true,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(strict);
+        let (_dir, sched) = test_scheduler(strict);
         let err = skip_next_break_impl(&sched, BreakKind::Micro)
             .await
             .expect_err("strict mode blocks skip");
@@ -975,7 +934,7 @@ mod tests {
         // Long-break skip resets micro state too: a long break "swallows"
         // the upcoming micro, so the user shouldn't be hit with a micro
         // a moment after skipping a long.
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         {
             let mut t = sched.timers.lock().await;
             t.last_long = Instant::now()
@@ -1003,7 +962,7 @@ mod tests {
 
     #[tokio::test]
     async fn skip_next_break_sleep_sets_last_sleep_marker() {
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         assert!(sched.timers.lock().await.last_sleep.is_none());
         skip_next_break_impl(&sched, BreakKind::Sleep)
             .await
@@ -1028,7 +987,7 @@ mod tests {
             postpone_max_count: 3,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(settings);
+        let (_dir, sched) = test_scheduler(settings);
         let out = postpone_break_impl(&sched, BreakKind::Long).await.unwrap();
         assert_eq!(out.postpone_secs, 300);
         let t = sched.timers.lock().await;
@@ -1051,7 +1010,7 @@ mod tests {
             postpone_minutes: 5,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(settings);
+        let (_dir, sched) = test_scheduler(settings);
         assert!(sched.timers.lock().await.last_sleep.is_none());
         postpone_break_impl(&sched, BreakKind::Sleep).await.unwrap();
         let t = sched.timers.lock().await;
@@ -1075,7 +1034,7 @@ mod tests {
             postpone_max_count: 1,
             ..Settings::default()
         };
-        let (_dir, sched) = build_test_scheduler(settings);
+        let (_dir, sched) = test_scheduler(settings);
         for _ in 0..3 {
             let out = postpone_break_impl(&sched, BreakKind::Micro)
                 .await
@@ -1104,7 +1063,7 @@ mod tests {
     async fn pause_when_already_paused_does_not_re_fire_hooks() {
         // pause_impl logs pause_start only on the running→paused edge.
         // A second pause-while-paused must not produce a second log entry.
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         pause_impl(&sched, Some(60)).await;
         wait_for_log_substring(&sched.events_path, "\"type\":\"pause_start\"").await;
         pause_impl(&sched, Some(900)).await;
@@ -1123,7 +1082,7 @@ mod tests {
     async fn resume_when_already_running_is_a_noop() {
         // resume_impl on a Running scheduler is a no-op — it must not
         // log a pause_end event when there was no pause to end.
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         resume_impl(&sched).await;
         // Wait long enough that a real pause_end log would have flushed.
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -1159,7 +1118,7 @@ mod tests {
         // without one: stash an active break, then re-implement the
         // "completed" tail (stats + counter reset + clear_last) and
         // confirm the helpers leave the scheduler in the expected shape.
-        let (_dir, sched) = build_test_scheduler(Settings::default());
+        let (_dir, sched) = test_scheduler(Settings::default());
         {
             let mut t = sched.timers.lock().await;
             t.active_break = Some(BreakKind::Micro);
@@ -1182,5 +1141,127 @@ mod tests {
         );
         assert_eq!(t.micro_postpone_count, 0);
         assert!(t.last_skipped_or_postponed.is_none());
+    }
+}
+
+// =====================================================================
+// Integration-test rig (closes #10).
+//
+// The tests above call the `*_impl` cores directly so they don't need
+// an `AppHandle`. These tests exercise the full `#[tauri::command]`
+// wrappers via `test_support::mock_app_with_scheduler`, which proves
+// the rig (Tauri `mock_runtime` + a real `Scheduler` under `State`)
+// wires up correctly and reaches the AppHandle-emit branches that
+// were previously uncovered.
+// =====================================================================
+#[cfg(test)]
+mod rig_smoke_tests {
+    use super::*;
+    use crate::test_support::mock_app_with_scheduler;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tauri::Listener;
+
+    #[tokio::test]
+    async fn pause_command_via_rig_emits_pause_changed_and_persists_state() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+
+        // Wire up a listener BEFORE invoking the command so we don't
+        // miss the emit. The handler bumps a counter so we can assert
+        // it ran exactly once with the expected payload.
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            app.listen("pause:changed", move |event| {
+                let payload: bool = serde_json::from_str(event.payload()).unwrap_or(false);
+                if payload {
+                    fired.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        pause(app.handle().clone(), state, Some(60))
+            .await
+            .expect("pause command succeeds");
+
+        assert_eq!(
+            fired.load(Ordering::SeqCst),
+            1,
+            "pause:changed(true) fired once"
+        );
+        // …and the scheduler actually transitioned to Paused.
+        assert!(!matches!(
+            *sched.pause_state.lock().await,
+            PauseState::Running
+        ));
+    }
+
+    #[tokio::test]
+    async fn resume_command_via_rig_emits_pause_changed_false() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        // Start paused so resume has work to do.
+        pause_impl(&sched, Some(60)).await;
+
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            app.listen("pause:changed", move |event| {
+                let payload: bool = serde_json::from_str(event.payload()).unwrap_or(true);
+                if !payload {
+                    fired.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        resume(app.handle().clone(), state)
+            .await
+            .expect("resume command succeeds");
+
+        assert_eq!(
+            fired.load(Ordering::SeqCst),
+            1,
+            "pause:changed(false) fired once"
+        );
+        assert!(matches!(
+            *sched.pause_state.lock().await,
+            PauseState::Running
+        ));
+    }
+
+    #[tokio::test]
+    async fn end_break_command_via_rig_emits_break_end_and_increments_taken() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            app.listen("break:end", move |_event| {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        end_break(app.handle().clone(), state, Some("completed".to_string()))
+            .await
+            .expect("end_break succeeds");
+
+        assert_eq!(fired.load(Ordering::SeqCst), 1, "break:end fired once");
+        assert_eq!(sched.stats.lock().await.taken, 1);
+    }
+
+    #[tokio::test]
+    async fn end_break_command_classifies_dismissed_as_skipped_stat() {
+        // Same rig path, different reason — proves the wrapper threads
+        // the `reason` arg through to the impl correctly.
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        let state = app.state::<Scheduler>();
+        end_break(app.handle().clone(), state, Some("dismissed".to_string()))
+            .await
+            .expect("end_break(dismissed) succeeds");
+        let stats = sched.stats.lock().await;
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.taken, 0);
     }
 }

@@ -33,7 +33,11 @@ pub use commands::profiles::*;
 pub use commands::settings::*;
 pub use commands::stats::*;
 pub use pause::PauseState;
+#[cfg(test)]
+pub(crate) use screen_time::ScreenTimeState;
 pub use settings::Settings;
+#[cfg(test)]
+pub(crate) use timers::BreakTimers;
 // `MonitorPlacement` only has consumers inside `config::tests`; preserve the
 // pre-split flat path so the test doesn't have to know the new module layout.
 #[allow(unused_imports)]
@@ -46,6 +50,7 @@ pub use tray_countdown::{format_countdown, TrayCountdownSnapshot};
 pub use types::SuppressReason;
 pub use types::{BreakKind, LastBreakInfo};
 
+#[cfg(not(test))]
 use timers::BreakTimers;
 
 use pause::restore_pause_state;
