@@ -128,8 +128,8 @@ mod macos {
     use core_foundation::string::CFString;
     use core_graphics::display::CGDisplay;
     use core_graphics::window::{
-        kCGNullWindowID, kCGWindowListExcludeDesktopElements,
-        kCGWindowListOptionOnScreenOnly, CGWindowListCopyWindowInfo,
+        kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
+        CGWindowListCopyWindowInfo,
     };
 
     use super::{any_window_is_fullscreen, pause_decision, Rect, WindowKnowledge};
@@ -220,8 +220,7 @@ mod macos {
         if array_ref.is_null() {
             return Vec::new();
         }
-        let array: CFArray<CFDictionary> =
-            unsafe { CFArray::wrap_under_create_rule(array_ref) };
+        let array: CFArray<CFDictionary> = unsafe { CFArray::wrap_under_create_rule(array_ref) };
 
         let mut out = Vec::new();
         for dict in array.iter() {
@@ -253,8 +252,7 @@ mod macos {
     fn window_bounds(dict: &CFDictionary) -> Option<Rect> {
         let key = CFString::from_static_string("kCGWindowBounds");
         let raw = dict.find(key.to_void())?;
-        let bounds_dict: CFDictionary =
-            unsafe { CFDictionary::wrap_under_get_rule(*raw as _) };
+        let bounds_dict: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(*raw as _) };
         Some(Rect {
             x: dict_f64(&bounds_dict, "X")? as i32,
             y: dict_f64(&bounds_dict, "Y")? as i32,
@@ -575,33 +573,78 @@ mod tests {
 
     #[test]
     fn rect_matches_exact() {
-        let r = Rect { x: 0, y: 0, w: 1920, h: 1080 };
+        let r = Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        };
         assert!(rect_matches(r, r));
     }
 
     #[test]
     fn rect_matches_within_tolerance() {
-        let win = Rect { x: 1, y: 0, w: 1919, h: 1081 };
-        let mon = Rect { x: 0, y: 0, w: 1920, h: 1080 };
+        let win = Rect {
+            x: 1,
+            y: 0,
+            w: 1919,
+            h: 1081,
+        };
+        let mon = Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        };
         assert!(rect_matches(win, mon));
     }
 
     #[test]
     fn rect_does_not_match_outside_tolerance() {
-        let win = Rect { x: 0, y: 0, w: 1910, h: 1080 };
-        let mon = Rect { x: 0, y: 0, w: 1920, h: 1080 };
+        let win = Rect {
+            x: 0,
+            y: 0,
+            w: 1910,
+            h: 1080,
+        };
+        let mon = Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        };
         assert!(!rect_matches(win, mon));
     }
 
     #[test]
     fn any_window_is_fullscreen_finds_match_across_multiple_monitors() {
         let windows = [
-            Rect { x: 0, y: 0, w: 800, h: 600 },         // small
-            Rect { x: 1920, y: 0, w: 2560, h: 1440 },    // matches monitor 2
+            Rect {
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600,
+            }, // small
+            Rect {
+                x: 1920,
+                y: 0,
+                w: 2560,
+                h: 1440,
+            }, // matches monitor 2
         ];
         let monitors = [
-            Rect { x: 0, y: 0, w: 1920, h: 1080 },
-            Rect { x: 1920, y: 0, w: 2560, h: 1440 },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 1920,
+                h: 1080,
+            },
+            Rect {
+                x: 1920,
+                y: 0,
+                w: 2560,
+                h: 1440,
+            },
         ];
         assert!(any_window_is_fullscreen(&windows, &monitors));
     }
@@ -609,10 +652,25 @@ mod tests {
     #[test]
     fn any_window_is_fullscreen_false_when_nothing_matches() {
         let windows = [
-            Rect { x: 100, y: 100, w: 800, h: 600 },
-            Rect { x: 0, y: 0, w: 1280, h: 720 },
+            Rect {
+                x: 100,
+                y: 100,
+                w: 800,
+                h: 600,
+            },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 1280,
+                h: 720,
+            },
         ];
-        let monitors = [Rect { x: 0, y: 0, w: 1920, h: 1080 }];
+        let monitors = [Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        }];
         assert!(!any_window_is_fullscreen(&windows, &monitors));
     }
 
@@ -620,8 +678,18 @@ mod tests {
     fn any_window_is_fullscreen_false_for_maximised_but_not_fullscreen() {
         // Typical Windows "maximised" window leaves room for the taskbar
         // (~40px). Should NOT count as fullscreen.
-        let windows = [Rect { x: 0, y: 0, w: 1920, h: 1040 }];
-        let monitors = [Rect { x: 0, y: 0, w: 1920, h: 1080 }];
+        let windows = [Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1040,
+        }];
+        let monitors = [Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        }];
         assert!(!any_window_is_fullscreen(&windows, &monitors));
     }
 
@@ -813,8 +881,7 @@ mod linux_tests {
     #[test]
     fn parse_net_wm_state_true_when_fullscreen_combined_with_other_states() {
         // Common Picture-in-Picture / always-on-top combo from Firefox.
-        let sample =
-            "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_ABOVE\n";
+        let sample = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_ABOVE\n";
         assert!(parse_net_wm_state_fullscreen(sample));
     }
 
