@@ -83,6 +83,7 @@ const TAURI_SHIM = `
     daily_screen_time_remind_again_minutes: 30,
     tray_countdown_enabled: true, tray_countdown_target: "next",
     micro_break_mode: "overlay", long_break_mode: "overlay",
+    custom_css: "",
   };
 
   const today = new Date();
