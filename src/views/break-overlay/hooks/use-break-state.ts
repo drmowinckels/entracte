@@ -68,7 +68,7 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
           sound_volume: s.sound_volume,
           pause_countdown_if_typing: s.pause_countdown_if_typing,
           strict_mode: s.strict_mode,
-          custom_css: s.custom_css ?? "",
+          custom_css: s.custom_css,
         };
         setAppearance(next);
         setResolvedTheme((prev) => resolveTheme(next.overlay_color, prev));

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { announceBreak, dialogLabel, remainingAriaLabel } from "../lib/a11y";
 import { soundById } from "../lib/sounds";
+import { useCustomStylesheet } from "../lib/use-custom-stylesheet";
 import { SoundCredit } from "./break-overlay/sound-credit";
 import { useBreakState } from "./break-overlay/hooks/use-break-state";
 import { useAmbientSound } from "./break-overlay/hooks/use-ambient-sound";
@@ -50,6 +51,7 @@ export default function BreakOverlay() {
 
   useAmbientSound(active, appearance);
   useHintRotation(active, setHintIndex);
+  useCustomStylesheet(appearance.custom_css);
 
   const { triggerFinish } = useCountdown(
     active,
@@ -120,7 +122,6 @@ export default function BreakOverlay() {
       aria-label={dialogSemantics ? dialogLabel(active.kind) : undefined}
       aria-describedby={dialogSemantics ? "overlay-detail" : undefined}
     >
-      {appearance.custom_css ? <style>{appearance.custom_css}</style> : null}
       {/* Live region: announces only the initial "break started"
           message. The rotating hint deliberately lives outside this
           element — putting it inside means every rotation triggers

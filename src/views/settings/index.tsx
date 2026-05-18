@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useCustomStylesheet } from "../../lib/use-custom-stylesheet";
 import { TABS } from "./constants";
 import { useHooks } from "./hooks/use-hooks";
 import { usePause } from "./hooks/use-pause";
@@ -29,10 +30,10 @@ export default function Settings() {
   const profiles = useProfiles();
   const hooks = useHooks(settings, reloadFromActive);
   const supporter = useSupporter();
+  useCustomStylesheet(settings?.custom_css ?? "");
 
   return (
     <main className="settings">
-      {settings?.custom_css ? <style>{settings.custom_css}</style> : null}
       <header className="settings-header">
         <nav className="tabs">
           {TABS.map((t) => (
@@ -83,9 +84,7 @@ export default function Settings() {
           )}
           {tab === "insights" && <InsightsTab stats={stats} />}
           {tab === "profiles" && <ProfilesTab profiles={profiles} />}
-          {tab === "about" && (
-            <AboutTab supporter={supporter} reloadFromActive={reloadFromActive} />
-          )}
+          {tab === "about" && <AboutTab supporter={supporter} />}
         </div>
       )}
     </main>

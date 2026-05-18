@@ -29,7 +29,7 @@ const hookConfigSchema = z.object({
   enabled: z.boolean(),
 });
 
-const schedulerSettingsSchema = z.object({
+export const schedulerSettingsSchema = z.object({
   micro_interval_secs: z.number(),
   micro_duration_secs: z.number(),
   long_interval_secs: z.number(),

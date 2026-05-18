@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,14 @@ const REPO_DIR = join(__dirname, "..");
 const AXE_PATH = join(REPO_DIR, "node_modules", "axe-core", "axe.min.js");
 const PORT = Number(process.env.AUDIT_PORT ?? 4173);
 const HOST = "127.0.0.1";
+
+// The fixture lives in its own JSON file so a vitest test can parse it
+// against `schedulerSettingsSchema` and catch drift the way CI couldn't
+// before — see scripts/audit-a11y-settings-fixture.test.ts.
+const DEFAULT_SETTINGS_JSON = readFileSync(
+  join(__dirname, "audit-a11y-settings-fixture.json"),
+  "utf8",
+);
 
 const TABS = [
   "Schedule",
@@ -40,51 +49,7 @@ const TAURI_SHIM = `
 (() => {
   if (window.__TAURI_INTERNALS__) return;
 
-  const DEFAULT_SETTINGS = {
-    micro_interval_secs: 1200, micro_duration_secs: 20,
-    long_interval_secs: 3000, long_duration_secs: 600,
-    micro_idle_reset_secs: 300, long_idle_reset_secs: 300,
-    micro_enabled: true, long_enabled: true,
-    micro_enforceable: false, long_enforceable: true,
-    pause_during_dnd: true, pause_during_camera: true, pause_during_video: false,
-    work_window_enabled: true, work_start_minutes: 540, work_end_minutes: 1020,
-    bedtime_enabled: true, bedtime_start_minutes: 1320, bedtime_end_minutes: 1380,
-    bedtime_interval_secs: 300, bedtime_duration_secs: 30,
-    prebreak_notification_enabled: true, prebreak_notification_seconds: 30,
-    overlay_opacity: 0.5, overlay_color: "custom", overlay_custom_rgb: "31, 41, 58",
-    overlay_high_contrast: false,
-    show_hint: true, monitor_placement: "primary",
-    strict_mode: false, postpone_enabled: true, postpone_minutes: 5,
-    postpone_escalation_enabled: true, postpone_escalation_step_secs: 60, postpone_max_count: 3,
-    show_current_time: true, clock_format: "24h",
-    micro_manual_finish: false, long_manual_finish: false,
-    autostart_enabled: false,
-    micro_sound: { mode: "end_chime", sound_id: "337048" },
-    long_sound: { mode: "ambient", sound_id: "851196" },
-    sound_volume: 0.5,
-    app_pause_enabled: true, app_pause_list: ["zoom"],
-    break_health_enabled: true,
-    micro_physical_hints: ["Look 20 feet away."],
-    micro_psychological_hints: ["Unclench your jaw."],
-    micro_hint_mix: "both",
-    long_hints: ["Stand up. Stretch."],
-    long_social_hints: ["Call someone you love.", "Step outside with a colleague."],
-    long_hint_mix: "both",
-    sleep_hints: ["Time to wind down."],
-    hint_rotate_seconds: 12,
-    delay_break_if_typing: true, typing_grace_secs: 10, typing_max_deferral_secs: 60,
-    pause_countdown_if_typing: false,
-    overlay_font_scale: 1.0,
-    micro_fixed_times: [], long_fixed_times: [],
-    micro_schedule_mode: "both", long_schedule_mode: "both",
-    hooks_enabled: true, hooks: [{ event: "break_start", command: "echo hi", enabled: true }],
-    daily_screen_time_enabled: true,
-    daily_screen_time_budget_minutes: 480,
-    daily_screen_time_remind_again_minutes: 30,
-    tray_countdown_enabled: true, tray_countdown_target: "next",
-    micro_break_mode: "overlay", long_break_mode: "overlay",
-    custom_css: "",
-  };
+  const DEFAULT_SETTINGS = ${DEFAULT_SETTINGS_JSON};
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

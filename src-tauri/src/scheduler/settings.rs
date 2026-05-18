@@ -294,10 +294,10 @@ pub struct Settings {
     pub micro_break_mode: String,
     #[serde(default = "default_break_mode")]
     pub long_break_mode: String,
-    /// Supporter-only freeform stylesheet, injected via `<style>` into
-    /// both the settings window and the break overlay. Storing it here
-    /// is why `tauri.conf.json` adds `'unsafe-inline'` to `style-src` —
-    /// without it the injected `<style>` element is blocked by CSP. The
+    /// Supporter-only freeform stylesheet, applied to both the settings
+    /// window and the break overlay via the renderer's
+    /// `useCustomStylesheet` hook (which uses `adoptedStyleSheets` so we
+    /// don't need to weaken the strict `style-src 'self'` CSP). The
     /// supporter gate lives in `commands::settings::gate_custom_css`,
     /// and `sanitize_custom_css` strips `@import` / `expression(` on
     /// every read+write.
@@ -448,17 +448,21 @@ impl Settings {
         // Cap custom CSS at 64KiB so a corrupted or hand-edited
         // settings.json can't bloat the renderer payload, then run the
         // sanitiser so loaded-from-disk values get the same scrub as
-        // newly-saved ones.
+        // newly-saved ones. Walk back to a char boundary before
+        // truncating — `String::truncate` panics mid-codepoint.
         if self.custom_css.len() > 65_536 {
-            self.custom_css.truncate(65_536);
+            let mut cut = 65_536;
+            while !self.custom_css.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.custom_css.truncate(cut);
         }
         self.custom_css = sanitize_custom_css(&self.custom_css);
     }
 }
 
-/// Defence-in-depth scrub for user-supplied CSS injected via `<style>`.
-/// CSP already restricts `style-src` to `'self' 'unsafe-inline'` and
-/// `img-src`/`font-src` block external origins, but we belt-and-braces:
+/// Defence-in-depth scrub for user-supplied CSS. Even with a strict CSP
+/// in place we belt-and-braces:
 ///
 /// - drop `@import` rules entirely (they could pull in further styles
 ///   that we don't want to audit, and CSP-bypass via stylesheet chains
@@ -467,17 +471,14 @@ impl Settings {
 ///   forks have re-introduced for compatibility.
 ///
 /// Comments are normalised first so the patterns can't be hidden behind
-/// `/* */` splits. Returns the cleaned CSS.
+/// `/* */` splits. Operates on `&str` throughout — `bytes`-indexing
+/// would mojibake non-ASCII content like `content: "→"`.
 pub fn sanitize_custom_css(css: &str) -> String {
     let stripped = strip_css_comments(css);
     let mut out = String::with_capacity(stripped.len());
     for raw in stripped.split_inclusive(';') {
-        let trimmed = raw.trim_start();
-        let lower = trimmed.to_ascii_lowercase();
-        if lower.starts_with("@import") {
-            continue;
-        }
-        if lower.contains("expression(") {
+        let lower = raw.trim_start().to_ascii_lowercase();
+        if lower.starts_with("@import") || lower.contains("expression(") {
             continue;
         }
         out.push_str(raw);
@@ -487,20 +488,16 @@ pub fn sanitize_custom_css(css: &str) -> String {
 
 fn strip_css_comments(css: &str) -> String {
     let mut out = String::with_capacity(css.len());
-    let bytes = css.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
+    let mut rest = css;
+    while let Some(start) = rest.find("/*") {
+        out.push_str(&rest[..start]);
+        rest = &rest[start + 2..];
+        match rest.find("*/") {
+            Some(end) => rest = &rest[end + 2..],
+            None => return out, // unterminated comment swallows the tail
         }
-        out.push(bytes[i] as char);
-        i += 1;
     }
+    out.push_str(rest);
     out
 }
 
@@ -599,6 +596,46 @@ mod sanitize_tests {
     #[test]
     fn empty_in_empty_out() {
         assert_eq!(sanitize_custom_css(""), "");
+    }
+
+    #[test]
+    fn preserves_non_ascii_content() {
+        let input = ".x::before { content: \"→ café\"; } /* éhé */ .y { color: red; }";
+        let out = sanitize_custom_css(input);
+        assert!(out.contains("→ café"), "non-ASCII content corrupted: {out}");
+        assert!(out.contains(".y"));
+        assert!(!out.contains("éhé"), "comment should be stripped");
+    }
+
+    #[test]
+    fn unterminated_comment_swallows_tail() {
+        // Defensive: a hand-edited CSS with a runaway `/*` shouldn't
+        // panic or leak commented-out source into the output.
+        let out = sanitize_custom_css(".ok {} /* unterminated");
+        assert_eq!(out, ".ok {} ");
+    }
+}
+
+#[cfg(test)]
+mod clamp_custom_css_tests {
+    use super::*;
+
+    #[test]
+    fn truncates_at_64kib_without_panicking_on_multibyte_boundary() {
+        // Regression: `String::truncate(65_536)` panics if byte 65,536
+        // lands inside a multi-byte codepoint. Fill exactly to the cap
+        // with ASCII then append an emoji that straddles it.
+        let mut css = "a".repeat(65_535);
+        css.push('🎉'); // 4 bytes — pushes total to 65,539
+        let mut s = Settings {
+            custom_css: css,
+            ..Settings::default()
+        };
+        s.clamp();
+        assert!(s.custom_css.len() <= 65_536);
+        // Must remain valid UTF-8 — the test would already panic if
+        // truncate split the codepoint, but assert explicitly.
+        assert!(std::str::from_utf8(s.custom_css.as_bytes()).is_ok());
     }
 }
 

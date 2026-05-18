@@ -77,4 +77,76 @@ describe("useAmbientSound", () => {
     expect(stop).toHaveBeenCalled();
     expect(startAmbient).toHaveBeenLastCalledWith("second", expect.any(Number));
   });
+
+  it("routes to startCustomAmbient when sound_id is the custom sentinel", () => {
+    const stop = vi.fn();
+    const startAmbient = vi.fn();
+    const startCustomAmbient = vi.fn(() => ({ stop }));
+    const settings = {
+      ...DEFAULT_OVERLAY_SETTINGS,
+      long_sound: {
+        mode: "ambient" as const,
+        sound_id: "custom",
+        custom_path: "/Users/me/Music/loop.mp3",
+      },
+      sound_volume: 0.3,
+    };
+    renderHook(() =>
+      useAmbientSound(baseBreak, settings, { startAmbient, startCustomAmbient }),
+    );
+    expect(startCustomAmbient).toHaveBeenCalledWith(
+      "/Users/me/Music/loop.mp3",
+      0.3,
+    );
+    expect(startAmbient).not.toHaveBeenCalled();
+  });
+
+  it("does not start anything when custom is selected but custom_path is empty", () => {
+    const startAmbient = vi.fn();
+    const startCustomAmbient = vi.fn();
+    const settings = {
+      ...DEFAULT_OVERLAY_SETTINGS,
+      long_sound: {
+        mode: "ambient" as const,
+        sound_id: "custom",
+        custom_path: "",
+      },
+    };
+    renderHook(() =>
+      useAmbientSound(baseBreak, settings, { startAmbient, startCustomAmbient }),
+    );
+    expect(startAmbient).not.toHaveBeenCalled();
+    expect(startCustomAmbient).not.toHaveBeenCalled();
+  });
+
+  it("restarts custom ambient when the custom_path changes mid-break", () => {
+    const stop = vi.fn();
+    const startCustomAmbient = vi.fn(() => ({ stop }));
+    const { rerender } = renderHook(
+      ({ path }: { path: string }) =>
+        useAmbientSound(
+          baseBreak,
+          {
+            ...DEFAULT_OVERLAY_SETTINGS,
+            long_sound: {
+              mode: "ambient",
+              sound_id: "custom",
+              custom_path: path,
+            },
+          },
+          { startCustomAmbient },
+        ),
+      { initialProps: { path: "/a.mp3" } },
+    );
+    expect(startCustomAmbient).toHaveBeenLastCalledWith(
+      "/a.mp3",
+      expect.any(Number),
+    );
+    rerender({ path: "/b.mp3" });
+    expect(stop).toHaveBeenCalled();
+    expect(startCustomAmbient).toHaveBeenLastCalledWith(
+      "/b.mp3",
+      expect.any(Number),
+    );
+  });
 });

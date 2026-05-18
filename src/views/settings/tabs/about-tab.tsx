@@ -8,14 +8,7 @@ import { writeToClipboard } from "../utils";
 
 const TOAST_MS = 3000;
 
-export function AboutTab({
-  supporter,
-}: {
-  supporter: UseSupporter;
-  // reloadFromActive is intentionally not destructured while the Verify
-  // form is hidden — re-wire when Lemon Squeezy approves the store.
-  reloadFromActive: () => Promise<unknown>;
-}) {
+export function AboutTab({ supporter }: { supporter: UseSupporter }) {
   const [version, setVersion] = useState("");
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const update = useUpdateCheck();
