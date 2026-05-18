@@ -123,8 +123,10 @@ jobs:
 
   # Advisory audits: surface signal without blocking merges.
   # cargo-deny covers licenses + CVEs + duplicate-version checks.
-  # lychee + npm audit are externally-validated and can flap, so they're
-  # advisory; promote to hard-fail once stable.
+  # npm audit is externally-validated and can flap, so it stays advisory.
+  # lychee is now merge-blocking — its step keeps `continue-on-error`
+  # so cargo-deny / npm-audit / the sticky-comment all still run, but
+  # the job's final step exits non-zero if lychee flagged any link.
   # Findings are aggregated into one sticky PR comment.
   advisory:
     runs-on: ubuntu-22.04
@@ -162,7 +164,7 @@ jobs:
         continue-on-error: true
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --config .github/audit/lychee.toml --no-progress "**/*.md"
+          args: --config .github/audit/lychee.toml --root-dir "${{ github.workspace }}/docs" --no-progress "**/*.md"
           output: audit-reports/lychee.md
           fail: true
         env:
@@ -231,3 +233,16 @@ jobs:
         with:
           header: advisory-audit
           path: advisory-comment.md
+
+      # lychee is the only audit in this job that blocks merges. Keeping
+      # the step-level `continue-on-error: true` lets cargo-deny, npm
+      # audit, and the sticky comment all run to completion; this final
+      # step then re-surfaces the lychee outcome as a job failure so the
+      # `advisory` check goes red.
+      - name: Fail if lychee found broken links
+        if: always()
+        run: |
+          if [ "${{ steps.lychee.outcome }}" = "failure" ]; then
+            echo "::error::lychee found broken links — see the sticky PR comment above for details"
+            exit 1
+          fi

@@ -163,16 +163,16 @@ Audits run in CI but every one is invokable locally. Configs live in [.github/au
 | JS bundle size budget                    | `npm run audit:size`           | size-limit           | hard                   |
 | Accessibility (axe + console-error gate) | `npm run audit:a11y`           | puppeteer + axe-core | hard                   |
 | Rust licenses + CVEs + dupes             | `npm run audit:rust`           | cargo-deny           | advisory               |
-| Broken links in `*.md`                   | `npm run audit:links`          | lychee               | advisory               |
+| Broken links in `*.md`                   | `npm run audit:links`          | lychee               | hard                   |
 | npm CVEs                                 | `npm audit --audit-level=high` | npm                  | advisory               |
 
-The `audit` CI job runs the hard-fail ones; the `advisory` job runs the rest with `continue-on-error: true` and aggregates findings into a sticky PR comment via `marocchino/sticky-pull-request-comment`.
+The `audit` CI job runs the always-hard-fail ones (knip / cspell / size-limit / a11y). The `advisory` job runs cargo-deny + lychee + npm audit with `continue-on-error: true` per-step so all three reports reach the sticky PR comment via `marocchino/sticky-pull-request-comment` — but a final step re-surfaces the lychee outcome as a job failure, so lychee breakage blocks merges.
 
 **knip warnings vs errors:** unused exports / types / duplicates are configured as `warn` (reported but exit-0) since legitimate API surface and parity-test-referenced types would otherwise force noisy ignores. Genuinely unused dependencies are still hard-fail.
 
 **cspell project dictionary:** [`.github/audit/cspell/project-words.txt`](audit/cspell/project-words.txt) — add new words alphabetically-ish under a relevant comment if you can.
 
-**lychee 404 expectations:** GitHub `blob/tree/issues/` URLs to this repo only resolve after a commit lands on `main`; treat first-run lychee failures as transient.
+**lychee scope:** in-repo GitHub URLs (`github.com/drmowinckels/entracte/{blob,tree,issues,pull,commit}/…`) are excluded in [`.github/audit/lychee.toml`](audit/lychee.toml) because they only resolve after the referencing commit lands on `main` — checking them on PR runs would 404 every time the PR adds a link to the repo. Broken in-repo links surface as 404s in the rendered docs anyway.
 
 ## CI / deployment
 
@@ -182,7 +182,7 @@ Three workflows in [.github/workflows/](workflows/):
   - **frontend** (ubuntu): `tsc --noEmit`, `npm run coverage`, `npm run build`, `audit:a11y`. Uploads `coverage/lcov.info` to Codecov with flag `frontend`.
   - **rust** (macOS + ubuntu + windows matrix): `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`. Ubuntu also runs `cargo llvm-cov` and uploads `src-tauri/lcov.info` to Codecov with flag `rust`, plus `cargo doc -D warnings` (catches broken intra-doc links).
   - **audit** (ubuntu, hard-fail): knip + cspell + size-limit.
-  - **advisory** (ubuntu, `continue-on-error: true`): cargo-deny + lychee + npm audit, results posted as a sticky PR comment.
+  - **advisory** (ubuntu): cargo-deny + lychee + npm audit, results posted as a sticky PR comment. Step-level `continue-on-error: true` keeps the comment posting even when an audit fails; a final step re-fails the job on lychee breakage so broken links block merges.
 - **[docs.yml](workflows/docs.yml)** — runs on push to `main` when `docs/**`, `src/**`, `src-tauri/**`, or `.config/typedoc/**` change. Builds the VitePress site + rustdoc + TypeDoc, deploys to GitHub Pages.
 - **[docs-preview.yml](workflows/docs-preview.yml)** — runs on `pull_request` against the same path set. Mirrors the production docs build and pushes the result to Netlify as a per-PR preview, then sticky-comments the URL on the PR. Requires `NETLIFY_AUTH_TOKEN` (user token) and `NETLIFY_SITE_ID` (per-site) repo secrets. Skips fork PRs (no secret access). Production deploys stay on GitHub Pages via `docs.yml` — Netlify is preview-only.
 - **[release.yml](workflows/release.yml)** — runs on `v*` tag push (or `workflow_dispatch`). Full bundle via `tauri-action` across all platforms, creates a draft GitHub release.

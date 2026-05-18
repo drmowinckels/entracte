@@ -19,6 +19,20 @@ exclude = [
   # rustdoc / TypeDoc output: generated into the built site at /api/{rust,ts}/,
   # not present in source.
   '/api/(rust|ts)/',
+  # In-repo GitHub URLs (blob/tree/issues/pull/commit). These only
+  # resolve after the referencing commit lands on main, so on PR runs
+  # they 404 even when the link is correct. The lychee gate is now
+  # merge-blocking, so excluding them avoids spurious failures —
+  # broken in-repo links surface as 404s in the rendered docs anyway.
+  '^https?://github\.com/drmowinckels/entracte/(blob|tree|issues|pull|commit)/',
+  # VitePress mounts `docs/public/` at the site root, so `/audio/...`
+  # and similar public-mounted assets don't exist under `docs/` — they
+  # live under `docs/public/`. The `--root-dir docs` invocation handles
+  # everything else, but the public-mounted prefixes need an URL-form
+  # exclude (lychee resolves them to `file:///…/docs/audio/…` before
+  # matching against this list). Add new public asset dirs here as they
+  # appear.
+  'file://.*?/docs/audio/',
 ]
 
 exclude_path = [
