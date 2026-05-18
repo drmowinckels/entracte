@@ -1,0 +1,11 @@
+# Netlify path rewrites for the docs preview.
+#
+# VitePress builds with `base: "/entracte/"` so every asset URL in the
+# emitted HTML starts with `/entracte/...`. That's correct on production
+# (drmowinckels.github.io/entracte/) but Netlify serves the preview at
+# the bucket root, so without this rewrite every CSS / JS / image / audio
+# fetch 404s and the page renders unstyled.
+#
+# 200 = path rewrite, not redirect — the visible URL stays as-is and
+# the bytes come from the rewritten path. GH Pages ignores this file.
+/entracte/* /:splat 200
