@@ -31,18 +31,28 @@ features:
   - icon: 🤫
     title: Knows when to stay quiet
     details: Skips when Do Not Disturb is on, your camera is in use, you've gone idle, or you're outside your work hours. One borderless overlay per monitor when it does fire.
+    link: /guide/settings#quiet-times
+    linkText: How the guards work
   - icon: 👤
     title: Settings profiles
     details: Save multiple named profiles and swap between them from the tray. Each carries its own intervals, hints, and sound.
+    link: /guide/settings#profiles
+    linkText: Profiles overview
   - icon: 💭
     title: Wellness hints, not nag screens
     details: Each break shows one of a curated pool of prompts — physical stretches, breathing cues, social nudges. Mix the categories or rotate between them on a cadence you set.
+    link: /guide/settings#breaks
+    linkText: Tune the hint mix
   - icon: 📊
     title: Insights you can actually use
     details: 84-day heatmap, time-of-day distribution, suppression-reason breakdown, daily screen-time budget with reminders. Export to CSV when you want it elsewhere.
+    link: /guide/settings#insights
+    linkText: What Insights tracks
   - icon: 🦀
     title: Native and lightweight
     details: Rust + Tauri 2 core. Small binary, low idle CPU, no Electron. Local-only — no telemetry, no cloud sync, no account.
+    link: /architecture/
+    linkText: How it's built
 ---
 
 <div style="text-align: center; margin: 3rem 0 1rem;">
