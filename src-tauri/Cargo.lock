@@ -1063,6 +1063,8 @@ name = "entracte"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "core-foundation",
+ "core-graphics",
  "getrandom 0.2.17",
  "hex",
  "libc",

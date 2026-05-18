@@ -40,12 +40,14 @@ libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
-windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_Foundation", "Wdk_System_SystemServices"] }
+windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Wdk_System_SystemServices"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSFont", "NSFontDescriptor", "NSAttributedString"] }
 objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSString", "NSDictionary", "NSArray", "NSValue"] }
+core-graphics = "0.25"
+core-foundation = "0.10"
 
 [profile.release]
 lto = "thin"
