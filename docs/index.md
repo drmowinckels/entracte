@@ -32,11 +32,11 @@ features:
     title: Knows when to stay quiet
     details: Skips when Do Not Disturb is on, your camera is in use, you've gone idle, or you're outside your work hours. One borderless overlay per monitor when it does fire.
   - icon: 👤
-    title: Profiles for every mode
-    details: Switch from the tray between "Deep work", "Meetings", "Weekend"… each carries its own intervals, hint pool, and sound. Inherit-from-active when you create a new one.
+    title: Settings profiles
+    details: Save multiple named profiles and swap between them from the tray. Each carries its own intervals, hints, and sound.
   - icon: 💭
     title: Wellness hints, not nag screens
-    details: Each break shows one of a rotating pool of prompts — physical stretches, breathing cues, social nudges. Edit the pool, mix the categories, swap in your own.
+    details: Each break shows one of a curated pool of prompts — physical stretches, breathing cues, social nudges. Mix the categories or rotate between them on a cadence you set.
   - icon: 📊
     title: Insights you can actually use
     details: 84-day heatmap, time-of-day distribution, suppression-reason breakdown, daily screen-time budget with reminders. Export to CSV when you want it elsewhere.
