@@ -44,15 +44,24 @@ pub fn spawn_monitor(active: Arc<AtomicBool>) {
 // break firing within the next 10s is the worst case.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
+// `Rect` / `rect_matches` / `any_window_is_fullscreen` /
+// `FULLSCREEN_TOLERANCE_PX` are used by the macOS and Windows fullscreen
+// checks. The Linux check goes through xprop's `_NET_WM_STATE_FULLSCREEN`
+// flag instead, so on Linux these are dead in non-test code (tests still
+// exercise them on every OS via the cross-platform truth-table suite).
+// Hence the per-symbol `cfg_attr(linux, allow(dead_code))`.
+
 /// Pixel tolerance when comparing window bounds to monitor bounds.
 /// Native fullscreen on macOS/Windows is exact, but X11 reparenting
 /// window managers (i3, openbox) sometimes leave a 1–2px border. Keep
 /// this small — a 5px tolerance would catch maximised-but-not-fullscreen
 /// windows on some setups.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 const FULLSCREEN_TOLERANCE_PX: i32 = 2;
 
 /// Plain rectangle used by the bounds-comparison helpers below. Decoupled
 /// from any platform type so the matching logic is pure and testable.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Rect {
     pub x: i32,
@@ -63,6 +72,7 @@ pub(crate) struct Rect {
 
 /// True if `window` covers `monitor` within `FULLSCREEN_TOLERANCE_PX`
 /// on every edge.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn rect_matches(window: Rect, monitor: Rect) -> bool {
     (window.x - monitor.x).abs() <= FULLSCREEN_TOLERANCE_PX
         && (window.y - monitor.y).abs() <= FULLSCREEN_TOLERANCE_PX
@@ -72,6 +82,7 @@ pub(crate) fn rect_matches(window: Rect, monitor: Rect) -> bool {
 
 /// True if any window in `windows` matches any monitor in `monitors`.
 /// This is the platform-independent core of the fullscreen check.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn any_window_is_fullscreen(windows: &[Rect], monitors: &[Rect]) -> bool {
     windows
         .iter()
