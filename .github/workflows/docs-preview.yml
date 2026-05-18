@@ -76,6 +76,7 @@ jobs:
           mkdir -p docs/.vitepress/dist/api/ts
           cp -r target/typedoc/. docs/.vitepress/dist/api/ts/
       - name: Deploy preview to Netlify
+        id: netlify
         uses: nwtgck/actions-netlify@v3
         with:
           publish-dir: docs/.vitepress/dist
@@ -83,8 +84,9 @@ jobs:
           # the same URL rather than creating new ones.
           alias: pr-${{ github.event.pull_request.number }}
           deploy-message: "PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
-          enable-pull-request-comment: true
-          overwrites-pull-request-comment: true
+          # Built-in PR comment doesn't link back to the workflow run.
+          # We post our own sticky comment below with both URLs.
+          enable-pull-request-comment: false
           # Production deploy stays on GitHub Pages — this is a preview only.
           production-deploy: false
           # Don't try to flip the alias to be the production URL.
@@ -93,3 +95,20 @@ jobs:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         timeout-minutes: 5
+
+      - name: Post / update preview comment on PR
+        if: always() && steps.netlify.conclusion != 'cancelled'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: docs-preview
+          message: |
+            ### 📖 Docs preview
+
+            ${{ steps.netlify.outcome == 'success' && format('✅ Built and deployed for commit `{0}`.', github.event.pull_request.head.sha) || format('❌ Build or deploy failed for commit `{0}`. See the run log below.', github.event.pull_request.head.sha) }}
+
+            | | |
+            | --- | --- |
+            | **Preview URL** | ${{ steps.netlify.outputs.deploy-url || '_(deploy failed — no URL)_' }} |
+            | **Build logs** | ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }} |
+
+            <sub>Posted by [docs-preview.yml](https://github.com/${{ github.repository }}/blob/main/.github/workflows/docs-preview.yml) — updates in place on every push.</sub>
