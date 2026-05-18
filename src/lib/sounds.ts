@@ -1,3 +1,4 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import credits from "../assets/sounds/credits.json";
 
 /** Buckets the bundled sounds fall into. Drives which sounds are
@@ -66,6 +67,15 @@ async function soundUrl(id: string): Promise<string | undefined> {
   return loader();
 }
 
+/** Tauri asset URL for a user-supplied sound file (Supporter pack).
+ * `path` must be an absolute filesystem path returned by the dialog
+ * plugin. Returns the empty string for empty input so callers can
+ * short-circuit. */
+function customSoundUrl(path: string): string {
+  if (!path) return "";
+  return convertFileSrc(path);
+}
+
 function clampVolume(volume: number): number {
   return Math.min(1, Math.max(0, volume));
 }
@@ -73,13 +83,7 @@ function clampVolume(volume: number): number {
 const livePlaybacks = new Set<HTMLAudioElement>();
 const PLAYBACK_TIMEOUT_MS = 2500;
 
-/** Play a sound once. Resolves when the audio ends, errors, or the
- * 2.5s safety timeout fires (whichever comes first). No-op when
- * `volume <= 0` or the id is unknown. */
-export async function playSound(id: string, volume: number): Promise<void> {
-  if (volume <= 0) return;
-  const url = await soundUrl(id);
-  if (!url) return;
+async function playUrlOnce(url: string, volume: number): Promise<void> {
   const audio = new Audio(url);
   audio.volume = clampVolume(volume);
   livePlaybacks.add(audio);
@@ -103,20 +107,39 @@ export async function playSound(id: string, volume: number): Promise<void> {
   });
 }
 
+/** Play a sound once. Resolves when the audio ends, errors, or the
+ * 2.5s safety timeout fires (whichever comes first). No-op when
+ * `volume <= 0` or the id is unknown. */
+export async function playSound(id: string, volume: number): Promise<void> {
+  if (volume <= 0) return;
+  const url = await soundUrl(id);
+  if (!url) return;
+  return playUrlOnce(url, volume);
+}
+
+/** Play a user-supplied audio file once. Same semantics as
+ * {@link playSound} but resolves the URL via Tauri's asset protocol. */
+export async function playCustomSound(
+  path: string,
+  volume: number,
+): Promise<void> {
+  if (volume <= 0 || !path) return;
+  return playUrlOnce(customSoundUrl(path), volume);
+}
+
 /** Handle returned by ambient-play functions — call `stop()` to end
  * looping early. Safe to call repeatedly. */
 export type AmbientHandle = {
   stop(): void;
 };
 
-/** Start looping ambient audio. Returns `null` when volume is zero.
- * The URL is resolved lazily — `stop()` is safe to call before the
- * audio actually starts playing. */
-export function startAmbient(id: string, volume: number): AmbientHandle | null {
-  if (volume <= 0) return null;
+function startLoop(
+  urlPromise: Promise<string | undefined>,
+  volume: number,
+): AmbientHandle {
   let stopped = false;
   let audio: HTMLAudioElement | null = null;
-  void soundUrl(id).then((url) => {
+  void urlPromise.then((url) => {
     if (stopped || !url) return;
     audio = new Audio(url);
     audio.volume = clampVolume(volume);
@@ -139,16 +162,30 @@ export function startAmbient(id: string, volume: number): AmbientHandle | null {
   };
 }
 
-/** Preview an ambient sound on the Settings page with a hard time
- * cap (default 6s) and a brief fade-out (default 0.5s) so the page
- * never leaks audio that lasts "forever". */
-export function previewAmbient(
-  id: string,
-  volume: number,
-  maxSecs = 6,
-  fadeSecs = 0.5,
-): AmbientHandle | null {
+/** Start looping ambient audio. Returns `null` when volume is zero.
+ * The URL is resolved lazily — `stop()` is safe to call before the
+ * audio actually starts playing. */
+export function startAmbient(id: string, volume: number): AmbientHandle | null {
   if (volume <= 0) return null;
+  return startLoop(soundUrl(id), volume);
+}
+
+/** Start looping a user-supplied audio file. Same semantics as
+ * {@link startAmbient} but resolves the URL via Tauri's asset protocol. */
+export function startCustomAmbient(
+  path: string,
+  volume: number,
+): AmbientHandle | null {
+  if (volume <= 0 || !path) return null;
+  return startLoop(Promise.resolve(customSoundUrl(path)), volume);
+}
+
+function previewLoop(
+  urlPromise: Promise<string | undefined>,
+  volume: number,
+  maxSecs: number,
+  fadeSecs: number,
+): AmbientHandle {
   const targetVolume = clampVolume(volume);
   let stopped = false;
   let audio: HTMLAudioElement | null = null;
@@ -168,7 +205,7 @@ export function previewAmbient(
       // ignore
     }
   };
-  void soundUrl(id).then((url) => {
+  void urlPromise.then((url) => {
     if (stopped || !url) return;
     audio = new Audio(url);
     audio.volume = targetVolume;
@@ -191,4 +228,34 @@ export function previewAmbient(
     }, fadeStartMs);
   });
   return { stop };
+}
+
+/** Preview an ambient sound on the Settings page with a hard time
+ * cap (default 6s) and a brief fade-out (default 0.5s) so the page
+ * never leaks audio that lasts "forever". */
+export function previewAmbient(
+  id: string,
+  volume: number,
+  maxSecs = 6,
+  fadeSecs = 0.5,
+): AmbientHandle | null {
+  if (volume <= 0) return null;
+  return previewLoop(soundUrl(id), volume, maxSecs, fadeSecs);
+}
+
+/** Preview a user-supplied ambient file with the same time/fade caps
+ * as {@link previewAmbient}. */
+export function previewCustomAmbient(
+  path: string,
+  volume: number,
+  maxSecs = 6,
+  fadeSecs = 0.5,
+): AmbientHandle | null {
+  if (volume <= 0 || !path) return null;
+  return previewLoop(
+    Promise.resolve(customSoundUrl(path)),
+    volume,
+    maxSecs,
+    fadeSecs,
+  );
 }

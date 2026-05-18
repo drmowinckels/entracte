@@ -120,6 +120,7 @@ export default function BreakOverlay() {
       aria-label={dialogSemantics ? dialogLabel(active.kind) : undefined}
       aria-describedby={dialogSemantics ? "overlay-detail" : undefined}
     >
+      {appearance.custom_css ? <style>{appearance.custom_css}</style> : null}
       {/* Live region: announces only the initial "break started"
           message. The rotating hint deliberately lives outside this
           element — putting it inside means every rotation triggers

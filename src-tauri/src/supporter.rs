@@ -75,6 +75,17 @@ pub fn delete(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Single-call answer to "is this install a supporter right now?".
+/// Reads the on-disk record and applies the offline grace window so
+/// callers don't have to thread `now`/grace logic of their own.
+/// Used by gated IPC paths (e.g. `custom_css`) to authorise per-call.
+pub fn is_supporter_now(path: &Path) -> bool {
+    match load(path) {
+        Some(r) => is_within_grace(r.last_validated_at, Utc::now()),
+        None => false,
+    }
+}
+
 pub fn is_within_grace(last_validated_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     let elapsed = now.signed_duration_since(last_validated_at);
     elapsed >= chrono::Duration::zero()

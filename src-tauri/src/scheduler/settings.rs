@@ -32,13 +32,16 @@ pub enum BreakSoundMode {
 }
 
 /// Per-break-kind audio configuration: mode + which bundled sound to play.
-/// `sound_id` is the numeric id from `src/assets/sounds/credits.json`.
+/// `sound_id` is the numeric id from `src/assets/sounds/credits.json`, or
+/// the literal `"custom"` to use `custom_path` (a Supporter-pack feature).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct BreakSound {
     #[serde(default)]
     pub mode: BreakSoundMode,
     #[serde(default)]
     pub sound_id: String,
+    #[serde(default)]
+    pub custom_path: String,
 }
 
 impl BreakSound {
@@ -48,6 +51,7 @@ impl BreakSound {
         Self {
             mode: BreakSoundMode::EndChime,
             sound_id: id.to_string(),
+            custom_path: String::new(),
         }
     }
 }
@@ -290,6 +294,15 @@ pub struct Settings {
     pub micro_break_mode: String,
     #[serde(default = "default_break_mode")]
     pub long_break_mode: String,
+    /// Supporter-only freeform stylesheet, injected via `<style>` into
+    /// both the settings window and the break overlay. Storing it here
+    /// is why `tauri.conf.json` adds `'unsafe-inline'` to `style-src` —
+    /// without it the injected `<style>` element is blocked by CSP. The
+    /// supporter gate lives in `commands::settings::gate_custom_css`,
+    /// and `sanitize_custom_css` strips `@import` / `expression(` on
+    /// every read+write.
+    #[serde(default)]
+    pub custom_css: String,
 }
 
 impl Default for Settings {
@@ -367,6 +380,7 @@ impl Default for Settings {
             tray_countdown_target: default_tray_countdown_target(),
             micro_break_mode: default_break_mode(),
             long_break_mode: default_break_mode(),
+            custom_css: String::new(),
         }
     }
 }
@@ -431,7 +445,63 @@ impl Settings {
         if self.clock_format != "12h" && self.clock_format != "24h" {
             self.clock_format = default_clock_format();
         }
+        // Cap custom CSS at 64KiB so a corrupted or hand-edited
+        // settings.json can't bloat the renderer payload, then run the
+        // sanitiser so loaded-from-disk values get the same scrub as
+        // newly-saved ones.
+        if self.custom_css.len() > 65_536 {
+            self.custom_css.truncate(65_536);
+        }
+        self.custom_css = sanitize_custom_css(&self.custom_css);
     }
+}
+
+/// Defence-in-depth scrub for user-supplied CSS injected via `<style>`.
+/// CSP already restricts `style-src` to `'self' 'unsafe-inline'` and
+/// `img-src`/`font-src` block external origins, but we belt-and-braces:
+///
+/// - drop `@import` rules entirely (they could pull in further styles
+///   that we don't want to audit, and CSP-bypass via stylesheet chains
+///   has historically been a footgun);
+/// - strip the legacy IE `expression(...)` construct, which old WebKit
+///   forks have re-introduced for compatibility.
+///
+/// Comments are normalised first so the patterns can't be hidden behind
+/// `/* */` splits. Returns the cleaned CSS.
+pub fn sanitize_custom_css(css: &str) -> String {
+    let stripped = strip_css_comments(css);
+    let mut out = String::with_capacity(stripped.len());
+    for raw in stripped.split_inclusive(';') {
+        let trimmed = raw.trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("@import") {
+            continue;
+        }
+        if lower.contains("expression(") {
+            continue;
+        }
+        out.push_str(raw);
+    }
+    out
+}
+
+fn strip_css_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let bytes = css.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 /// Resolve the micro-break hint pool, honouring `micro_hint_mix`.
@@ -490,6 +560,46 @@ pub fn delivery_for(kind: BreakKind, s: &Settings) -> BreakDelivery {
 /// `Windowed` delivery mode. Convenience wrapper around `delivery_for`.
 pub fn is_windowed_mode(kind: BreakKind, s: &Settings) -> bool {
     matches!(delivery_for(kind, s), BreakDelivery::Windowed)
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_custom_css;
+
+    #[test]
+    fn passes_safe_css_through() {
+        let input = ".overlay-card { background: #111; color: white; }";
+        assert_eq!(sanitize_custom_css(input), input);
+    }
+
+    #[test]
+    fn drops_at_import_rules() {
+        let input = "@import url('https://evil.example/x.css'); .ok { color: red; }";
+        let out = sanitize_custom_css(input);
+        assert!(!out.contains("@import"), "got: {out}");
+        assert!(out.contains(".ok"));
+    }
+
+    #[test]
+    fn drops_at_import_even_when_obfuscated_with_comments() {
+        let input = "@/* hi */import url('https://evil/x.css'); .ok { color: red; }";
+        let out = sanitize_custom_css(input);
+        assert!(!out.to_ascii_lowercase().contains("@import"));
+        assert!(out.contains(".ok"));
+    }
+
+    #[test]
+    fn drops_expression_construct() {
+        let input = ".x { width: expression(alert(1)); } .ok { color: red; }";
+        let out = sanitize_custom_css(input);
+        assert!(!out.contains("expression("), "got: {out}");
+        assert!(out.contains(".ok"));
+    }
+
+    #[test]
+    fn empty_in_empty_out() {
+        assert_eq!(sanitize_custom_css(""), "");
+    }
 }
 
 #[cfg(test)]

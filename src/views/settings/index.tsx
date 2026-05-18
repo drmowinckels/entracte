@@ -32,6 +32,7 @@ export default function Settings() {
 
   return (
     <main className="settings">
+      {settings?.custom_css ? <style>{settings.custom_css}</style> : null}
       <header className="settings-header">
         <nav className="tabs">
           {TABS.map((t) => (
@@ -55,6 +56,7 @@ export default function Settings() {
               settings={settings}
               update={update}
               updateMany={updateMany}
+              supporter={supporter.status}
             />
           )}
           {tab === "breaks" && (
