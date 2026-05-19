@@ -44,11 +44,11 @@ describe("SuppressionBars", () => {
     expect(bars[0].style.getPropertyValue("--bar-width")).toBe("100%");
     expect(bars[1].style.getPropertyValue("--bar-width")).toBe("50%");
 
-    const dndSegs = bars[0].querySelectorAll<HTMLElement>(".suppression-seg");
-    const micro = Array.from(dndSegs).find(
+    const dndSegments = bars[0].querySelectorAll<HTMLElement>(".suppression-seg");
+    const micro = Array.from(dndSegments).find(
       (s) => s.dataset.kind === "micro",
     )!;
-    const long = Array.from(dndSegs).find((s) => s.dataset.kind === "long")!;
+    const long = Array.from(dndSegments).find((s) => s.dataset.kind === "long")!;
     expect(micro.style.getPropertyValue("--seg-width")).toBe("20%");
     expect(long.style.getPropertyValue("--seg-width")).toBe("80%");
   });

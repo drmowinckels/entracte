@@ -367,8 +367,7 @@ pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>)
         })
         .collect();
 
-    let postpone_follow_through =
-        compute_postpone_follow_through(events, range_start, now);
+    let postpone_follow_through = compute_postpone_follow_through(events, range_start, now);
 
     let heatmap_days = 84i64;
     let heatmap_start = (now - Duration::days(heatmap_days - 1)).date_naive();
@@ -1008,14 +1007,20 @@ mod tests {
                     outcome: Outcome::Dismissed,
                 },
             ),
-            ev(n - Duration::days(8), EventPayload::BreakPostponed {
-                kind: BreakKind::Micro,
-                minutes: 5,
-            }),
-            ev(n - Duration::days(20), EventPayload::BreakSkipped {
-                kind: BreakKind::Micro,
-                source: SkipSource::User,
-            }),
+            ev(
+                n - Duration::days(8),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Micro,
+                    minutes: 5,
+                },
+            ),
+            ev(
+                n - Duration::days(20),
+                EventPayload::BreakSkipped {
+                    kind: BreakKind::Micro,
+                    source: SkipSource::User,
+                },
+            ),
         ];
         let d = compute_digest(&events, "week", n);
         assert_eq!(d.micro_taken + d.long_taken, 1);
