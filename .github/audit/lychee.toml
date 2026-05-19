@@ -33,6 +33,7 @@ exclude = [
   # matching against this list). Add new public asset dirs here as they
   # appear.
   'file://.*?/docs/audio/',
+  'file://.*?/docs/videos/',
 ]
 
 exclude_path = [
