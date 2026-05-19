@@ -563,10 +563,10 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
   margin-left: 0.4rem;
-  padding: 0.05rem 0.35rem;
+  padding: 0.05rem 0.4rem;
   border-radius: 999px;
   background: var(--input-bg);
   color: var(--muted-fg);
@@ -574,17 +574,28 @@ body,
 }
 
 .settings .delta-chip.up {
-  color: #4ec38a;
-  border-color: rgba(78, 195, 138, 0.4);
+  color: var(--delta-up, #4ec38a);
+  border-color: var(--delta-up-border, rgba(78, 195, 138, 0.4));
 }
 
 .settings .delta-chip.down {
-  color: #e07b91;
-  border-color: rgba(224, 123, 145, 0.4);
+  color: var(--delta-down, #e07b91);
+  border-color: var(--delta-down-border, rgba(224, 123, 145, 0.4));
 }
 
 .settings .delta-chip.flat {
   opacity: 0.7;
+}
+
+@media (prefers-color-scheme: light) {
+  .settings .delta-chip.up {
+    --delta-up: #1f7a4a;
+    --delta-up-border: rgba(31, 122, 74, 0.4);
+  }
+  .settings .delta-chip.down {
+    --delta-down: #b03050;
+    --delta-down-border: rgba(176, 48, 80, 0.4);
+  }
 }
 
 .settings .suppression-kind-tag {
