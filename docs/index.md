@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Entracte
   text: Breaks that respect your flow.
-  tagline: A cross-platform break reminder app, named after the theatre interval between acts. Pronounced "ahn-TRAHKT", not "en-tract".
+  tagline: A cross-platform break reminder app, named after the theatre interval between acts.
   image:
     src: /logo_gradient.svg
     alt: Entracte logo
@@ -56,7 +56,10 @@ features:
 ---
 
 <div style="text-align: center; margin: 3rem 0 1rem;">
-  <img src="/screenshots/break-overlay-active.png" alt="A micro break overlay: countdown ring at 10 seconds with the prompt 'Sip some water.' and Postpone / Skip buttons" style="max-width: 720px; width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
+  <video controls preload="metadata" poster="/videos/entracte_60s_poster.jpg" playsinline style="display: block; margin: 0 auto; max-width: 960px; width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" aria-label="One-minute tour of Entracte — pronunciation, micro break overlay, three break kinds, suppression and per-app pauses.">
+    <source src="/videos/entracte_60s.mp4" type="video/mp4" />
+    Your browser doesn't support inline video — <a href="/videos/entracte_60s.mp4">download the clip</a> instead.
+  </video>
 </div>
 
 ::: warning Pre-release
@@ -67,7 +70,7 @@ No tagged binaries yet — installing currently means [building from source](/gu
 
 ## How to say it
 
-"ahn-TRAHKT" — French, IPA `/ɑ̃.tʁakt/`. Not "en-tract".
+"ahn-TRAHKT" — French, IPA `/ɑ̃.tʁakt/`.
 
 <audio controls preload="none" src="/audio/entracte-fr.ogg" style="display: block; margin: 0.5rem auto 0;">Your browser doesn't support inline audio — <a href="/audio/entracte-fr.ogg">download the clip</a> instead.</audio>
 
