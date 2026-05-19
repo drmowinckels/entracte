@@ -2,6 +2,42 @@
 
 Entracte is a small, two-layer application: a Rust core in [Tauri 2](https://tauri.app) and a React 19 frontend. The frontend is two windows sharing one Vite bundle — a Preferences window and a fullscreen break Overlay — routed by query string.
 
+The scheduler is the brain: a 1Hz Tokio tick loop in `src-tauri/src/scheduler/` that consults native hooks, applies pause/suppress rules, and decides when (and how) to surface a break. The tray, CLI, and settings UI all push into the same scheduler; the overlay and stats are downstream of its decisions.
+
+```mermaid
+flowchart LR
+    subgraph UI["User surface"]
+        Tray["Tray icon + menu"]
+        CLI["entracte CLI"]
+        SettingsUI["Settings UI<br/>(React)"]
+        Overlay["Break overlay<br/>(React)"]
+        SysNotification["System notification"]
+    end
+
+    subgraph Backend["Rust / Tauri backend"]
+        IPC["ipc.rs<br/>CLI ↔ app bridge"]
+        Scheduler["scheduler/<br/>1Hz tick loop"]
+        Hooks["Native hooks<br/>DnD · camera · idle · session lock"]
+    end
+
+    subgraph Stores["On-disk state"]
+        Config[("settings.json<br/>profiles + settings")]
+        Stats[("events.jsonl<br/>break history")]
+        Pause[("pause.json")]
+    end
+
+    CLI -->|subcommands| IPC
+    Tray -->|menu actions| Scheduler
+    IPC --> Scheduler
+    SettingsUI <-->|tauri invoke| Scheduler
+    Hooks -->|suppress signals| Scheduler
+    Scheduler -->|fires break| Overlay
+    Scheduler -->|notify-only mode| SysNotification
+    Scheduler <--> Config
+    Scheduler --> Stats
+    Scheduler <--> Pause
+```
+
 ## Layout
 
 ```

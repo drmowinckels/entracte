@@ -86,7 +86,30 @@ The backend emits these via `app.emit`. The renderer subscribes with `listen<Pay
 
 ## Local IPC
 
-`ipc.rs` runs a TCP server on `127.0.0.1` that accepts JSON envelopes from the CLI when a normal user wants to drive a running Entracte from a terminal. Each request is:
+`ipc.rs` runs a TCP server on `127.0.0.1` that accepts JSON envelopes from the CLI when a normal user wants to drive a running Entracte from a terminal.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as entracte CLI
+    participant Token as ipc-token<br/>(0o600 file)
+    participant IPC as ipc.rs<br/>(127.0.0.1 TCP)
+    participant Sched as scheduler
+
+    CLI->>Token: read 32-byte hex
+    Token-->>CLI: token
+    CLI->>IPC: { token, request: { cmd, ... } }
+    Note over IPC: subtle::ConstantTimeEq
+    alt token valid
+        IPC->>Sched: dispatch request
+        Sched-->>IPC: result
+        IPC-->>CLI: JSON response
+    else token invalid
+        IPC-->>CLI: error (timing-safe)
+    end
+```
+
+Each request is:
 
 ```json
 {

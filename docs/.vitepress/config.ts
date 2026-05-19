@@ -1,6 +1,6 @@
-import { defineConfig } from "vitepress";
+import { withMermaid } from "vitepress-plugin-mermaid";
 
-export default defineConfig({
+export default withMermaid({
   title: "Entracte",
   description:
     "Cross-platform break reminder app, named after the theatre interval between acts.",
