@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
@@ -14,6 +14,7 @@ use crate::stats::{EventPayload, GuardReason, Logger};
 use super::overlay::deliver_break;
 use super::pause::{persist_pause, PauseState};
 use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind_screen_time};
+use super::session_lock;
 use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
@@ -66,7 +67,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // `UserIdle::get_time()` round-trips to the windowing system on X11 /
         // Wayland and isn't free on macOS either, so fetch once per tick and
         // reuse for screen-time, idle-suppression, and the typing-defer check.
-        let idle_secs = match UserIdle::get_time() {
+        let raw_idle_secs = match UserIdle::get_time() {
             Ok(i) => i.as_seconds(),
             Err(e) => {
                 warn_user_idle_failure(&e);
@@ -77,6 +78,15 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 0
             }
         };
+        // A locked screen is a stronger AFK signal than HIDIdleTime —
+        // `caffeinate -u`, Zoom meetings, and synthetic-input utilities
+        // can keep the HID counter at zero while the human is gone, but
+        // they can't unlock the workstation. When the OS reports the
+        // session as locked, promote `idle_secs` past both thresholds
+        // so the screen-time, suppression, and typing-defer paths
+        // below all treat the user as idle.
+        let idle_secs =
+            promote_idle_for_lock(raw_idle_secs, session_lock::screen_locked(), &s);
         let is_active = idle_secs < s.micro_idle_reset_secs;
         let today_str = local_today_string();
         let budget_secs = s.daily_screen_time_budget_minutes.saturating_mul(60);
@@ -645,6 +655,51 @@ fn user_idle_warn_throttle(cell: &AtomicI64, now_epoch: i64, min_interval_secs: 
     true
 }
 
+/// Tracks whether the previous tick saw the screen as locked, so that
+/// `promote_idle_for_lock` can emit a single log line on each
+/// transition rather than spamming the log every second while the
+/// workstation is locked.
+static LOCK_STATE_LAST_LOCKED: AtomicBool = AtomicBool::new(false);
+
+/// Pure decision: given the raw HID-idle seconds and an `Option<bool>`
+/// lock signal, return the idle seconds the rest of the scheduler
+/// should see. When the OS confidently reports the session as locked,
+/// promote the value past both the micro- and long-break reset
+/// thresholds so every downstream check (screen-time, suppression,
+/// typing-defer) treats the user as idle. `None` (couldn't determine
+/// lock state) leaves `raw_idle_secs` untouched — trust HID alone.
+pub(super) fn idle_secs_with_lock(
+    raw_idle_secs: u64,
+    locked: Option<bool>,
+    s: &Settings,
+) -> u64 {
+    if matches!(locked, Some(true)) {
+        raw_idle_secs
+            .max(s.micro_idle_reset_secs)
+            .max(s.long_idle_reset_secs)
+    } else {
+        raw_idle_secs
+    }
+}
+
+/// Wrapper around `idle_secs_with_lock` that also emits a single info
+/// line on each locked⇄unlocked transition, so the log shows why
+/// idle-based suppression suddenly engaged or disengaged.
+fn promote_idle_for_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
+    let is_locked = matches!(locked, Some(true));
+    let prev_locked = LOCK_STATE_LAST_LOCKED.swap(is_locked, Ordering::Relaxed);
+    if is_locked != prev_locked {
+        if is_locked {
+            log::info!(
+                "scheduler: session locked, treating user as idle (raw HID idle = {raw_idle_secs}s)"
+            );
+        } else {
+            log::info!("scheduler: session unlocked, resuming HID-based idle detection");
+        }
+    }
+    idle_secs_with_lock(raw_idle_secs, locked, s)
+}
+
 /// Surface a `UserIdle::get_time` error to the log, at most once per
 /// `USER_IDLE_WARN_INTERVAL_SECS`. Without this gate the production
 /// code silently fell back to "0 = active" forever, so a broken
@@ -857,6 +912,68 @@ mod tests {
         let cell = AtomicI64::new(2000);
         assert!(!user_idle_warn_throttle(&cell, 1500, 60));
         assert_eq!(cell.load(Ordering::Relaxed), 2000);
+    }
+
+    // ----- idle_secs_with_lock: lock screen promotes HID-idle past thresholds -----
+
+    fn settings_with_idle_thresholds(micro: u64, long: u64) -> Settings {
+        Settings {
+            micro_idle_reset_secs: micro,
+            long_idle_reset_secs: long,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn idle_secs_with_lock_passthrough_when_unlocked() {
+        // `Some(false)` is the confidently-unlocked case — must not
+        // touch the raw HID value, regardless of how large or small.
+        let s = settings_with_idle_thresholds(120, 300);
+        assert_eq!(idle_secs_with_lock(0, Some(false), &s), 0);
+        assert_eq!(idle_secs_with_lock(45, Some(false), &s), 45);
+        assert_eq!(idle_secs_with_lock(9999, Some(false), &s), 9999);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_passthrough_when_unknown() {
+        // `None` means the platform probe couldn't decide. We must
+        // fall back to HID-only behaviour rather than guess.
+        let s = settings_with_idle_thresholds(120, 300);
+        assert_eq!(idle_secs_with_lock(0, None, &s), 0);
+        assert_eq!(idle_secs_with_lock(60, None, &s), 60);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_promotes_to_both_thresholds_when_locked() {
+        // A raw HID idle of zero (the caffeinate-u / stuck-input
+        // pathology) must end up >= both thresholds so the suppression
+        // gate at line ~341 trips for both micro and long.
+        let s = settings_with_idle_thresholds(120, 300);
+        let promoted = idle_secs_with_lock(0, Some(true), &s);
+        assert!(promoted >= s.micro_idle_reset_secs);
+        assert!(promoted >= s.long_idle_reset_secs);
+        assert_eq!(promoted, 300);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_preserves_larger_raw_value() {
+        // If the HID counter is already above both thresholds (user
+        // was genuinely idle AND the screen happens to be locked), the
+        // promotion must not shrink it — that would mis-report screen
+        // time and reset deferral state incorrectly.
+        let s = settings_with_idle_thresholds(120, 300);
+        assert_eq!(idle_secs_with_lock(900, Some(true), &s), 900);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_handles_asymmetric_thresholds() {
+        // Long-break threshold larger than micro: must promote to the
+        // larger of the two so both gates trip.
+        let s = settings_with_idle_thresholds(60, 600);
+        assert_eq!(idle_secs_with_lock(0, Some(true), &s), 600);
+        // And vice-versa.
+        let s = settings_with_idle_thresholds(600, 60);
+        assert_eq!(idle_secs_with_lock(0, Some(true), &s), 600);
     }
 
     // ----- evaluate_guards: pure per-tick suppression decision -----

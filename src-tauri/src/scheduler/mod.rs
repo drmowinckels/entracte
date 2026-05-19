@@ -4,6 +4,7 @@ mod overlay;
 mod pause;
 mod run_loop;
 mod screen_time;
+mod session_lock;
 mod settings;
 mod timers;
 mod tray_countdown;
