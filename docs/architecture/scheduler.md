@@ -4,6 +4,25 @@ The scheduler is a 1 Hz Tokio loop in [scheduler/run_loop.rs](https://github.com
 
 ## The cascade
 
+```mermaid
+flowchart TD
+    Tick(["1Hz tick"]) --> Pause{"Paused?"}
+    Pause -- yes --> Wait[/"skip — wait next tick"/]
+    Pause -- no --> Bedtime{"In bedtime<br/>window?"}
+    Bedtime -- yes --> FireSleep(["fire Sleep break"])
+    Bedtime -- no --> Work{"work_window on<br/>and outside window?"}
+    Work -- yes --> Wait
+    Work -- no --> DnD{"DnD active?"}
+    DnD -- yes --> Wait
+    DnD -- no --> Cam{"Camera in use?"}
+    Cam -- yes --> Wait
+    Cam -- no --> Idle{"Idle &gt; idle_reset_secs?"}
+    Idle -- yes --> Reset[/"skip + reset timers"/]
+    Idle -- no --> Interval{"Micro / Long<br/>interval elapsed?"}
+    Interval -- yes --> Fire(["fire Micro or Long break"])
+    Interval -- no --> Wait
+```
+
 1. **Pause state** — `Running` or `PausedUntil(Option<Instant>)`. `None` means indefinite. Auto-resumes when the deadline expires and emits `pause:changed`.
 2. **Bedtime window** — if active and local time is inside the window, fire a `Sleep` break every `bedtime_interval_secs`. Always enforceable.
 3. **Active hours** — if `work_window_enabled` and local time is _outside_ the window, skip.
