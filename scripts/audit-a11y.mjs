@@ -73,9 +73,32 @@ const TAURI_SHIM = `
       { reason: "Camera", label: "Camera in use", count: 5 },
       { reason: "Dnd", label: "Do Not Disturb", count: 2 },
     ],
+    suppressions_by_kind: [
+      { kind: "long", reason: "camera", label: "Camera in use", count: 3 },
+      { kind: "micro", reason: "camera", label: "Camera in use", count: 2 },
+      { kind: "long", reason: "dnd", label: "Do Not Disturb", count: 2 },
+    ],
     pause_total_secs: 600, pause_count: 2,
     by_hour: Array.from({ length: 24 }, (_, h) => (h >= 9 && h <= 17 ? h % 5 : 0)),
     by_day: dayBuckets,
+    by_weekday: Array.from({ length: 7 }, (_, w) => ({
+      weekday: w,
+      taken: (w + 1) % 5,
+      dismissed: w % 3,
+    })),
+    previous: {
+      breaks_taken: 10,
+      breaks_dismissed: 4,
+      postponed_total: 2,
+      skipped_total: 1,
+    },
+    postpone_follow_through: {
+      total: 3,
+      taken: 2,
+      dismissed: 0,
+      skipped: 1,
+      unresolved: 0,
+    },
   };
 
   const callbacks = {};

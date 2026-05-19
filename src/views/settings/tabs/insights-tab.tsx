@@ -1,15 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  deltaDirection,
+  deltaPct,
   dismissalRate,
   formatHoursMinutes,
 } from "../../../lib/stats-format";
 import { localDateString } from "../../../lib/time";
 import { HourHistogram } from "../components/hour-histogram";
 import { Heatmap } from "../components/heatmap";
+import { PostponeDonut } from "../components/postpone-donut";
+import { SuppressionBars } from "../components/suppression-bars";
+import { WeekdayHistogram } from "../components/weekday-histogram";
 import type { UseStats } from "../hooks/use-stats";
 import type { StatsRange } from "../types";
 import { downloadCsv } from "../utils";
+
+function DeltaChip({
+  curr,
+  prev,
+  goodDirection = "up",
+}: {
+  curr: number;
+  prev: number;
+  goodDirection?: "up" | "down";
+}) {
+  const dir = deltaDirection(curr, prev);
+  const tone =
+    dir === "flat"
+      ? "flat"
+      : dir === goodDirection
+        ? "up"
+        : "down";
+  return (
+    <span className={`delta-chip ${tone}`} title={`Previous: ${prev}`}>
+      {deltaPct(curr, prev)}
+    </span>
+  );
+}
 
 export function InsightsTab({ stats }: { stats: UseStats }) {
   // Destructure to stable callback references — `useStats` returns a fresh
@@ -108,6 +136,10 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
               <div className="stat-card">
                 <span className="stat-card-value">
                   {digest.micro_taken + digest.long_taken}
+                  <DeltaChip
+                    curr={digest.micro_taken + digest.long_taken}
+                    prev={digest.previous.breaks_taken}
+                  />
                 </span>
                 <span className="stat-card-label">Breaks taken</span>
                 <span className="stat-card-sub">
@@ -120,6 +152,11 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
                     digest.micro_taken + digest.long_taken,
                     digest.micro_dismissed + digest.long_dismissed,
                   )}
+                  <DeltaChip
+                    curr={digest.micro_dismissed + digest.long_dismissed}
+                    prev={digest.previous.breaks_dismissed}
+                    goodDirection="down"
+                  />
                 </span>
                 <span className="stat-card-label">Dismissal rate</span>
                 <span className="stat-card-sub">
@@ -146,21 +183,40 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
                 </span>
               </div>
             </div>
+            <p className="stat-card-sub">
+              Delta chips compare with the previous{" "}
+              {range === "month" ? "30 days" : "7 days"}.
+            </p>
           </section>
 
-          {digest.suppressions.length > 0 && (
+          {digest.postpone_follow_through.total > 0 && (
             <>
-              <h2>Breaks suppressed by</h2>
+              <h2>Postpone follow-through</h2>
               <section>
-                {digest.suppressions.map((s) => (
-                  <div key={s.reason} className="row">
-                    <span>{s.label}</span>
-                    <span className="stat-card-sub">{s.count}</span>
-                  </div>
-                ))}
+                <p className="stat-card-sub">
+                  How postponed breaks eventually resolved.
+                </p>
+                <PostponeDonut data={digest.postpone_follow_through} />
               </section>
             </>
           )}
+
+          {digest.suppressions_by_kind.length > 0 && (
+            <>
+              <h2>Breaks suppressed by</h2>
+              <section>
+                <SuppressionBars rows={digest.suppressions_by_kind} />
+              </section>
+            </>
+          )}
+
+          <h2>By weekday</h2>
+          <section>
+            <WeekdayHistogram days={digest.by_weekday} />
+            <p className="stat-card-sub">
+              Solid: taken. Faded: dismissed. Hover a bar for counts.
+            </p>
+          </section>
 
           <h2>Time of day</h2>
           <section>

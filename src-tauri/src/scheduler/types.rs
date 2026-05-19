@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// `Micro` is the short eye-rest prompt, `Long` is the longer movement
 /// break, `Sleep` is the bedtime reminder fired inside the configured
 /// nighttime window.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum BreakKind {
     Micro,

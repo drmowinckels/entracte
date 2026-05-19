@@ -17,10 +17,38 @@ const suppressionCountSchema = z.object({
   count: z.number(),
 });
 
+const suppressionByKindSchema = z.object({
+  kind: z.string(),
+  reason: z.string(),
+  label: z.string(),
+  count: z.number(),
+});
+
 const dayBucketSchema = z.object({
   date: z.string(),
   taken: z.number(),
   dismissed: z.number(),
+});
+
+const weekdayBucketSchema = z.object({
+  weekday: z.number(),
+  taken: z.number(),
+  dismissed: z.number(),
+});
+
+const previousPeriodSchema = z.object({
+  breaks_taken: z.number(),
+  breaks_dismissed: z.number(),
+  postponed_total: z.number(),
+  skipped_total: z.number(),
+});
+
+const postponeFollowThroughSchema = z.object({
+  total: z.number(),
+  taken: z.number(),
+  dismissed: z.number(),
+  skipped: z.number(),
+  unresolved: z.number(),
 });
 
 const statsDigestSchema = z.object({
@@ -35,10 +63,14 @@ const statsDigestSchema = z.object({
   postponed_total: z.number(),
   skipped_total: z.number(),
   suppressions: z.array(suppressionCountSchema),
+  suppressions_by_kind: z.array(suppressionByKindSchema),
   pause_total_secs: z.number(),
   pause_count: z.number(),
   by_hour: z.array(z.number()),
   by_day: z.array(dayBucketSchema),
+  by_weekday: z.array(weekdayBucketSchema),
+  previous: previousPeriodSchema,
+  postpone_follow_through: postponeFollowThroughSchema,
 }) satisfies z.ZodType<StatsDigest>;
 
 /** State + actions the Insights tab uses. `stats` is the in-session
