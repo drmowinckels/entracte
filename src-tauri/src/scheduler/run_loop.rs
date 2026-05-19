@@ -739,7 +739,19 @@ pub(super) fn idle_secs_with_lock(raw_idle_secs: u64, locked: Option<bool>, s: &
 /// so a flaky probe that returns `Some(true) → None → Some(true)`
 /// doesn't generate spurious "unlocked / locked" log pairs.
 fn promote_idle_for_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
-    let prev = decode_lock_state(LOCK_STATE_PREV.load(Ordering::Relaxed));
+    promote_idle_for_lock_with_cell(&LOCK_STATE_PREV, raw_idle_secs, locked, s)
+}
+
+/// Cell-parameterised variant of `promote_idle_for_lock` so the
+/// orchestration (load → decide → log → store → promote) is testable
+/// with a local atomic — mirrors `user_idle_warn_throttle` above.
+pub(super) fn promote_idle_for_lock_with_cell(
+    cell: &AtomicU8,
+    raw_idle_secs: u64,
+    locked: Option<bool>,
+    s: &Settings,
+) -> u64 {
+    let prev = decode_lock_state(cell.load(Ordering::Relaxed));
     if let Some(transition) = decide_lock_transition(prev, locked) {
         match transition {
             LockTransition::JustLocked => log::info!(
@@ -753,7 +765,7 @@ fn promote_idle_for_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings)
     // Always store the latest reading — including `None` — so a
     // subsequent `Some(true)` after a `None` flicker doesn't re-fire
     // the locked transition.
-    LOCK_STATE_PREV.store(encode_lock_state(locked), Ordering::Relaxed);
+    cell.store(encode_lock_state(locked), Ordering::Relaxed);
     idle_secs_with_lock(raw_idle_secs, locked, s)
 }
 
@@ -1116,6 +1128,66 @@ mod tests {
         // to `None` (unknown) rather than silently mis-decode.
         assert_eq!(decode_lock_state(0), None);
         assert_eq!(decode_lock_state(99), None);
+    }
+
+    // ----- promote_idle_for_lock_with_cell: orchestration over a local cell -----
+
+    #[test]
+    fn promote_with_cell_first_locked_reading_promotes_and_remembers() {
+        // Cold start → confidently locked. The promoted idle must
+        // clear both thresholds, and the cell must record the new
+        // state so the next tick doesn't re-fire the transition.
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_UNKNOWN);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 0, Some(true), &s);
+        assert_eq!(promoted, 300);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_LOCKED);
+    }
+
+    #[test]
+    fn promote_with_cell_unlocked_reading_is_passthrough_and_recorded() {
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_UNKNOWN);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 42, Some(false), &s);
+        assert_eq!(promoted, 42);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_UNLOCKED);
+    }
+
+    #[test]
+    fn promote_with_cell_unlock_transition_passes_raw_value_through() {
+        // Previously locked, now confidently unlocked: emits the
+        // "session unlocked" log line and returns the raw HID value
+        // untouched.
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_LOCKED);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 7, Some(false), &s);
+        assert_eq!(promoted, 7);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_UNLOCKED);
+    }
+
+    #[test]
+    fn promote_with_cell_none_after_locked_keeps_promoting_but_records_unknown() {
+        // Probe flickers to `None` while the user is still locked:
+        // the transition decision is silent (we don't claim unlock),
+        // the cell stores `LOCK_PREV_UNKNOWN`, and the idle value is
+        // the raw HID seconds (we have no positive lock signal this
+        // tick).
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_LOCKED);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 5, None, &s);
+        assert_eq!(promoted, 5);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_UNKNOWN);
+    }
+
+    #[test]
+    fn promote_with_cell_repeated_locked_reading_does_not_change_state() {
+        // Already locked, still locked: cell stays at LOCK_PREV_LOCKED
+        // and the promoted value still clears both thresholds.
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_LOCKED);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 0, Some(true), &s);
+        assert_eq!(promoted, 300);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_LOCKED);
     }
 
     // ----- evaluate_guards: pure per-tick suppression decision -----
