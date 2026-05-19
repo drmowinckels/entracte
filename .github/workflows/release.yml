@@ -112,6 +112,79 @@ jobs:
           path: unsigned/
           if-no-files-found: error
 
+  # Compose the signed `latest.json` manifest that `tauri-plugin-updater`
+  # fetches from the configured endpoint. `build-unix` already uploads the
+  # macOS `.app.tar.gz` + `.sig` artifacts to the draft release (signed by
+  # `TAURI_SIGNING_PRIVATE_KEY`); this job downloads the `.sig` files,
+  # composes `latest.json` with both macOS arches, and attaches it.
+  #
+  # TODO: add Windows + Linux platform entries once those legs ship signed
+  # updater artifacts (Windows blocked on SignPath bring-up; Linux pending
+  # signed-AppImage decision). Until then, non-macOS installs that hit the
+  # updater endpoint will see no available target and silently no-op.
+  publish-updater-manifest:
+    needs: build-unix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS updater artifacts from draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p release-assets
+          # `gh release download` on a draft release requires --repo and the
+          # token has `contents:write` so it can see drafts.
+          gh release download "${{ github.ref_name }}" \
+            --pattern '*.app.tar.gz*' \
+            --dir release-assets
+          ls -la release-assets
+
+      - name: Compose latest.json
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          REPO_URL="https://github.com/${{ github.repository }}"
+
+          # File names follow tauri-action's convention:
+          #   <productName>_<version>_<arch>.app.tar.gz[.sig]
+          # productName is "Entracte" (capital E); arches are "aarch64" and "x64".
+          AARCH64_FILE="Entracte_${VERSION}_aarch64.app.tar.gz"
+          X64_FILE="Entracte_${VERSION}_x64.app.tar.gz"
+
+          AARCH64_SIG=$(cat "release-assets/${AARCH64_FILE}.sig")
+          X64_SIG=$(cat "release-assets/${X64_FILE}.sig")
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$PUB_DATE" \
+            --arg notes "See release notes at ${REPO_URL}/releases/tag/${TAG}" \
+            --arg aarch64_url "${REPO_URL}/releases/download/${TAG}/${AARCH64_FILE}" \
+            --arg aarch64_sig "$AARCH64_SIG" \
+            --arg x64_url "${REPO_URL}/releases/download/${TAG}/${X64_FILE}" \
+            --arg x64_sig "$X64_SIG" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $aarch64_sig, url: $aarch64_url },
+                "darwin-x86_64":  { signature: $x64_sig,     url: $x64_url     }
+              }
+            }' > latest.json
+
+          cat latest.json
+
+      - name: Attach latest.json to draft release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          tag_name: ${{ github.ref_name }}
+          files: latest.json
+
   # SIGNPATH_ORGANIZATION_ID (repo variable) and SIGNPATH_API_TOKEN (repo secret)
   # must be configured after SignPath Foundation approval. The project-slug and
   # signing-policy-slug below are hardcoded; update them here if SignPath assigns

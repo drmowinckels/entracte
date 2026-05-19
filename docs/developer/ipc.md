@@ -63,11 +63,11 @@ Renderer code calls these with `invoke<ReturnType>("command_name", { args })`. C
 
 ### Misc
 
-| Command                    | Args | Returns      | Module                                                           |
-| -------------------------- | ---- | ------------ | ---------------------------------------------------------------- |
-| `check_for_update`         | –    | `UpdateInfo` | `updater.rs` — GitHub Releases check, 10s timeout.               |
-| `build_diagnostics_report` | –    | `string`     | `diagnostics.rs` — redacted markdown report for issue templates. |
-| `get_platform`             | –    | `string`     | `platform.rs` — `std::env::consts::OS`.                          |
+| Command                    | Args | Returns      | Module                                                                                                                 |
+| -------------------------- | ---- | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `check_for_update`         | –    | `UpdateInfo` | `updater.rs` — wraps `tauri-plugin-updater`'s `check()`; verifies the signed `latest.json` against the bundled pubkey. |
+| `build_diagnostics_report` | –    | `string`     | `diagnostics.rs` — redacted markdown report for issue templates.                                                       |
+| `get_platform`             | –    | `string`     | `platform.rs` — `std::env::consts::OS`.                                                                                |
 
 ## Events
 

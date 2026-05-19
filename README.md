@@ -162,6 +162,18 @@ The a11y audit ([scripts/audit-a11y.mjs](scripts/audit-a11y.mjs)) builds `dist/`
 
 Platform support matrix, scheduler internals, and OS-specific quirks are documented in [.github/AGENTS.md](.github/AGENTS.md).
 
+## Updates
+
+Updates ship via [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater) against GitHub Releases. The About tab calls `check_for_update`, which delegates to the plugin: it fetches the signed `latest.json` manifest at `releases/latest/download/latest.json`, verifies the bundled signature against the public key pinned in `tauri.conf.json`, and reports whether a newer version is announced. Today macOS bundles are signed (Apple Developer ID + Tauri updater key); Windows ships unsigned-via-SignPath later; Linux is not yet wired into `latest.json`.
+
+**Maintainer one-time setup for the updater key.** The signed manifest needs a keypair. Generate one and store it:
+
+```sh
+npm run tauri signer generate -- -w ~/.tauri/entracte.key
+```
+
+Paste the printed public key into [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) at `plugins.updater.pubkey` (replacing the `REPLACE_ME_WITH_TAURI_UPDATER_PUBKEY` placeholder). Store the private key contents as the `TAURI_SIGNING_PRIVATE_KEY` repo secret and the passphrase as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — both are already wired into [`.github/workflows/release.yml`](.github/workflows/release.yml). The release workflow signs each macOS `.app.tar.gz` with that key and composes the `latest.json` manifest from both arches in the `publish-updater-manifest` job.
+
 ## Contributing
 
 Bug reports, ideas, and patches are all welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, test, and PR workflow. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md), which — among the usual things — requires a real human reviewer in the loop on every contribution.
