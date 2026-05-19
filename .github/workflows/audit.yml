@@ -1,0 +1,164 @@
+name: Audit
+
+# Audit / advisory checks that target documentation as much as code
+# (cspell, lychee). They MUST NOT carry a `paths-ignore` filter — a
+# docs-only PR can still introduce unknown words or broken links that
+# the next non-docs PR would otherwise inherit as silent main rot.
+#
+# Frontend / Rust build-and-test jobs stay in ci.yml with their docs
+# paths-ignore, because they don't gain signal from a docs-only diff.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Hard-fail audits: enforce correctness on every PR.
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: knip (unused exports / deps)
+        run: npm run audit:knip
+      - name: cspell (spell check)
+        run: npm run audit:spell
+      - name: size-limit (bundle budget)
+        run: npm run audit:size
+
+  # Advisory audits: surface signal without blocking merges.
+  # cargo-deny covers licenses + CVEs + duplicate-version checks.
+  # npm audit is externally-validated and can flap, so it stays advisory.
+  # lychee is now merge-blocking — its step keeps `continue-on-error`
+  # so cargo-deny / npm-audit / the sticky-comment all still run, but
+  # the job's final step exits non-zero if lychee flagged any link.
+  # Findings are aggregated into one sticky PR comment.
+  advisory:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: mkdir -p audit-reports
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: cargo-deny
+        id: deny
+        continue-on-error: true
+        working-directory: src-tauri
+        run: |
+          cargo deny check 2>&1 | tee ../audit-reports/cargo-deny.txt
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: lychee (broken links)
+        id: lychee
+        continue-on-error: true
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config .github/audit/lychee.toml --root-dir "${{ github.workspace }}/docs" --no-progress "**/*.md"
+          output: audit-reports/lychee.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: npm ci
+
+      - name: npm audit
+        id: npm_audit
+        continue-on-error: true
+        run: |
+          npm audit --audit-level=high 2>&1 | tee audit-reports/npm-audit.txt
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble advisory report
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          {
+            echo "## 🔍 Advisory audit report"
+            echo ""
+            echo "These checks don't block merges — they surface drift in dependencies, licensing, and external links."
+            echo ""
+
+            echo "### cargo-deny"
+            if [ "${{ steps.deny.outputs.exit }}" = "0" ]; then
+              echo "✅ clean (advisories, bans, licenses, sources)"
+            else
+              echo "<details><summary>⚠️ findings</summary>"
+              echo ""
+              echo '```'
+              tail -200 audit-reports/cargo-deny.txt
+              echo '```'
+              echo "</details>"
+            fi
+            echo ""
+
+            echo "### lychee (broken links)"
+            if [ "${{ steps.lychee.outcome }}" = "success" ]; then
+              echo "✅ all links resolve"
+            elif [ -s audit-reports/lychee.md ]; then
+              echo "<details><summary>⚠️ findings</summary>"
+              echo ""
+              cat audit-reports/lychee.md
+              echo "</details>"
+            else
+              echo "⚠️ lychee step failed (no report produced)"
+            fi
+            echo ""
+
+            echo "### npm audit"
+            if [ "${{ steps.npm_audit.outputs.exit }}" = "0" ]; then
+              echo "✅ no high-severity vulnerabilities"
+            else
+              echo "<details><summary>⚠️ findings</summary>"
+              echo ""
+              echo '```'
+              tail -100 audit-reports/npm-audit.txt
+              echo '```'
+              echo "</details>"
+            fi
+          } > advisory-comment.md
+
+      - name: Post / update sticky PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: advisory-audit
+          path: advisory-comment.md
+
+      # lychee is the only audit in this job that blocks merges. Keeping
+      # the step-level `continue-on-error: true` lets cargo-deny, npm
+      # audit, and the sticky comment all run to completion; this final
+      # step then re-surfaces the lychee outcome as a job failure so the
+      # `advisory` check goes red.
+      - name: Fail if lychee found broken links
+        if: always()
+        run: |
+          if [ "${{ steps.lychee.outcome }}" = "failure" ]; then
+            echo "::error::lychee found broken links — see the sticky PR comment above for details"
+            exit 1
+          fi
