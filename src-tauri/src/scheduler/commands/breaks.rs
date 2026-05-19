@@ -1186,8 +1186,8 @@ mod rig_smoke_tests {
         {
             let fired = fired.clone();
             app.listen("pause:changed", move |event| {
-                let payload: bool = serde_json::from_str(event.payload())
-                    .expect("pause:changed payload is a bool");
+                let payload: bool =
+                    serde_json::from_str(event.payload()).expect("pause:changed payload is a bool");
                 if payload {
                     fired.fetch_add(1, Ordering::SeqCst);
                 }
@@ -1221,8 +1221,8 @@ mod rig_smoke_tests {
         {
             let fired = fired.clone();
             app.listen("pause:changed", move |event| {
-                let payload: bool = serde_json::from_str(event.payload())
-                    .expect("pause:changed payload is a bool");
+                let payload: bool =
+                    serde_json::from_str(event.payload()).expect("pause:changed payload is a bool");
                 if !payload {
                     fired.fetch_add(1, Ordering::SeqCst);
                 }

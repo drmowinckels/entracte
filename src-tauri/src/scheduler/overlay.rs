@@ -66,7 +66,11 @@ pub fn format_break_duration(secs: u64) -> String {
     }
 }
 
-pub(super) fn notify_break_now<R: Runtime>(app: &AppHandle<R>, kind: BreakKind, duration_secs: u64) {
+pub(super) fn notify_break_now<R: Runtime>(
+    app: &AppHandle<R>,
+    kind: BreakKind,
+    duration_secs: u64,
+) {
     let title = match kind {
         BreakKind::Micro => "Micro break",
         BreakKind::Long => "Long break",
