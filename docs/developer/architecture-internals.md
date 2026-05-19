@@ -34,7 +34,7 @@ camera.rs / video.rs    Per-OS detection threads (macOS uses log stream / pmset,
 dnd.rs                  Do-Not-Disturb / Focus detection (macOS, Windows)
 hooks.rs                Shell-command execution model (off by default)
 platform.rs             get_platform Tauri command (renderer asks Rust what OS this is)
-updater.rs              GitHub Releases check
+updater.rs              Thin wrapper around tauri-plugin-updater's check()
 ipc.rs                  Local TCP IPC server (used by the CLI to talk to a running app)
 
 config.rs               Profiles file load/save + serde migrations
