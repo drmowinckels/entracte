@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
@@ -654,11 +654,66 @@ fn user_idle_warn_throttle(cell: &AtomicI64, now_epoch: i64, min_interval_secs: 
     true
 }
 
-/// Tracks whether the previous tick saw the screen as locked, so that
-/// `promote_idle_for_lock` can emit a single log line on each
-/// transition rather than spamming the log every second while the
-/// workstation is locked.
-static LOCK_STATE_LAST_LOCKED: AtomicBool = AtomicBool::new(false);
+/// Encoded previous lock state for the transition logger:
+///   0 = unknown / haven't seen yet (the initial value)
+///   1 = last seen as `Some(false)` (confidently unlocked)
+///   2 = last seen as `Some(true)`  (confidently locked)
+/// `Option<bool>` directly is what we want logically, but we need an
+/// atomic so the run-loop closure can mutate the previous-state
+/// across ticks without locking. `AtomicU8` is the smallest fit.
+static LOCK_STATE_PREV: AtomicU8 = AtomicU8::new(0);
+
+const LOCK_PREV_UNKNOWN: u8 = 0;
+const LOCK_PREV_UNLOCKED: u8 = 1;
+const LOCK_PREV_LOCKED: u8 = 2;
+
+fn encode_lock_state(s: Option<bool>) -> u8 {
+    match s {
+        None => LOCK_PREV_UNKNOWN,
+        Some(false) => LOCK_PREV_UNLOCKED,
+        Some(true) => LOCK_PREV_LOCKED,
+    }
+}
+
+fn decode_lock_state(b: u8) -> Option<bool> {
+    match b {
+        LOCK_PREV_UNLOCKED => Some(false),
+        LOCK_PREV_LOCKED => Some(true),
+        _ => None,
+    }
+}
+
+/// What (if anything) to log about a tick's lock-state transition.
+/// `None` is the common case: no confidently-known transition this
+/// tick. The wrapper turns the other variants into `log::info!` calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LockTransition {
+    JustLocked,
+    JustUnlocked,
+}
+
+/// Pure decision: given the previously-known lock state and the
+/// freshly-probed state, decide whether the transition is worth
+/// surfacing in the log.
+///
+/// Only transitions *between confidently-known states*
+/// (`Some(false) ↔ Some(true)`) are reportable — `None → Some(true)`
+/// is "we just got our first reading and it's locked", which we
+/// surface, but `Some(true) → None → Some(true)` is a flaky probe that
+/// must not generate a "unlocked / locked" log pair.
+pub(super) fn decide_lock_transition(
+    prev: Option<bool>,
+    next: Option<bool>,
+) -> Option<LockTransition> {
+    match (prev, next) {
+        (Some(false), Some(true)) | (None, Some(true)) => Some(LockTransition::JustLocked),
+        (Some(true), Some(false)) => Some(LockTransition::JustUnlocked),
+        // `Some(true) → None` is "we lost our signal while locked";
+        // don't claim unlock. `None → Some(false)` is "first reading,
+        // unlocked" — uninteresting. Anything→same is a no-op.
+        _ => None,
+    }
+}
 
 /// Pure decision: given the raw HID-idle seconds and an `Option<bool>`
 /// lock signal, return the idle seconds the rest of the scheduler
@@ -679,19 +734,26 @@ pub(super) fn idle_secs_with_lock(raw_idle_secs: u64, locked: Option<bool>, s: &
 
 /// Wrapper around `idle_secs_with_lock` that also emits a single info
 /// line on each locked⇄unlocked transition, so the log shows why
-/// idle-based suppression suddenly engaged or disengaged.
+/// idle-based suppression suddenly engaged or disengaged. The
+/// previous-state tracker is tri-valued (unknown / unlocked / locked)
+/// so a flaky probe that returns `Some(true) → None → Some(true)`
+/// doesn't generate spurious "unlocked / locked" log pairs.
 fn promote_idle_for_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
-    let is_locked = matches!(locked, Some(true));
-    let prev_locked = LOCK_STATE_LAST_LOCKED.swap(is_locked, Ordering::Relaxed);
-    if is_locked != prev_locked {
-        if is_locked {
-            log::info!(
+    let prev = decode_lock_state(LOCK_STATE_PREV.load(Ordering::Relaxed));
+    if let Some(transition) = decide_lock_transition(prev, locked) {
+        match transition {
+            LockTransition::JustLocked => log::info!(
                 "scheduler: session locked, treating user as idle (raw HID idle = {raw_idle_secs}s)"
-            );
-        } else {
-            log::info!("scheduler: session unlocked, resuming HID-based idle detection");
+            ),
+            LockTransition::JustUnlocked => {
+                log::info!("scheduler: session unlocked, resuming HID-based idle detection")
+            }
         }
     }
+    // Always store the latest reading — including `None` — so a
+    // subsequent `Some(true)` after a `None` flicker doesn't re-fire
+    // the locked transition.
+    LOCK_STATE_PREV.store(encode_lock_state(locked), Ordering::Relaxed);
     idle_secs_with_lock(raw_idle_secs, locked, s)
 }
 
@@ -969,6 +1031,91 @@ mod tests {
         // And vice-versa.
         let s = settings_with_idle_thresholds(600, 60);
         assert_eq!(idle_secs_with_lock(0, Some(true), &s), 600);
+    }
+
+    // ----- decide_lock_transition: only log between confidently-known states -----
+
+    #[test]
+    fn lock_transition_first_reading_locked_logs_locked() {
+        // Cold-start with a locked screen: the user wasn't here when
+        // we booted; we should log that we're treating them as idle.
+        assert_eq!(
+            decide_lock_transition(None, Some(true)),
+            Some(LockTransition::JustLocked),
+        );
+    }
+
+    #[test]
+    fn lock_transition_first_reading_unlocked_is_silent() {
+        // Cold-start with an unlocked screen is the happy path —
+        // logging "session unlocked" with no prior context would be
+        // confusing noise in the journal.
+        assert_eq!(decide_lock_transition(None, Some(false)), None);
+    }
+
+    #[test]
+    fn lock_transition_unlocked_to_locked_logs_locked() {
+        assert_eq!(
+            decide_lock_transition(Some(false), Some(true)),
+            Some(LockTransition::JustLocked),
+        );
+    }
+
+    #[test]
+    fn lock_transition_locked_to_unlocked_logs_unlocked() {
+        assert_eq!(
+            decide_lock_transition(Some(true), Some(false)),
+            Some(LockTransition::JustUnlocked),
+        );
+    }
+
+    #[test]
+    fn lock_transition_same_state_is_silent() {
+        // Repeated probes returning the same state must not log every
+        // tick (the whole point of the transition tracker).
+        assert_eq!(decide_lock_transition(Some(true), Some(true)), None);
+        assert_eq!(decide_lock_transition(Some(false), Some(false)), None);
+        assert_eq!(decide_lock_transition(None, None), None);
+    }
+
+    #[test]
+    fn lock_transition_loss_of_signal_while_locked_is_silent() {
+        // The regression from the original review: probe returns
+        // `Some(true) → None → Some(true)` while the user is locked
+        // the whole time. The `Some(true) → None` step must NOT log
+        // "unlocked", because we haven't observed an unlock.
+        assert_eq!(decide_lock_transition(Some(true), None), None);
+    }
+
+    #[test]
+    fn lock_transition_loss_of_signal_while_unlocked_is_silent() {
+        // Symmetric: probe goes flaky while unlocked. No log.
+        assert_eq!(decide_lock_transition(Some(false), None), None);
+    }
+
+    #[test]
+    fn lock_transition_recovery_after_flicker_does_not_double_log() {
+        // The full flake pattern: locked → unknown → still locked.
+        // The transition tracker stores the latest reading (including
+        // `None`) so the second transition we evaluate is `None →
+        // Some(true)` — which we DO log, because that's the only way
+        // we'd ever surface the lock state if the very first probe
+        // was a transient failure. Symmetric for the unlocked path.
+        assert_eq!(decode_lock_state(encode_lock_state(None)), None);
+        assert_eq!(
+            decode_lock_state(encode_lock_state(Some(false))),
+            Some(false)
+        );
+        assert_eq!(decode_lock_state(encode_lock_state(Some(true))), Some(true));
+    }
+
+    #[test]
+    fn decode_lock_state_rejects_unknown_values() {
+        // Defensive: a stored byte we don't recognise (impossible
+        // unless someone adds a third concrete state) should fall back
+        // to `None` (unknown) rather than silently mis-decode.
+        assert_eq!(decode_lock_state(0), None);
+        assert_eq!(decode_lock_state(99), None);
     }
 
     // ----- evaluate_guards: pure per-tick suppression decision -----

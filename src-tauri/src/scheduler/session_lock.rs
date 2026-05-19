@@ -48,16 +48,12 @@ mod inner {
             let dict: CFDictionary<CFString, CFType> = CFDictionary::wrap_under_create_rule(raw);
             let key = CFString::from_static_string("CGSSessionScreenIsLocked");
             // Apple populates the key with `kCFBooleanTrue` while the
-            // screen is locked. The key may be absent on a clean
-            // unlocked session — treat that as "not locked".
+            // screen is locked, and omits it on a clean unlocked
+            // session. A present-but-non-boolean value is an Apple
+            // contract change — return `None` so the scheduler falls
+            // back to HID idle rather than silently misclassify.
             match dict.find(&key) {
-                Some(value_ref) => Some(
-                    (*value_ref)
-                        .clone()
-                        .downcast::<CFBoolean>()
-                        .map(bool::from)
-                        .unwrap_or(false),
-                ),
+                Some(value_ref) => value_ref.downcast::<CFBoolean>().map(bool::from),
                 None => Some(false),
             }
         }
@@ -156,8 +152,9 @@ mod inner {
 #[cfg(target_os = "linux")]
 mod inner {
     use std::process::Command;
+    use std::sync::atomic::{AtomicI64, Ordering};
     use std::sync::Mutex;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     // `loginctl show-session` spawns a child process. The scheduler
     // ticks at 1 Hz, so cache the answer for a few seconds — the lock
@@ -166,20 +163,40 @@ mod inner {
     static CACHE: Mutex<Option<(Instant, Option<bool>)>> = Mutex::new(None);
     const CACHE_TTL: Duration = Duration::from_secs(5);
 
+    // Rate-limit window for repeated `loginctl` failures. Without this,
+    // a NixOS / Alpine / container host with no `loginctl` would silently
+    // dead-on-arrival the lock feature; the warn shows up once a minute
+    // so operators can see "lock detection disabled" in the journal.
+    const PROBE_WARN_INTERVAL_SECS: i64 = 60;
+    static PROBE_LAST_WARN_EPOCH: AtomicI64 = AtomicI64::new(0);
+
     pub fn screen_locked() -> Option<bool> {
         let now = Instant::now();
-        if let Ok(g) = CACHE.lock() {
-            if let Some((at, v)) = *g {
-                if now.duration_since(at) < CACHE_TTL {
-                    return v;
-                }
-            }
+        let snapshot = CACHE.lock().ok().and_then(|g| *g);
+        if let Some(cached) = cache_lookup(snapshot, now, CACHE_TTL) {
+            return cached;
         }
         let measured = probe();
         if let Ok(mut g) = CACHE.lock() {
             *g = Some((now, measured));
         }
         measured
+    }
+
+    /// Pure cache decision: given the cache contents, the current
+    /// instant, and the TTL, return `Some(value)` if the cached value
+    /// is still fresh and should be served, or `None` if the caller
+    /// must re-probe. Pulled out as a pure function so the cache logic
+    /// is testable without touching a real `loginctl` or `static`.
+    pub(super) fn cache_lookup(
+        cache: Option<(Instant, Option<bool>)>,
+        now: Instant,
+        ttl: Duration,
+    ) -> Option<Option<bool>> {
+        match cache {
+            Some((at, v)) if now.duration_since(at) < ttl => Some(v),
+            _ => None,
+        }
     }
 
     fn probe() -> Option<bool> {
@@ -192,14 +209,53 @@ mod inner {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "self".to_string());
-        let out = Command::new("loginctl")
+        let out = match Command::new("loginctl")
             .args(["show-session", &session, "-p", "LockedHint", "--value"])
             .output()
-            .ok()?;
+        {
+            Ok(o) => o,
+            Err(e) => {
+                warn_probe_failure(&format!("spawn failed: {e}"));
+                return None;
+            }
+        };
         if !out.status.success() {
+            warn_probe_failure(&format!("loginctl exited {:?}", out.status.code()));
             return None;
         }
         parse_locked_hint(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    /// Surface a probe failure once per `PROBE_WARN_INTERVAL_SECS` so
+    /// the failure is visible to operators (NixOS, Alpine, containers
+    /// without systemd) instead of silently dead-on-arrival. Mirrors
+    /// the rate-limit pattern in `run_loop::warn_user_idle_failure`.
+    fn warn_probe_failure(detail: &str) {
+        if warn_throttle(
+            &PROBE_LAST_WARN_EPOCH,
+            now_epoch_secs(),
+            PROBE_WARN_INTERVAL_SECS,
+        ) {
+            log::warn!("session_lock: loginctl probe failed ({detail}); lock detection disabled");
+        }
+    }
+
+    /// Rate-limit gate shared with the probe warner. Pure (modulo the
+    /// atomic) so the throttle window is unit-testable.
+    pub(super) fn warn_throttle(cell: &AtomicI64, now_epoch: i64, min_interval_secs: i64) -> bool {
+        let prev = cell.load(Ordering::Relaxed);
+        if prev != 0 && now_epoch.saturating_sub(prev) < min_interval_secs {
+            return false;
+        }
+        cell.store(now_epoch, Ordering::Relaxed);
+        true
+    }
+
+    fn now_epoch_secs() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
     }
 
     pub(super) fn parse_locked_hint(text: &str) -> Option<bool> {
@@ -236,6 +292,67 @@ mod inner {
             assert_eq!(parse_locked_hint(""), None);
             assert_eq!(parse_locked_hint("maybe"), None);
             assert_eq!(parse_locked_hint("1"), None);
+        }
+
+        #[test]
+        fn cache_lookup_returns_none_when_unset() {
+            assert_eq!(cache_lookup(None, Instant::now(), CACHE_TTL), None);
+        }
+
+        #[test]
+        fn cache_lookup_serves_fresh_value() {
+            let now = Instant::now();
+            assert_eq!(
+                cache_lookup(Some((now, Some(true))), now, CACHE_TTL),
+                Some(Some(true)),
+            );
+        }
+
+        #[test]
+        fn cache_lookup_treats_expired_as_miss() {
+            // Past-the-TTL must re-probe, not serve the stale value.
+            let stale = Instant::now() - Duration::from_secs(10);
+            assert_eq!(
+                cache_lookup(Some((stale, Some(true))), Instant::now(), CACHE_TTL),
+                None,
+            );
+        }
+
+        #[test]
+        fn cache_lookup_preserves_none_measurement() {
+            // A cached `None` (probe couldn't determine) is itself a
+            // valid answer to serve — we mustn't re-spawn loginctl
+            // every tick when it's failing.
+            let now = Instant::now();
+            assert_eq!(cache_lookup(Some((now, None)), now, CACHE_TTL), Some(None),);
+        }
+
+        #[test]
+        fn warn_throttle_fires_first_then_suppresses_within_window() {
+            let cell = AtomicI64::new(0);
+            assert!(warn_throttle(&cell, 1000, 60));
+            assert_eq!(cell.load(Ordering::Relaxed), 1000);
+            assert!(!warn_throttle(&cell, 1030, 60));
+            assert_eq!(cell.load(Ordering::Relaxed), 1000);
+        }
+
+        #[test]
+        fn warn_throttle_refires_after_window() {
+            let cell = AtomicI64::new(1000);
+            assert!(warn_throttle(&cell, 1060, 60));
+            assert_eq!(cell.load(Ordering::Relaxed), 1060);
+        }
+
+        #[test]
+        fn does_not_panic_on_host() {
+            // End-to-end smoke: exercise the cache + probe + loginctl
+            // round-trip without asserting the result. On CI the
+            // calling process has no logind session, so loginctl
+            // returns non-zero and we fall back to None — the value of
+            // the test is purely that we don't crash on the FFI path.
+            let _ = screen_locked();
+            // Call again to hit the cache-hit branch.
+            let _ = screen_locked();
         }
     }
 }
