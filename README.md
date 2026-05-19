@@ -86,7 +86,7 @@ Full command reference, IPC details, and tips in [docs/guide/cli.md](docs/guide/
 
 Entracte is free, cross-platform, and open source under Apache 2.0. Every scheduling, suppression, profile, hooks, stats, accessibility, and CLI feature is available to everyone.
 
-If you'd like to support development, a **Supporter pack** unlocks personalisation extras — custom overlay colour, theme rotation, editable break hints, custom sounds — through a one-off Lemon Squeezy license key. The unlock check lives in plain source: it's an honour-system thank-you, not a DRM scheme. See [docs/guide/supporter.md](docs/guide/supporter.md).
+A **Supporter pack** is in the works as a way to back development — personalisation extras like custom overlay colour, theme rotation, editable break hints, and custom sounds will unlock through a one-off purchase once the infrastructure is in place. The unlock check lives in plain source: it's an honour-system thank-you, not a DRM scheme. See [docs/guide/supporter.md](docs/guide/supporter.md).
 
 ## Stack
 

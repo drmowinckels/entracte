@@ -1,7 +1,7 @@
 # Supporter pack
 
 ::: warning Coming soon — work in progress
-The supporter pack itself is wired end-to-end in the app, but the [Lemon Squeezy](https://lemonsqueezy.com/) storefront is still under review. **Purchase and license activation are temporarily hidden** in the **About → Supporter** tab while we wait for approval — expected within ~10 days from this note.
+The supporter pack itself is wired end-to-end in the app, but the storefront infrastructure is still being set up. **Purchase and license activation are temporarily hidden** in the **About → Supporter** tab while we get the payment flow in place.
 
 In the meantime the pack ships as source-only: every gated feature is in the codebase and unlocks for anyone running a build with a valid record, but there's no way to buy a key yet. Nothing in the free experience is affected.
 :::
@@ -12,26 +12,28 @@ It's intentionally light: nothing core depends on it. Every scheduling, suppress
 
 ## What's in it
 
-- **Custom overlay colour** — pick any hex or use the colour picker, on top of the built-in themes.
-- **Theme rotation** — the `Rotate` option shuffles between your preset palettes break to break.
-- **Editable break hints** — customise the prompts shown during a break, or rotate your own list.
-- **Custom sounds** — point each break kind at your own audio file (end-chime or looping ambient).
-- **Custom CSS** — freeform stylesheet injected into the settings window and the break overlay for full visual customisation.
+| Tab                  | Setting             | What it unlocks                                                                                                                                     |
+| -------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Breaks → Overlay     | **Theme = Custom…** | Pick any colour via hex input or the native colour picker (with synchronised controls and an auto-darken cap so the overlay still dims the screen). |
+| Breaks → Overlay     | **Theme = Rotate**  | A different preset per break, never the same one twice in a row.                                                                                    |
+| Breaks → Break ideas | **Edit hint pools** | Add / remove / rewrite the prompts shown during a break. Mix selectors and rotation cadence remain free.                                            |
+| Breaks → Custom CSS  | **Stylesheet**      | Freeform CSS injected into the settings window and the break overlay for full visual customisation.                                                 |
+| Schedule → Sound     | **Custom file…**    | Point each break kind at your own audio file (end-chime or looping ambient).                                                                        |
 
-The defaults remain available even after your key expires, so you'll never lose access to a break you've configured — only the ability to edit personalisation while the key is inactive.
+Nothing in the scheduling, suppression, profile, hooks, stats, accessibility, or CLI surface is gated; the defaults remain usable forever. If your key later goes inactive you'll never lose access to a break you've configured — only the ability to edit personalisation while the key is inactive.
 
 ## How to get one
 
 1. Open Entracte → tray menu → **About** → **Supporter** → **Become a supporter →**.
-2. Pay through Lemon Squeezy. They're the merchant of record, so they handle VAT and sales tax wherever you are.
-3. The receipt email contains your license key.
+2. Complete checkout through the payment partner. They'll act as merchant of record, handling VAT and sales tax wherever you are.
+3. The receipt email will contain your license key.
 4. Back in **About → Supporter**, paste the key and click **Verify**.
 
 The key is bound to the machine you activate it on. You can remove it from one machine and activate it on another at any time.
 
 ## How the key is stored and validated
 
-Activation calls the [Lemon Squeezy License API](https://docs.lemonsqueezy.com/api/license-keys) and stores a small `supporter.json` in Entracte's app-data directory:
+Activation calls the license API and stores a small `supporter.json` in Entracte's app-data directory:
 
 - **macOS** — `~/Library/Application Support/app.entracte/supporter.json`
 - **Windows** — `%APPDATA%\app.entracte\supporter.json`

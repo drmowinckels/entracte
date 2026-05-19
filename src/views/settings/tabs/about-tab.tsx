@@ -102,9 +102,9 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
               break hints — is unlocked by becoming a supporter once, forever.
             </p>
             <p className="about-meta">
-              <strong>Coming soon.</strong> The Lemon Squeezy store is still
-              under review; purchase and license activation will go live once
-              the storefront is approved. Until then, the pack ships as
+              <strong>Coming soon.</strong> The storefront infrastructure is
+              still being set up; purchase and license activation will go live
+              once the payment flow is in place. Until then, the pack ships as
               source-only.
             </p>
           </>

@@ -8,7 +8,7 @@ Settings persist automatically as plain JSON in the platform app-data directory 
 Most non-obvious settings carry a small ⓘ icon next to the label — hover or focus it for a short explanation. Power-user options are tucked behind a **Show advanced** disclosure in each section.
 :::
 
-A small handful of personalisation extras are part of the [Supporter pack](./supporter) — flagged inline below and consolidated in the [Supporter pack](#supporter-pack) section at the end.
+A small handful of personalisation extras are part of the [Supporter pack](./supporter) and flagged inline below.
 
 ## Schedule
 
@@ -36,9 +36,9 @@ Bedtime (Sleep) is hard-coded to full-screen Overlay and ignores this setting.
 
 The Breaks tab covers what breaks look and sound like, and the escape hatches.
 
-- **Overlay** — transparency, text size, theme (Dark / Midnight / Forest / Rose / Sunset — plus Rotate and Custom in the [Supporter pack](#supporter-pack)), wellness hints toggle, current time toggle. Advanced disclosure adds **monitor placement**, **high contrast**, and the **break-health vignette** that intensifies as you skip more breaks. (Whether a break renders full-screen or windowed is part of the per-kind **Mode** dropdown in the Schedule tab — see [Break mode](#break-mode-per-kind) below.)
+- **Overlay** — transparency, text size, theme (Dark / Midnight / Forest / Rose / Sunset — plus Rotate and Custom in the [Supporter pack](./supporter)), wellness hints toggle, current time toggle. Advanced disclosure adds **monitor placement**, **high contrast**, and the **break-health vignette** that intensifies as you skip more breaks. (Whether a break renders full-screen or windowed is part of the per-kind **Mode** dropdown in the Schedule tab — see [Break mode](#break-mode-per-kind) below.)
 - **Sound** — chime theme and volume, with a Preview button.
-- **Break ideas** — optional rotation toggle (off by default — one idea is picked per break and stays on screen; turn on to cycle through the pool every N seconds), plus a **Mix** selector for Micro (Physical / Psychological / Both) and Long (Solo / Social / Both — Social prompts you to call someone, walk with a colleague, or share a coffee). The curated default pools cover every category out of the box; editing the pool text is a [Supporter pack](#supporter-pack) feature.
+- **Break ideas** — optional rotation toggle (off by default — one idea is picked per break and stays on screen; turn on to cycle through the pool every N seconds), plus a **Mix** selector for Micro (Physical / Psychological / Both) and Long (Solo / Social / Both — Social prompts you to call someone, walk with a colleague, or share a coffee). The curated default pools cover every category out of the box; editing the pool text is a [Supporter pack](./supporter) feature.
 - **Skip & postpone** — Strict mode (no skip, no postpone, all breaks enforced), postpone toggle and minutes, optional postpone escalation (each postpone of the same break adds extra delay), and one-shot **Skip next micro / Skip next long** buttons.
 
 ### Monitor placement
@@ -105,7 +105,7 @@ These controls live under **Breaks → Overlay**. The overlay is always dark (it
 
 </div>
 
-The **Theme** dropdown ships with five presets — Dark, Midnight, Forest, Rose, Sunset — available to everyone. Two additional entries, **Rotate** and **Custom…**, are part of the [Supporter pack](#supporter-pack).
+The **Theme** dropdown ships with five presets — Dark, Midnight, Forest, Rose, Sunset — available to everyone. Two additional entries, **Rotate** and **Custom…**, are part of the [Supporter pack](./supporter).
 
 ## Accessibility
 
@@ -119,21 +119,3 @@ The overlay tries to be friendly to a range of needs.
 - **Screen readers** get a `role="dialog"` overlay with an `aria-live="polite"` announcement when each break starts ("Long break started. 10 minutes remaining."). The countdown timer carries an `aria-label` that reads as e.g. "9 minutes 30 seconds remaining" so navigating to it via screen-reader cursor speaks something meaningful.
 - **Keyboard** — `Esc` skips the break. Postpone, Skip, and "I'm back" reach focus in DOM order; the high-contrast theme adds a yellow focus ring for visibility.
 - **Font size** — the **Text size** slider under **Breaks → Overlay** scales every text element in the overlay from 80% to 160%, so users who prefer larger text don't have to squint at hint or countdown.
-
-## Supporter pack
-
-::: warning Coming soon — work in progress
-Purchase and license activation are temporarily hidden in **About → Supporter** while the Lemon Squeezy store is under review (~10 days). All the gated features below are in the codebase; only the storefront is missing. See the [Supporter pack page](./supporter) for the full status.
-:::
-
-Entracte is free and open source. A small set of personalisation extras is gated behind the supporter pack — a one-time Lemon Squeezy purchase that funds continued development. Nothing in the scheduling, suppression, profile, hooks, stats, accessibility, or CLI surface is gated; the defaults remain usable forever.
-
-| Tab                  | Setting             | What it unlocks                                                                                                                                     |
-| -------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Breaks → Overlay     | **Theme = Custom…** | Pick any colour via hex input or the native colour picker (with synchronised controls and an auto-darken cap so the overlay still dims the screen). |
-| Breaks → Overlay     | **Theme = Rotate**  | A different preset per break, never the same one twice in a row.                                                                                    |
-| Breaks → Break ideas | **Edit hint pools** | Add / remove / rewrite the prompts shown during a break. Mix selectors and rotation cadence remain free.                                            |
-| Breaks → Custom CSS  | **Stylesheet**      | Freeform CSS injected into the settings window and the break overlay for full visual customisation.                                                 |
-| Schedule → Sound     | **Custom file…**    | Point each break kind at your own audio file (end-chime or looping ambient).                                                                        |
-
-Activation lives in **About → Supporter** in Preferences. The key is machine-bound, validated against Lemon Squeezy once a day, and tolerates 30 days offline before it re-locks. See [Supporter pack](./supporter) for the full purchase, activation, and on-disk-storage details.
