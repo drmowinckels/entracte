@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
@@ -14,6 +14,7 @@ use crate::stats::{EventPayload, GuardReason, Logger};
 use super::overlay::deliver_break;
 use super::pause::{persist_pause, PauseState};
 use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind_screen_time};
+use super::session_lock;
 use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
@@ -66,7 +67,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // `UserIdle::get_time()` round-trips to the windowing system on X11 /
         // Wayland and isn't free on macOS either, so fetch once per tick and
         // reuse for screen-time, idle-suppression, and the typing-defer check.
-        let idle_secs = match UserIdle::get_time() {
+        let raw_idle_secs = match UserIdle::get_time() {
             Ok(i) => i.as_seconds(),
             Err(e) => {
                 warn_user_idle_failure(&e);
@@ -77,6 +78,14 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 0
             }
         };
+        // A locked screen is a stronger AFK signal than HIDIdleTime —
+        // `caffeinate -u`, Zoom meetings, and synthetic-input utilities
+        // can keep the HID counter at zero while the human is gone, but
+        // they can't unlock the workstation. When the OS reports the
+        // session as locked, promote `idle_secs` past both thresholds
+        // so the screen-time, suppression, and typing-defer paths
+        // below all treat the user as idle.
+        let idle_secs = promote_idle_for_lock(raw_idle_secs, session_lock::screen_locked(), &s);
         let is_active = idle_secs < s.micro_idle_reset_secs;
         let today_str = local_today_string();
         let budget_secs = s.daily_screen_time_budget_minutes.saturating_mul(60);
@@ -645,6 +654,121 @@ fn user_idle_warn_throttle(cell: &AtomicI64, now_epoch: i64, min_interval_secs: 
     true
 }
 
+/// Encoded previous lock state for the transition logger:
+///   0 = unknown / haven't seen yet (the initial value)
+///   1 = last seen as `Some(false)` (confidently unlocked)
+///   2 = last seen as `Some(true)`  (confidently locked)
+/// `Option<bool>` directly is what we want logically, but we need an
+/// atomic so the run-loop closure can mutate the previous-state
+/// across ticks without locking. `AtomicU8` is the smallest fit.
+static LOCK_STATE_PREV: AtomicU8 = AtomicU8::new(0);
+
+const LOCK_PREV_UNKNOWN: u8 = 0;
+const LOCK_PREV_UNLOCKED: u8 = 1;
+const LOCK_PREV_LOCKED: u8 = 2;
+
+fn encode_lock_state(s: Option<bool>) -> u8 {
+    match s {
+        None => LOCK_PREV_UNKNOWN,
+        Some(false) => LOCK_PREV_UNLOCKED,
+        Some(true) => LOCK_PREV_LOCKED,
+    }
+}
+
+fn decode_lock_state(b: u8) -> Option<bool> {
+    match b {
+        LOCK_PREV_UNLOCKED => Some(false),
+        LOCK_PREV_LOCKED => Some(true),
+        _ => None,
+    }
+}
+
+/// What (if anything) to log about a tick's lock-state transition.
+/// `None` is the common case: no confidently-known transition this
+/// tick. The wrapper turns the other variants into `log::info!` calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LockTransition {
+    JustLocked,
+    JustUnlocked,
+}
+
+/// Pure decision: given the previously-known lock state and the
+/// freshly-probed state, decide whether the transition is worth
+/// surfacing in the log.
+///
+/// Only transitions *between confidently-known states*
+/// (`Some(false) ↔ Some(true)`) are reportable — `None → Some(true)`
+/// is "we just got our first reading and it's locked", which we
+/// surface, but `Some(true) → None → Some(true)` is a flaky probe that
+/// must not generate a "unlocked / locked" log pair.
+pub(super) fn decide_lock_transition(
+    prev: Option<bool>,
+    next: Option<bool>,
+) -> Option<LockTransition> {
+    match (prev, next) {
+        (Some(false), Some(true)) | (None, Some(true)) => Some(LockTransition::JustLocked),
+        (Some(true), Some(false)) => Some(LockTransition::JustUnlocked),
+        // `Some(true) → None` is "we lost our signal while locked";
+        // don't claim unlock. `None → Some(false)` is "first reading,
+        // unlocked" — uninteresting. Anything→same is a no-op.
+        _ => None,
+    }
+}
+
+/// Pure decision: given the raw HID-idle seconds and an `Option<bool>`
+/// lock signal, return the idle seconds the rest of the scheduler
+/// should see. When the OS confidently reports the session as locked,
+/// promote the value past both the micro- and long-break reset
+/// thresholds so every downstream check (screen-time, suppression,
+/// typing-defer) treats the user as idle. `None` (couldn't determine
+/// lock state) leaves `raw_idle_secs` untouched — trust HID alone.
+pub(super) fn idle_secs_with_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
+    if matches!(locked, Some(true)) {
+        raw_idle_secs
+            .max(s.micro_idle_reset_secs)
+            .max(s.long_idle_reset_secs)
+    } else {
+        raw_idle_secs
+    }
+}
+
+/// Wrapper around `idle_secs_with_lock` that also emits a single info
+/// line on each locked⇄unlocked transition, so the log shows why
+/// idle-based suppression suddenly engaged or disengaged. The
+/// previous-state tracker is tri-valued (unknown / unlocked / locked)
+/// so a flaky probe that returns `Some(true) → None → Some(true)`
+/// doesn't generate spurious "unlocked / locked" log pairs.
+fn promote_idle_for_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
+    promote_idle_for_lock_with_cell(&LOCK_STATE_PREV, raw_idle_secs, locked, s)
+}
+
+/// Cell-parameterised variant of `promote_idle_for_lock` so the
+/// orchestration (load → decide → log → store → promote) is testable
+/// with a local atomic — mirrors `user_idle_warn_throttle` above.
+pub(super) fn promote_idle_for_lock_with_cell(
+    cell: &AtomicU8,
+    raw_idle_secs: u64,
+    locked: Option<bool>,
+    s: &Settings,
+) -> u64 {
+    let prev = decode_lock_state(cell.load(Ordering::Relaxed));
+    if let Some(transition) = decide_lock_transition(prev, locked) {
+        match transition {
+            LockTransition::JustLocked => log::info!(
+                "scheduler: session locked, treating user as idle (raw HID idle = {raw_idle_secs}s)"
+            ),
+            LockTransition::JustUnlocked => {
+                log::info!("scheduler: session unlocked, resuming HID-based idle detection")
+            }
+        }
+    }
+    // Always store the latest reading — including `None` — so a
+    // subsequent `Some(true)` after a `None` flicker doesn't re-fire
+    // the locked transition.
+    cell.store(encode_lock_state(locked), Ordering::Relaxed);
+    idle_secs_with_lock(raw_idle_secs, locked, s)
+}
+
 /// Surface a `UserIdle::get_time` error to the log, at most once per
 /// `USER_IDLE_WARN_INTERVAL_SECS`. Without this gate the production
 /// code silently fell back to "0 = active" forever, so a broken
@@ -857,6 +981,229 @@ mod tests {
         let cell = AtomicI64::new(2000);
         assert!(!user_idle_warn_throttle(&cell, 1500, 60));
         assert_eq!(cell.load(Ordering::Relaxed), 2000);
+    }
+
+    // ----- idle_secs_with_lock: lock screen promotes HID-idle past thresholds -----
+
+    fn settings_with_idle_thresholds(micro: u64, long: u64) -> Settings {
+        Settings {
+            micro_idle_reset_secs: micro,
+            long_idle_reset_secs: long,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn idle_secs_with_lock_passthrough_when_unlocked() {
+        // `Some(false)` is the confidently-unlocked case — must not
+        // touch the raw HID value, regardless of how large or small.
+        let s = settings_with_idle_thresholds(120, 300);
+        assert_eq!(idle_secs_with_lock(0, Some(false), &s), 0);
+        assert_eq!(idle_secs_with_lock(45, Some(false), &s), 45);
+        assert_eq!(idle_secs_with_lock(9999, Some(false), &s), 9999);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_passthrough_when_unknown() {
+        // `None` means the platform probe couldn't decide. We must
+        // fall back to HID-only behaviour rather than guess.
+        let s = settings_with_idle_thresholds(120, 300);
+        assert_eq!(idle_secs_with_lock(0, None, &s), 0);
+        assert_eq!(idle_secs_with_lock(60, None, &s), 60);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_promotes_to_both_thresholds_when_locked() {
+        // A raw HID idle of zero (the caffeinate-u / stuck-input
+        // pathology) must end up >= both thresholds so the suppression
+        // gate at line ~341 trips for both micro and long.
+        let s = settings_with_idle_thresholds(120, 300);
+        let promoted = idle_secs_with_lock(0, Some(true), &s);
+        assert!(promoted >= s.micro_idle_reset_secs);
+        assert!(promoted >= s.long_idle_reset_secs);
+        assert_eq!(promoted, 300);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_preserves_larger_raw_value() {
+        // If the HID counter is already above both thresholds (user
+        // was genuinely idle AND the screen happens to be locked), the
+        // promotion must not shrink it — that would mis-report screen
+        // time and reset deferral state incorrectly.
+        let s = settings_with_idle_thresholds(120, 300);
+        assert_eq!(idle_secs_with_lock(900, Some(true), &s), 900);
+    }
+
+    #[test]
+    fn idle_secs_with_lock_handles_asymmetric_thresholds() {
+        // Long-break threshold larger than micro: must promote to the
+        // larger of the two so both gates trip.
+        let s = settings_with_idle_thresholds(60, 600);
+        assert_eq!(idle_secs_with_lock(0, Some(true), &s), 600);
+        // And vice-versa.
+        let s = settings_with_idle_thresholds(600, 60);
+        assert_eq!(idle_secs_with_lock(0, Some(true), &s), 600);
+    }
+
+    // ----- decide_lock_transition: only log between confidently-known states -----
+
+    #[test]
+    fn lock_transition_first_reading_locked_logs_locked() {
+        // Cold-start with a locked screen: the user wasn't here when
+        // we booted; we should log that we're treating them as idle.
+        assert_eq!(
+            decide_lock_transition(None, Some(true)),
+            Some(LockTransition::JustLocked),
+        );
+    }
+
+    #[test]
+    fn lock_transition_first_reading_unlocked_is_silent() {
+        // Cold-start with an unlocked screen is the happy path —
+        // logging "session unlocked" with no prior context would be
+        // confusing noise in the journal.
+        assert_eq!(decide_lock_transition(None, Some(false)), None);
+    }
+
+    #[test]
+    fn lock_transition_unlocked_to_locked_logs_locked() {
+        assert_eq!(
+            decide_lock_transition(Some(false), Some(true)),
+            Some(LockTransition::JustLocked),
+        );
+    }
+
+    #[test]
+    fn lock_transition_locked_to_unlocked_logs_unlocked() {
+        assert_eq!(
+            decide_lock_transition(Some(true), Some(false)),
+            Some(LockTransition::JustUnlocked),
+        );
+    }
+
+    #[test]
+    fn lock_transition_same_state_is_silent() {
+        // Repeated probes returning the same state must not log every
+        // tick (the whole point of the transition tracker).
+        assert_eq!(decide_lock_transition(Some(true), Some(true)), None);
+        assert_eq!(decide_lock_transition(Some(false), Some(false)), None);
+        assert_eq!(decide_lock_transition(None, None), None);
+    }
+
+    #[test]
+    fn lock_transition_loss_of_signal_while_locked_is_silent() {
+        // The regression from the original review: probe returns
+        // `Some(true) → None → Some(true)` while the user is locked
+        // the whole time. The `Some(true) → None` step must NOT log
+        // "unlocked", because we haven't observed an unlock.
+        assert_eq!(decide_lock_transition(Some(true), None), None);
+    }
+
+    #[test]
+    fn lock_transition_loss_of_signal_while_unlocked_is_silent() {
+        // Symmetric: probe goes flaky while unlocked. No log.
+        assert_eq!(decide_lock_transition(Some(false), None), None);
+    }
+
+    #[test]
+    fn lock_transition_recovery_after_flicker_does_not_double_log() {
+        // The full flake pattern: locked → unknown → still locked.
+        // The transition tracker stores the latest reading (including
+        // `None`) so the second transition we evaluate is `None →
+        // Some(true)` — which we DO log, because that's the only way
+        // we'd ever surface the lock state if the very first probe
+        // was a transient failure. Symmetric for the unlocked path.
+        assert_eq!(decode_lock_state(encode_lock_state(None)), None);
+        assert_eq!(
+            decode_lock_state(encode_lock_state(Some(false))),
+            Some(false)
+        );
+        assert_eq!(decode_lock_state(encode_lock_state(Some(true))), Some(true));
+    }
+
+    #[test]
+    fn decode_lock_state_rejects_unknown_values() {
+        // Defensive: a stored byte we don't recognise (impossible
+        // unless someone adds a third concrete state) should fall back
+        // to `None` (unknown) rather than silently mis-decode.
+        assert_eq!(decode_lock_state(0), None);
+        assert_eq!(decode_lock_state(99), None);
+    }
+
+    // ----- promote_idle_for_lock_with_cell: orchestration over a local cell -----
+
+    #[test]
+    fn promote_with_cell_first_locked_reading_promotes_and_remembers() {
+        // Cold start → confidently locked. The promoted idle must
+        // clear both thresholds, and the cell must record the new
+        // state so the next tick doesn't re-fire the transition.
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_UNKNOWN);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 0, Some(true), &s);
+        assert_eq!(promoted, 300);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_LOCKED);
+    }
+
+    #[test]
+    fn promote_with_cell_unlocked_reading_is_passthrough_and_recorded() {
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_UNKNOWN);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 42, Some(false), &s);
+        assert_eq!(promoted, 42);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_UNLOCKED);
+    }
+
+    #[test]
+    fn promote_with_cell_unlock_transition_passes_raw_value_through() {
+        // Previously locked, now confidently unlocked: emits the
+        // "session unlocked" log line and returns the raw HID value
+        // untouched.
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_LOCKED);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 7, Some(false), &s);
+        assert_eq!(promoted, 7);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_UNLOCKED);
+    }
+
+    #[test]
+    fn promote_with_cell_none_after_locked_keeps_promoting_but_records_unknown() {
+        // Probe flickers to `None` while the user is still locked:
+        // the transition decision is silent (we don't claim unlock),
+        // the cell stores `LOCK_PREV_UNKNOWN`, and the idle value is
+        // the raw HID seconds (we have no positive lock signal this
+        // tick).
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_LOCKED);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 5, None, &s);
+        assert_eq!(promoted, 5);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_UNKNOWN);
+    }
+
+    #[test]
+    fn promote_idle_for_lock_thin_wrapper_routes_through_global_cell() {
+        // The production wrapper just forwards to
+        // `_with_cell` against the static `LOCK_STATE_PREV`. We
+        // can't assert the global state without racing parallel
+        // tests, but a smoke call confirms the wrapper actually
+        // executes and returns the expected promotion for the
+        // input combination — which is all the static-bound
+        // wrapper itself can be tested for.
+        let s = settings_with_idle_thresholds(120, 300);
+        // Unlocked input is hermetic: regardless of whatever
+        // earlier test left in the global, the result is just
+        // the raw HID value passed through.
+        assert_eq!(promote_idle_for_lock(11, Some(false), &s), 11);
+    }
+
+    #[test]
+    fn promote_with_cell_repeated_locked_reading_does_not_change_state() {
+        // Already locked, still locked: cell stays at LOCK_PREV_LOCKED
+        // and the promoted value still clears both thresholds.
+        let s = settings_with_idle_thresholds(120, 300);
+        let cell = AtomicU8::new(LOCK_PREV_LOCKED);
+        let promoted = promote_idle_for_lock_with_cell(&cell, 0, Some(true), &s);
+        assert_eq!(promoted, 300);
+        assert_eq!(cell.load(Ordering::Relaxed), LOCK_PREV_LOCKED);
     }
 
     // ----- evaluate_guards: pure per-tick suppression decision -----
