@@ -1180,6 +1180,22 @@ mod tests {
     }
 
     #[test]
+    fn promote_idle_for_lock_thin_wrapper_routes_through_global_cell() {
+        // The production wrapper just forwards to
+        // `_with_cell` against the static `LOCK_STATE_PREV`. We
+        // can't assert the global state without racing parallel
+        // tests, but a smoke call confirms the wrapper actually
+        // executes and returns the expected promotion for the
+        // input combination — which is all the static-bound
+        // wrapper itself can be tested for.
+        let s = settings_with_idle_thresholds(120, 300);
+        // Unlocked input is hermetic: regardless of whatever
+        // earlier test left in the global, the result is just
+        // the raw HID value passed through.
+        assert_eq!(promote_idle_for_lock(11, Some(false), &s), 11);
+    }
+
+    #[test]
     fn promote_with_cell_repeated_locked_reading_does_not_change_state() {
         // Already locked, still locked: cell stays at LOCK_PREV_LOCKED
         // and the promoted value still clears both thresholds.
