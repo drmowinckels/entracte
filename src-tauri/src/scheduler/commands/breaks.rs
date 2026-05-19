@@ -129,8 +129,8 @@ pub(crate) fn test_break_enforceable(kind: BreakKind, s: &Settings) -> bool {
 /// Fire a one-off break of the given kind right now. Shared by the
 /// renderer-facing `trigger_test_break` and the CLI's `trigger`
 /// command. Bypasses suppression checks (the user asked explicitly).
-pub async fn trigger_break_from_cli(
-    app: &AppHandle,
+pub async fn trigger_break_from_cli<R: Runtime>(
+    app: &AppHandle<R>,
     scheduler: &Scheduler,
     kind: BreakKind,
     duration_secs: u64,
@@ -177,8 +177,8 @@ pub async fn trigger_break_from_cli(
 /// Renderer hook to fire a break immediately — used by the "Test now"
 /// buttons on the Schedule tab.
 #[tauri::command]
-pub async fn trigger_test_break(
-    app: AppHandle,
+pub async fn trigger_test_break<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     kind: BreakKind,
     duration_secs: u64,
@@ -264,8 +264,8 @@ pub async fn end_break<R: Runtime>(
 /// per-kind postpone counter, fires `break_postponed` hooks, hides
 /// overlays.
 #[tauri::command]
-pub async fn postpone_break(
-    app: AppHandle,
+pub async fn postpone_break<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     kind: BreakKind,
 ) -> Result<(), String> {
@@ -375,8 +375,8 @@ fn effective_postpone_secs(s: &Settings, counter: u32, kind: BreakKind) -> u64 {
 /// Reset the next-break timer for `kind` so the user "skips" the
 /// upcoming break. Shared by the renderer command and the CLI's
 /// `skip` subcommand. Errors when `strict_mode` is on.
-pub async fn skip_next_from_cli(
-    app: &AppHandle,
+pub async fn skip_next_from_cli<R: Runtime>(
+    app: &AppHandle<R>,
     scheduler: &Scheduler,
     kind: BreakKind,
 ) -> Result<(), String> {
@@ -435,8 +435,8 @@ pub async fn skip_next_break_impl(scheduler: &Scheduler, kind: BreakKind) -> Res
 
 /// Renderer-facing skip. Thin wrapper over `skip_next_from_cli`.
 #[tauri::command]
-pub async fn skip_next_break(
-    app: AppHandle,
+pub async fn skip_next_break<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     kind: BreakKind,
 ) -> Result<(), String> {
@@ -504,7 +504,10 @@ pub async fn get_last_break_info(
 /// profile's full settings (duration, hints, enforceability). Shared
 /// by the renderer command and the tray menu handler. Errors with
 /// `"no break to resume"` when the slot is empty.
-pub async fn resume_last_break_impl(app: &AppHandle, scheduler: &Scheduler) -> Result<(), String> {
+pub async fn resume_last_break_impl<R: Runtime>(
+    app: &AppHandle<R>,
+    scheduler: &Scheduler,
+) -> Result<(), String> {
     let stored = {
         let mut t = scheduler.timers.lock().await;
         t.last_skipped_or_postponed.take()
@@ -579,8 +582,8 @@ pub async fn resume_last_break_impl(app: &AppHandle, scheduler: &Scheduler) -> R
 
 /// Renderer-facing resume. Thin wrapper over `resume_last_break_impl`.
 #[tauri::command]
-pub async fn resume_last_break(
-    app: AppHandle,
+pub async fn resume_last_break<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
 ) -> Result<(), String> {
     resume_last_break_impl(&app, scheduler.inner()).await
@@ -588,8 +591,8 @@ pub async fn resume_last_break(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::BreakTimers;
     use super::*;
+    use crate::scheduler::timers::BreakTimers;
     use crate::test_support::test_scheduler;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -1149,10 +1152,10 @@ mod tests {
 //
 // The tests above call the `*_impl` cores directly so they don't need
 // an `AppHandle`. These tests exercise the full `#[tauri::command]`
-// wrappers via `test_support::mock_app_with_scheduler`, which proves
-// the rig (Tauri `mock_runtime` + a real `Scheduler` under `State`)
-// wires up correctly and reaches the AppHandle-emit branches that
-// were previously uncovered.
+// wrappers via `test_support::mock_app_with_scheduler`. Every command
+// in this crate is generic over `R: Runtime`, so the rig isn't limited
+// to the wrappers below — add more rig tests as needed for any
+// command that emits or touches `AppHandle`.
 //
 // Not compiled on Windows — `tauri = { features = ["test"] }` pulls
 // in `wry`/WebView2 bindings whose `WebView2Loader.dll` entry-point
@@ -1168,17 +1171,23 @@ mod rig_smoke_tests {
     use tauri::Listener;
 
     #[tokio::test]
-    async fn pause_command_via_rig_emits_pause_changed_and_persists_state() {
+    async fn pause_command_via_rig_emits_pause_changed() {
+        // Scope: prove the `#[tauri::command]` wrapper threads the
+        // AppHandle through and the `pause:changed` emit fires. Disk
+        // persistence is `pause_impl`'s job and is covered by the
+        // impl-level test `pause_some_secs_transitions_running_to_timed_pause`.
         let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
 
         // Wire up a listener BEFORE invoking the command so we don't
-        // miss the emit. The handler bumps a counter so we can assert
-        // it ran exactly once with the expected payload.
+        // miss the emit. Parse with `.expect` so a payload-shape change
+        // fails loudly rather than silently dropping the event and
+        // letting the count assertion misreport the root cause.
         let fired = Arc::new(AtomicUsize::new(0));
         {
             let fired = fired.clone();
             app.listen("pause:changed", move |event| {
-                let payload: bool = serde_json::from_str(event.payload()).unwrap_or(false);
+                let payload: bool = serde_json::from_str(event.payload())
+                    .expect("pause:changed payload is a bool");
                 if payload {
                     fired.fetch_add(1, Ordering::SeqCst);
                 }
@@ -1195,7 +1204,7 @@ mod rig_smoke_tests {
             1,
             "pause:changed(true) fired once"
         );
-        // …and the scheduler actually transitioned to Paused.
+        // Wrapper-level sanity: the impl actually ran, not just the emit.
         assert!(!matches!(
             *sched.pause_state.lock().await,
             PauseState::Running
@@ -1212,7 +1221,8 @@ mod rig_smoke_tests {
         {
             let fired = fired.clone();
             app.listen("pause:changed", move |event| {
-                let payload: bool = serde_json::from_str(event.payload()).unwrap_or(true);
+                let payload: bool = serde_json::from_str(event.payload())
+                    .expect("pause:changed payload is a bool");
                 if !payload {
                     fired.fetch_add(1, Ordering::SeqCst);
                 }
@@ -1257,16 +1267,43 @@ mod rig_smoke_tests {
     }
 
     #[tokio::test]
-    async fn end_break_command_classifies_dismissed_as_skipped_stat() {
+    async fn end_break_command_classifies_dismissed_and_emits_stats_changed() {
         // Same rig path, different reason — proves the wrapper threads
-        // the `reason` arg through to the impl correctly.
+        // the `reason` arg through to the impl AND that the
+        // `stats:changed` emit carries the post-mutation snapshot.
+        // `BreakStats` is `Serialize`-only in prod, so parse the payload
+        // as a generic JSON value to avoid adding `Deserialize` solely
+        // for tests.
         let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+
+        let captured: Arc<std::sync::Mutex<Option<serde_json::Value>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        {
+            let captured = captured.clone();
+            app.listen("stats:changed", move |event| {
+                let v: serde_json::Value =
+                    serde_json::from_str(event.payload()).expect("stats:changed payload is JSON");
+                *captured.lock().unwrap() = Some(v);
+            });
+        }
+
         let state = app.state::<Scheduler>();
         end_break(app.handle().clone(), state, Some("dismissed".to_string()))
             .await
             .expect("end_break(dismissed) succeeds");
+
         let stats = sched.stats.lock().await;
         assert_eq!(stats.skipped, 1);
         assert_eq!(stats.taken, 0);
+        let emitted = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("stats:changed was emitted");
+        assert_eq!(
+            emitted["skipped"], 1,
+            "renderer sees the post-dismiss skipped",
+        );
+        assert_eq!(emitted["taken"], 0);
     }
 }

@@ -6,19 +6,16 @@
 //!   A panicking test still gets the dir reaped by `tempfile`'s drop
 //!   guard.
 //! - `test_scheduler()` / `mock_app_with_scheduler()` — the
-//!   integration-test rig (issue #10). Builds a real `Scheduler` whose
-//!   file paths point into a `TempDir`, but **without** spawning the
-//!   camera / video / run-loop side threads. The `mock_app_*` variant
-//!   additionally wraps the scheduler in a `tauri::test::mock_app()`
-//!   so tests can drive code paths that need an `AppHandle` (event
-//!   emission, plugin wiring, `tauri::State` lookup, IPC dispatch).
-//!   The `Logger` thread is started (it's how `EventPayload`s reach
-//!   disk) but it writes into the TempDir so nothing leaks.
-
-use std::sync::atomic::{AtomicBool, AtomicU8};
-use std::sync::Arc;
-
-use tokio::sync::Mutex;
+//!   integration-test rig (issue #10). Both are thin wrappers around
+//!   [`Scheduler::for_test`] (in `scheduler::mod`); the rig only owns
+//!   the `TempDir` lifetime and the optional `mock_app` wrap. Keeping
+//!   the `Scheduler { … }` struct literal next to `Scheduler::new`
+//!   means a new field forces both sites to update in the same review.
+//!
+//! The `mock_app_*` variant wraps the scheduler in a
+//! `tauri::test::mock_app()` so tests can drive code paths that need an
+//! `AppHandle` (event emission, plugin wiring, `tauri::State` lookup,
+//! IPC dispatch).
 
 #[cfg(not(target_os = "windows"))]
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
@@ -28,9 +25,7 @@ use tauri::{App, Manager};
 pub use tempfile::TempDir;
 
 use crate::config::{Profile, DEFAULT_PROFILE_NAME};
-use crate::scheduler::{BreakStats, BreakTimers, PauseState, Scheduler, ScreenTimeState, Settings};
-use crate::screen_time_store::ScreenTimeSnapshot;
-use crate::stats::Logger;
+use crate::scheduler::{Scheduler, Settings};
 
 pub fn temp_dir() -> TempDir {
     tempfile::Builder::new()
@@ -60,38 +55,7 @@ pub fn test_scheduler(settings: Settings) -> (TempDir, Scheduler) {
 /// this matches what `Scheduler::new` does on disk-load.
 pub fn test_scheduler_with_profiles(profiles: Vec<Profile>, active: &str) -> (TempDir, Scheduler) {
     let dir = temp_dir();
-    let config_path = dir.path().join("settings.json");
-    let pause_path = dir.path().join("pause.json");
-    let events_path = dir.path().join("events.jsonl");
-    let screen_time_path = dir.path().join("screen_time.json");
-    let logger = Logger::spawn(events_path.clone());
-    let active_settings = profiles
-        .iter()
-        .find(|p| p.name == active)
-        .map(|p| p.settings.clone())
-        .unwrap_or_default();
-    let sched = Scheduler {
-        settings: Arc::new(Mutex::new(active_settings)),
-        pause_state: Arc::new(Mutex::new(PauseState::Running)),
-        camera_active: Arc::new(AtomicBool::new(false)),
-        video_active: Arc::new(AtomicBool::new(false)),
-        auto_suppress_reason: Arc::new(AtomicU8::new(0)),
-        config_path,
-        pause_path,
-        events_path,
-        screen_time_path,
-        timers: Arc::new(Mutex::new(BreakTimers::new())),
-        stats: Arc::new(Mutex::new(BreakStats::default())),
-        screen_time: Arc::new(Mutex::new(ScreenTimeState::from_snapshot(
-            ScreenTimeSnapshot::default(),
-            "1970-01-01",
-        ))),
-        current_break: Arc::new(std::sync::Mutex::new(None)),
-        logger,
-        profiles: Arc::new(Mutex::new(profiles)),
-        active_profile_name: Arc::new(Mutex::new(active.to_string())),
-        hook_dialog_busy: Arc::new(AtomicBool::new(false)),
-    };
+    let sched = Scheduler::for_test(profiles, active, dir.path());
     (dir, sched)
 }
 
@@ -104,6 +68,13 @@ pub fn test_scheduler_with_profiles(profiles: Vec<Profile>, active: &str) -> (Te
 /// dropping it deletes the on-disk state files), the `App<MockRuntime>`
 /// (call `.handle()` to get an `AppHandle<MockRuntime>`), and a clone
 /// of the `Scheduler` (also stored under `app.state::<Scheduler>()`).
+///
+/// Empirically (tauri 2.x), `MockRuntime` invokes listener callbacks
+/// synchronously inside `emit`, so an atomic load right after
+/// `command.await` reliably observes the increment — no extra
+/// synchronisation needed. Re-verify on Tauri upgrade: if emit becomes
+/// async-dispatched, the rig tests will start flaking and a barrier or
+/// `tokio::sync::Notify` will be required.
 ///
 /// Single-profile convenience; for multi-profile setups, build the
 /// scheduler with [`test_scheduler_with_profiles`] and call

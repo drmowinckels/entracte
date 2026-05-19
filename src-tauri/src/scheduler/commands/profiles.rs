@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::config::Profile;
 
@@ -6,7 +6,10 @@ use super::super::settings::Settings;
 use super::super::timers::reset_timers_keep_sleep;
 use super::super::Scheduler;
 
-async fn emit_profile_changed(app: &AppHandle, scheduler: &Scheduler) -> tauri::Result<()> {
+async fn emit_profile_changed<R: Runtime>(
+    app: &AppHandle<R>,
+    scheduler: &Scheduler,
+) -> tauri::Result<()> {
     let name = scheduler.active_profile_name.lock().await.clone();
     app.emit("profile:changed", &name)
 }
@@ -33,8 +36,8 @@ pub async fn get_active_profile(scheduler: tauri::State<'_, Scheduler>) -> Resul
 /// Switch the active profile to `name`. Shared by the Tauri command,
 /// the tray-menu handler, and the local-IPC entry point. Resets the
 /// per-profile timers (keeping `last_sleep`) and emits `profile:changed`.
-pub async fn set_active_profile_impl(
-    app: &AppHandle,
+pub async fn set_active_profile_impl<R: Runtime>(
+    app: &AppHandle<R>,
     scheduler: &Scheduler,
     name: String,
 ) -> Result<(), String> {
@@ -66,8 +69,8 @@ pub async fn set_active_profile_impl(
 /// Renderer-facing `set_active_profile`. Thin wrapper over
 /// `set_active_profile_impl`.
 #[tauri::command]
-pub async fn set_active_profile(
-    app: AppHandle,
+pub async fn set_active_profile<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     name: String,
 ) -> Result<(), String> {
@@ -159,8 +162,8 @@ pub async fn create_profile_impl(scheduler: &Scheduler, name: String) -> Result<
 /// Create a brand-new profile copied from the currently active one.
 /// `name` must be non-empty (after trim) and not already in use.
 #[tauri::command]
-pub async fn create_profile(
-    app: AppHandle,
+pub async fn create_profile<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     name: String,
 ) -> Result<(), String> {
@@ -200,8 +203,8 @@ pub async fn duplicate_profile_impl(
 /// switch-then-create dance that used to fire `profile:changed`
 /// mid-duplication and clobber unsaved hook drafts.
 #[tauri::command]
-pub async fn duplicate_profile(
-    app: AppHandle,
+pub async fn duplicate_profile<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     source: String,
     name: String,
@@ -246,8 +249,8 @@ pub async fn rename_profile_impl(
 /// pointer is updated to follow it. Rejects collisions and missing
 /// sources.
 #[tauri::command]
-pub async fn rename_profile(
-    app: AppHandle,
+pub async fn rename_profile<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     from: String,
     to: String,
@@ -275,8 +278,8 @@ pub async fn delete_profile_impl(scheduler: &Scheduler, name: String) -> Result<
 /// Delete a profile by name. Refuses to delete the only profile or
 /// the currently-active profile (the user must switch first).
 #[tauri::command]
-pub async fn delete_profile(
-    app: AppHandle,
+pub async fn delete_profile<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     name: String,
 ) -> Result<(), String> {
@@ -312,8 +315,8 @@ pub async fn reorder_profiles_impl(
 /// full list — the call rejects length mismatches, duplicates, and
 /// unknown names rather than try to merge.
 #[tauri::command]
-pub async fn reorder_profiles(
-    app: AppHandle,
+pub async fn reorder_profiles<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     names: Vec<String>,
 ) -> Result<(), String> {
@@ -354,8 +357,8 @@ pub async fn reset_profile_to_defaults_impl(
 /// the active profile, the in-memory settings are also reset so the
 /// renderer sees the change without a profile switch.
 #[tauri::command]
-pub async fn reset_profile_to_defaults(
-    app: AppHandle,
+pub async fn reset_profile_to_defaults<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     name: String,
 ) -> Result<(), String> {

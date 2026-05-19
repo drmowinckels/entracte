@@ -33,11 +33,7 @@ pub use commands::profiles::*;
 pub use commands::settings::*;
 pub use commands::stats::*;
 pub use pause::PauseState;
-#[cfg(test)]
-pub(crate) use screen_time::ScreenTimeState;
 pub use settings::Settings;
-#[cfg(test)]
-pub(crate) use timers::BreakTimers;
 // `MonitorPlacement` only has consumers inside `config::tests`; preserve the
 // pre-split flat path so the test doesn't have to know the new module layout.
 #[allow(unused_imports)]
@@ -50,7 +46,6 @@ pub use tray_countdown::{format_countdown, TrayCountdownSnapshot};
 pub use types::SuppressReason;
 pub use types::{BreakKind, LastBreakInfo};
 
-#[cfg(not(test))]
 use timers::BreakTimers;
 
 use pause::restore_pause_state;
@@ -187,6 +182,48 @@ impl Scheduler {
         tauri::async_runtime::spawn(async move {
             run_loop::run_loop(app, me).await;
         });
+    }
+
+    /// Sibling of `Scheduler::new` for the integration-test rig
+    /// (`test_support`). Builds a Scheduler with file paths anchored in
+    /// `dir`, *without* spawning the camera / video / run-loop side
+    /// threads. The logger thread is started so events still reach
+    /// `events_path`; the TempDir's drop reaps the directory.
+    ///
+    /// Colocated with `new` on purpose: adding a field to `Scheduler`
+    /// forces the compiler to touch both sites in the same review,
+    /// preventing the test stub from drifting out of sync with
+    /// production construction.
+    #[cfg(test)]
+    pub(crate) fn for_test(profiles: Vec<Profile>, active: &str, dir: &std::path::Path) -> Self {
+        let active_settings = profiles
+            .iter()
+            .find(|p| p.name == active)
+            .map(|p| p.settings.clone())
+            .unwrap_or_default();
+        let events_path = dir.join("events.jsonl");
+        Self {
+            settings: Arc::new(Mutex::new(active_settings)),
+            pause_state: Arc::new(Mutex::new(PauseState::Running)),
+            camera_active: Arc::new(AtomicBool::new(false)),
+            video_active: Arc::new(AtomicBool::new(false)),
+            auto_suppress_reason: Arc::new(AtomicU8::new(0)),
+            config_path: dir.join("settings.json"),
+            pause_path: dir.join("pause.json"),
+            events_path: events_path.clone(),
+            screen_time_path: dir.join("screen_time.json"),
+            timers: Arc::new(Mutex::new(BreakTimers::new())),
+            stats: Arc::new(Mutex::new(BreakStats::default())),
+            screen_time: Arc::new(Mutex::new(InternalScreenTimeState::from_snapshot(
+                crate::screen_time_store::ScreenTimeSnapshot::default(),
+                &local_today_string(),
+            ))),
+            current_break: Arc::new(std::sync::Mutex::new(None)),
+            logger: Logger::spawn(events_path),
+            profiles: Arc::new(Mutex::new(profiles)),
+            active_profile_name: Arc::new(Mutex::new(active.to_string())),
+            hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Build the on-disk shape (`{ profiles, active }`) by snapshotting

@@ -1,5 +1,5 @@
 use chrono::Local;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use user_idle::UserIdle;
 
 use crate::stats;
@@ -21,8 +21,8 @@ pub async fn get_break_stats(scheduler: tauri::State<'_, Scheduler>) -> Result<B
 /// The persistent event log under `events.jsonl` is untouched —
 /// `clear_event_log` does that.
 #[tauri::command]
-pub async fn reset_break_stats(
-    app: AppHandle,
+pub async fn reset_break_stats<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
 ) -> Result<(), String> {
     // Snapshot under the lock so a concurrent `BreakStart` increment
@@ -106,8 +106,8 @@ pub async fn get_screen_time(
 /// button on Insights). In-session counters are unaffected. Emits
 /// `stats:cleared` so the renderer can refresh.
 #[tauri::command]
-pub async fn clear_event_log(
-    app: AppHandle,
+pub async fn clear_event_log<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
 ) -> Result<(), String> {
     stats::clear_log(&scheduler.events_path, scheduler.logger.write_lock())
