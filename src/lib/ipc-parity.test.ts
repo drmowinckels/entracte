@@ -100,9 +100,29 @@ const PAIRS: Pair[] = [
     rust: { file: "stats.rs", struct: "SuppressionCount" },
   },
   {
+    name: "SuppressionByKind",
+    ts: { file: "views/settings/types.ts", type: "SuppressionByKind" },
+    rust: { file: "stats.rs", struct: "SuppressionByKind" },
+  },
+  {
     name: "DayBucket",
     ts: { file: "views/settings/types.ts", type: "DayBucket" },
     rust: { file: "stats.rs", struct: "DayBucket" },
+  },
+  {
+    name: "WeekdayBucket",
+    ts: { file: "views/settings/types.ts", type: "WeekdayBucket" },
+    rust: { file: "stats.rs", struct: "WeekdayBucket" },
+  },
+  {
+    name: "PreviousPeriod",
+    ts: { file: "views/settings/types.ts", type: "PreviousPeriod" },
+    rust: { file: "stats.rs", struct: "PreviousPeriod" },
+  },
+  {
+    name: "PostponeFollowThrough",
+    ts: { file: "views/settings/types.ts", type: "PostponeFollowThrough" },
+    rust: { file: "stats.rs", struct: "PostponeFollowThrough" },
   },
   {
     // Cosmetic name mismatch: TS calls it `StatsDigest`, Rust just `Digest`
