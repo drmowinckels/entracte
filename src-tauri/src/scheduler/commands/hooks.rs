@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use crate::hooks::Hook;
 
@@ -30,8 +30,8 @@ impl Drop for DialogBusyGuard {
 /// merged into both the in-memory settings and the active profile,
 /// then persisted to disk.
 #[tauri::command]
-pub async fn set_hooks(
-    app: AppHandle,
+pub async fn set_hooks<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
     hooks_enabled: bool,
     hooks: Vec<Hook>,
@@ -69,7 +69,11 @@ pub async fn set_hooks(
     Ok(())
 }
 
-async fn confirm_hooks_change(app: &AppHandle, enabled: bool, hooks: &[Hook]) -> bool {
+async fn confirm_hooks_change<R: Runtime>(
+    app: &AppHandle<R>,
+    enabled: bool,
+    hooks: &[Hook],
+) -> bool {
     use tauri_plugin_dialog::{
         DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
     };

@@ -184,6 +184,48 @@ impl Scheduler {
         });
     }
 
+    /// Sibling of `Scheduler::new` for the integration-test rig
+    /// (`test_support`). Builds a Scheduler with file paths anchored in
+    /// `dir`, *without* spawning the camera / video / run-loop side
+    /// threads. The logger thread is started so events still reach
+    /// `events_path`; the TempDir's drop reaps the directory.
+    ///
+    /// Colocated with `new` on purpose: adding a field to `Scheduler`
+    /// forces the compiler to touch both sites in the same review,
+    /// preventing the test stub from drifting out of sync with
+    /// production construction.
+    #[cfg(test)]
+    pub(crate) fn for_test(profiles: Vec<Profile>, active: &str, dir: &std::path::Path) -> Self {
+        let active_settings = profiles
+            .iter()
+            .find(|p| p.name == active)
+            .map(|p| p.settings.clone())
+            .unwrap_or_default();
+        let events_path = dir.join("events.jsonl");
+        Self {
+            settings: Arc::new(Mutex::new(active_settings)),
+            pause_state: Arc::new(Mutex::new(PauseState::Running)),
+            camera_active: Arc::new(AtomicBool::new(false)),
+            video_active: Arc::new(AtomicBool::new(false)),
+            auto_suppress_reason: Arc::new(AtomicU8::new(0)),
+            config_path: dir.join("settings.json"),
+            pause_path: dir.join("pause.json"),
+            events_path: events_path.clone(),
+            screen_time_path: dir.join("screen_time.json"),
+            timers: Arc::new(Mutex::new(BreakTimers::new())),
+            stats: Arc::new(Mutex::new(BreakStats::default())),
+            screen_time: Arc::new(Mutex::new(InternalScreenTimeState::from_snapshot(
+                crate::screen_time_store::ScreenTimeSnapshot::default(),
+                &local_today_string(),
+            ))),
+            current_break: Arc::new(std::sync::Mutex::new(None)),
+            logger: Logger::spawn(events_path),
+            profiles: Arc::new(Mutex::new(profiles)),
+            active_profile_name: Arc::new(Mutex::new(active.to_string())),
+            hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     /// Build the on-disk shape (`{ profiles, active }`) by snapshotting
     /// the in-memory profile list. Used by `persist_profiles`.
     pub async fn snapshot_profiles_file(&self) -> ProfilesFile {

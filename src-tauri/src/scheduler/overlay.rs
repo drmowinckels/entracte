@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 use super::settings::MonitorPlacement;
@@ -66,7 +66,11 @@ pub fn format_break_duration(secs: u64) -> String {
     }
 }
 
-pub(super) fn notify_break_now(app: &AppHandle, kind: BreakKind, duration_secs: u64) {
+pub(super) fn notify_break_now<R: Runtime>(
+    app: &AppHandle<R>,
+    kind: BreakKind,
+    duration_secs: u64,
+) {
     let title = match kind {
         BreakKind::Micro => "Micro break",
         BreakKind::Long => "Long break",
@@ -76,7 +80,7 @@ pub(super) fn notify_break_now(app: &AppHandle, kind: BreakKind, duration_secs: 
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
-fn ensure_overlay(app: &AppHandle, idx: usize) -> Option<tauri::WebviewWindow> {
+fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::WebviewWindow<R>> {
     let label = format!("overlay-{idx}");
     if let Some(w) = app.get_webview_window(&label) {
         return Some(w);
@@ -98,7 +102,10 @@ fn ensure_overlay(app: &AppHandle, idx: usize) -> Option<tauri::WebviewWindow> {
     .ok()
 }
 
-fn select_overlay_monitors(app: &AppHandle, placement: MonitorPlacement) -> Vec<tauri::Monitor> {
+fn select_overlay_monitors<R: Runtime>(
+    app: &AppHandle<R>,
+    placement: MonitorPlacement,
+) -> Vec<tauri::Monitor> {
     match placement {
         MonitorPlacement::All => app.available_monitors().unwrap_or_default(),
         MonitorPlacement::Primary => app
@@ -142,8 +149,8 @@ fn select_overlay_monitors(app: &AppHandle, placement: MonitorPlacement) -> Vec<
 /// for: a system notification or the overlay (full-screen or windowed).
 /// `Notification` delivery short-circuits the overlay path entirely.
 #[allow(clippy::too_many_arguments)]
-pub fn deliver_break(
-    app: &AppHandle,
+pub fn deliver_break<R: Runtime>(
+    app: &AppHandle<R>,
     current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
     delivery: BreakDelivery,
     kind: BreakKind,
@@ -180,8 +187,8 @@ pub fn deliver_break(
 /// the renderer. Used directly for sleep/resume-last paths; normal
 /// scheduled breaks go through `deliver_break` instead.
 #[allow(clippy::too_many_arguments)]
-pub fn fire_break(
-    app: &AppHandle,
+pub fn fire_break<R: Runtime>(
+    app: &AppHandle<R>,
     current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
     kind: BreakKind,
     duration_secs: u64,

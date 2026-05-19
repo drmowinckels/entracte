@@ -147,7 +147,13 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
   - `refactor/...` — code restructuring with no behaviour change
   - `docs/...` — docs / AGENTS.md / CONTRIBUTING.md / docstrings only
   - `chore/...` — CI, tooling, dependency bumps, repo housekeeping
-- **Tests are required on every PR that changes runtime behaviour.** Either add a test that fails before the change and passes after, or — if the change is genuinely untestable in isolation (a Tauri Builder rewire, a new OS-native syscall path with no mockable surface) — call out why in the PR body. Pure-docs and pure-chore PRs are exempt; everything else needs at least one new or updated test alongside the code.
+- **Tests ship with the code, in the same PR — no exceptions for "follow-up coverage."** Coverage has slipped in the past because tests were deferred and then never landed. The bar:
+  - **Every new function, method, branch, command wrapper, and event handler needs at least one test that exercises it.** Name the test in the PR body alongside the symbol it covers.
+  - **Modifying an existing function counts as new code** if it adds a branch, changes a return shape, or changes a side-effect. Add or update the matching test in the same PR.
+  - **The test fails before the change and passes after.** Prefer that pattern; it proves the test actually exercises the new path. Tests that pass against both versions of the code aren't covering the change.
+  - **"Untestable in isolation" is a specific claim, not an escape hatch.** Acceptable forms: "this rewires the `tauri::Builder` plugin list at startup," "this is a thin wrapper around `pmset -g assertions` with no logic to mock." Restructure the code so the testable core lives in an `*_impl` / pure-function helper before declaring something untestable.
+  - **Pure-docs and pure-chore PRs are exempt.** Everything else — `feat/`, `fix/`, `refactor/` — needs the tests.
+- **If you find yourself adding a `#[cfg(test)]` test fixture (e.g. `Scheduler::for_test`), the same PR must also include at least one test that uses it.** A fixture without a consumer is dead code.
 - **PR descriptions list verification steps, not a "Test plan" header.** Don't include unchecked test-plan checkboxes for a reviewer to walk through — that's CI's job. Use the body to record what you actually ran (`cargo test --lib`, `npm run audit:a11y`, manual UI walk on macOS), what changed at a high level, and any platforms you couldn't test on. If a reviewer needs to do something to validate the PR, name it directly ("please trigger a long break on Windows to confirm the resize lock") rather than dressing it up as a checklist.
 - Keep PRs focused — one logical change per PR. Multiple unrelated cleanups in one PR are harder to review and harder to revert.
 - Don't force-push to `main`. Force-pushing to your own feature branch during review is fine.
