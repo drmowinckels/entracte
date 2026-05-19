@@ -777,3 +777,262 @@ mod tests {
         assert_eq!(names, vec![DEFAULT_PROFILE_NAME.to_string(), "Work".into()]);
     }
 }
+
+// =====================================================================
+// Integration-test rig: drives the `#[tauri::command]` wrappers (now
+// generic over `R: Runtime`) end-to-end through `mock_app_with_scheduler`.
+// The impl-level tests above cover validation + state mutation; these
+// tests prove the wrappers thread the AppHandle through and emit
+// `profile:changed` so the renderer stays in sync after every mutation.
+// =====================================================================
+#[cfg(all(test, not(target_os = "windows")))]
+mod rig_smoke_tests {
+    use super::*;
+    use crate::config::DEFAULT_PROFILE_NAME;
+    use crate::test_support::{mock_app_with_scheduler, wrap_in_mock_app};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tauri::{Listener, Manager};
+
+    /// Wire a `profile:changed` listener that captures the payload (the
+    /// active profile name). Returns the captured slot — assert against
+    /// it after invoking the command.
+    fn listen_for_profile_changed(
+        app: &tauri::App<tauri::test::MockRuntime>,
+    ) -> Arc<std::sync::Mutex<Option<String>>> {
+        let captured: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+        let captured_handle = captured.clone();
+        app.listen("profile:changed", move |event| {
+            let name: String =
+                serde_json::from_str(event.payload()).expect("profile:changed payload is a string");
+            *captured_handle.lock().unwrap() = Some(name);
+        });
+        captured
+    }
+
+    fn two_rig_profiles() -> Vec<Profile> {
+        vec![
+            Profile {
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                settings: Settings::default(),
+            },
+            Profile {
+                name: "Work".to_string(),
+                settings: Settings {
+                    micro_interval_secs: 600,
+                    ..Settings::default()
+                },
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn create_profile_command_emits_profile_changed() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        create_profile(app.handle().clone(), state, "Focus".to_string())
+            .await
+            .expect("create_profile succeeds");
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some(DEFAULT_PROFILE_NAME),
+            "emit carries the active profile (unchanged by create)",
+        );
+        assert_eq!(sched.profiles.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn create_profile_command_propagates_validation_error() {
+        // Empty name → wrapper surfaces "profile name cannot be empty"
+        // and never emits.
+        let (_dir, app, _sched) = mock_app_with_scheduler(Settings::default());
+        let state = app.state::<Scheduler>();
+        let err = create_profile(app.handle().clone(), state, "  ".to_string())
+            .await
+            .expect_err("empty name rejected");
+        assert!(err.contains("cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_profile_command_emits_profile_changed() {
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        duplicate_profile(
+            app.handle().clone(),
+            state,
+            "Work".to_string(),
+            "Focus".to_string(),
+        )
+        .await
+        .expect("duplicate_profile succeeds");
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some(DEFAULT_PROFILE_NAME)
+        );
+        let names: Vec<String> = sched
+            .profiles
+            .lock()
+            .await
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        assert!(names.contains(&"Focus".to_string()));
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn rename_profile_command_emits_profile_changed_and_follows_active() {
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        rename_profile(
+            app.handle().clone(),
+            state,
+            DEFAULT_PROFILE_NAME.to_string(),
+            "Personal".to_string(),
+        )
+        .await
+        .expect("rename_profile succeeds");
+        // Active pointer follows the rename, so the emit must carry the
+        // new name.
+        assert_eq!(captured.lock().unwrap().as_deref(), Some("Personal"));
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn delete_profile_command_emits_profile_changed() {
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        delete_profile(app.handle().clone(), state, "Work".to_string())
+            .await
+            .expect("delete_profile succeeds");
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some(DEFAULT_PROFILE_NAME)
+        );
+        assert_eq!(sched.profiles.lock().await.len(), 1);
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn reorder_profiles_command_emits_profile_changed() {
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        reorder_profiles(
+            app.handle().clone(),
+            state,
+            vec!["Work".to_string(), DEFAULT_PROFILE_NAME.to_string()],
+        )
+        .await
+        .expect("reorder_profiles succeeds");
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some(DEFAULT_PROFILE_NAME)
+        );
+        let names: Vec<String> = sched
+            .profiles
+            .lock()
+            .await
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["Work".to_string(), DEFAULT_PROFILE_NAME.to_string()]
+        );
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn reset_profile_to_defaults_command_emits_profile_changed() {
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        reset_profile_to_defaults(app.handle().clone(), state, "Work".to_string())
+            .await
+            .expect("reset succeeds");
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some(DEFAULT_PROFILE_NAME)
+        );
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn set_active_profile_command_emits_profile_changed_with_new_active() {
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let captured = listen_for_profile_changed(&app);
+        let state = app.state::<Scheduler>();
+        set_active_profile(app.handle().clone(), state, "Work".to_string())
+            .await
+            .expect("set_active_profile succeeds");
+        assert_eq!(
+            captured.lock().unwrap().as_deref(),
+            Some("Work"),
+            "emit must carry the newly-active name",
+        );
+        assert_eq!(*sched.active_profile_name.lock().await, "Work");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn set_active_profile_command_no_emit_when_already_active() {
+        // The impl early-returns Ok(()) when the named profile is
+        // already active and skips the emit. The wrapper inherits that
+        // shape — a no-op switch must not fire `profile:changed`.
+        let (dir, sched) = crate::test_support::test_scheduler_with_profiles(
+            two_rig_profiles(),
+            DEFAULT_PROFILE_NAME,
+        );
+        let app = wrap_in_mock_app(sched.clone());
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            app.listen("profile:changed", move |_event| {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        let state = app.state::<Scheduler>();
+        set_active_profile(
+            app.handle().clone(),
+            state,
+            DEFAULT_PROFILE_NAME.to_string(),
+        )
+        .await
+        .expect("set_active_profile no-op succeeds");
+        assert_eq!(
+            fired.load(Ordering::SeqCst),
+            0,
+            "no emit on same-active no-op",
+        );
+        drop(dir);
+    }
+}

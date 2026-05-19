@@ -227,3 +227,86 @@ mod tests {
         }
     }
 }
+
+// =====================================================================
+// Integration-test rig: drives `reset_break_stats` and `clear_event_log`
+// (now generic over `R: Runtime`) end-to-end so the AppHandle-emit
+// branches are covered. The impl-level lock-ordering tests above stay
+// the canonical source for race-condition coverage; these only verify
+// the wrapper threads through and fires its event.
+// =====================================================================
+#[cfg(all(test, not(target_os = "windows")))]
+mod rig_smoke_tests {
+    use super::*;
+    use crate::scheduler::Settings;
+    use crate::test_support::mock_app_with_scheduler;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tauri::{Listener, Manager};
+
+    #[tokio::test]
+    async fn reset_break_stats_command_via_rig_emits_stats_changed() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        // Pre-populate so the reset is observable.
+        {
+            let mut s = sched.stats.lock().await;
+            s.taken = 3;
+            s.skipped = 2;
+        }
+
+        let captured: Arc<std::sync::Mutex<Option<serde_json::Value>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        {
+            let captured = captured.clone();
+            app.listen("stats:changed", move |event| {
+                let v: serde_json::Value =
+                    serde_json::from_str(event.payload()).expect("stats:changed payload is JSON");
+                *captured.lock().unwrap() = Some(v);
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        reset_break_stats(app.handle().clone(), state)
+            .await
+            .expect("reset_break_stats succeeds");
+
+        let emitted = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("stats:changed was emitted");
+        assert_eq!(emitted["taken"], 0, "emit ships post-reset taken");
+        assert_eq!(emitted["skipped"], 0, "emit ships post-reset skipped");
+        assert_eq!(emitted["postponed"], 0);
+        let live = sched.stats.lock().await;
+        assert_eq!(live.taken, 0);
+        assert_eq!(live.skipped, 0);
+    }
+
+    #[tokio::test]
+    async fn clear_event_log_command_via_rig_emits_stats_cleared() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        // Seed the log so clear has something to do (and verify the
+        // file is gone after).
+        std::fs::write(&sched.events_path, b"{\"type\":\"pause_start\"}\n").unwrap();
+
+        let fired = Arc::new(AtomicUsize::new(0));
+        {
+            let fired = fired.clone();
+            app.listen("stats:cleared", move |_event| {
+                fired.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        clear_event_log(app.handle().clone(), state)
+            .await
+            .expect("clear_event_log succeeds");
+
+        assert_eq!(fired.load(Ordering::SeqCst), 1, "stats:cleared fired once");
+        // The log file is gone (or empty) after clear — `read_all`
+        // tolerates both.
+        let leftovers = crate::stats::read_all(&sched.events_path);
+        assert!(leftovers.is_empty(), "event log emptied by clear");
+    }
+}

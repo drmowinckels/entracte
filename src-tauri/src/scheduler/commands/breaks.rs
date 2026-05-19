@@ -1267,6 +1267,132 @@ mod rig_smoke_tests {
     }
 
     #[tokio::test]
+    async fn postpone_break_command_via_rig_emits_break_end_and_last_break_changed() {
+        let settings = Settings {
+            postpone_enabled: true,
+            postpone_minutes: 5,
+            ..Settings::default()
+        };
+        let (_dir, app, sched) = mock_app_with_scheduler(settings);
+
+        let break_end = Arc::new(AtomicUsize::new(0));
+        let last_break_changed = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+        {
+            let break_end = break_end.clone();
+            app.listen("break:end", move |_event| {
+                break_end.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        {
+            let captured = last_break_changed.clone();
+            app.listen("last_break:changed", move |event| {
+                let v: serde_json::Value = serde_json::from_str(event.payload())
+                    .expect("last_break:changed payload is JSON");
+                *captured.lock().unwrap() = Some(v);
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        postpone_break(app.handle().clone(), state, BreakKind::Micro)
+            .await
+            .expect("postpone_break succeeds");
+
+        assert_eq!(break_end.load(Ordering::SeqCst), 1, "break:end fired once");
+        let payload = last_break_changed
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("last_break:changed was emitted");
+        assert_eq!(
+            payload["kind"], "micro",
+            "last_break:changed carries the postponed kind"
+        );
+        // …and the impl side-effect: postpone counter is now 1.
+        assert_eq!(sched.timers.lock().await.micro_postpone_count, 1);
+    }
+
+    #[tokio::test]
+    async fn postpone_break_command_propagates_impl_error() {
+        // strict_mode blocks postpone — the wrapper must propagate the
+        // Err, not swallow it. No emits happen on the error path.
+        let strict = Settings {
+            strict_mode: true,
+            postpone_enabled: true,
+            ..Settings::default()
+        };
+        let (_dir, app, _sched) = mock_app_with_scheduler(strict);
+        let state = app.state::<Scheduler>();
+        let err = postpone_break(app.handle().clone(), state, BreakKind::Micro)
+            .await
+            .expect_err("strict mode blocks postpone");
+        assert_eq!(err, "postpone disabled");
+    }
+
+    #[tokio::test]
+    async fn skip_next_break_command_via_rig_emits_stats_changed_and_last_break_changed() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+
+        let stats_changed = Arc::new(AtomicUsize::new(0));
+        let last_break_changed = Arc::new(AtomicUsize::new(0));
+        {
+            let stats_changed = stats_changed.clone();
+            app.listen("stats:changed", move |_event| {
+                stats_changed.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        {
+            let last_break_changed = last_break_changed.clone();
+            app.listen("last_break:changed", move |_event| {
+                last_break_changed.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+
+        let state = app.state::<Scheduler>();
+        skip_next_break(app.handle().clone(), state, BreakKind::Micro)
+            .await
+            .expect("skip_next_break succeeds");
+
+        assert_eq!(
+            stats_changed.load(Ordering::SeqCst),
+            1,
+            "stats:changed fired once"
+        );
+        assert_eq!(
+            last_break_changed.load(Ordering::SeqCst),
+            1,
+            "last_break:changed fired once"
+        );
+        assert_eq!(sched.stats.lock().await.skipped, 1);
+    }
+
+    #[tokio::test]
+    async fn skip_next_break_command_propagates_strict_mode_error() {
+        let strict = Settings {
+            strict_mode: true,
+            ..Settings::default()
+        };
+        let (_dir, app, _sched) = mock_app_with_scheduler(strict);
+        let state = app.state::<Scheduler>();
+        let err = skip_next_break(app.handle().clone(), state, BreakKind::Micro)
+            .await
+            .expect_err("strict mode blocks skip");
+        assert_eq!(err, "strict mode active");
+    }
+
+    #[tokio::test]
+    async fn resume_last_break_command_errors_when_nothing_to_resume() {
+        // `resume_last_break_impl` errors with "no break to resume" when
+        // the `last_skipped_or_postponed` slot is empty. The wrapper
+        // must surface that string verbatim.
+        let (_dir, app, _sched) = mock_app_with_scheduler(Settings::default());
+        let state = app.state::<Scheduler>();
+        let err = resume_last_break(app.handle().clone(), state)
+            .await
+            .expect_err("empty slot blocks resume");
+        assert_eq!(err, "no break to resume");
+    }
+
+    #[tokio::test]
     async fn end_break_command_classifies_dismissed_and_emits_stats_changed() {
         // Same rig path, different reason — proves the wrapper threads
         // the `reason` arg through to the impl AND that the
