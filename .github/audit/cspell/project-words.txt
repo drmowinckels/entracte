@@ -33,6 +33,9 @@ cargo-deny
 knip
 cspell
 lychee
+mermaid
+autonumber
+Sched
 size-limit
 Codecov
 codecov
