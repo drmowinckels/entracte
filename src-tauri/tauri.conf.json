@@ -45,6 +45,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/drmowinckels/entracte/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_ME_WITH_TAURI_UPDATER_PUBKEY"
+    }
   }
 }
