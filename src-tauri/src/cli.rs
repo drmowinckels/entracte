@@ -240,7 +240,7 @@ pub fn help_text() -> &'static str {
 
 pub fn log_path() -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
-    const BUNDLE: &str = "app.entracte";
+    const BUNDLE: &str = "io.drmowinckels.entracte";
     const FILE: &str = "entracte.log";
     #[cfg(target_os = "macos")]
     {
@@ -727,7 +727,10 @@ mod tests {
     fn log_path_uses_bundle_subdir() {
         let p = log_path().expect("log_path resolves on the test platform");
         let s = p.to_string_lossy();
-        assert!(s.contains("app.entracte"), "missing bundle id in {s}");
+        assert!(
+            s.contains("io.drmowinckels.entracte"),
+            "missing bundle id in {s}"
+        );
         assert!(s.ends_with("entracte.log"), "wrong filename in {s}");
     }
 }

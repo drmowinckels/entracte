@@ -91,9 +91,9 @@ Prints the entracte log file from disk and follows new entries as they're writte
 
 The log lives at:
 
-- macOS: `~/Library/Logs/app.entracte/entracte.log`
-- Linux: `$XDG_STATE_HOME/app.entracte/logs/entracte.log` (defaults to `~/.local/state/...`)
-- Windows: `%LOCALAPPDATA%\app.entracte\logs\entracte.log`
+- macOS: `~/Library/Logs/io.drmowinckels.entracte/entracte.log`
+- Linux: `$XDG_STATE_HOME/io.drmowinckels.entracte/logs/entracte.log` (defaults to `~/.local/state/...`)
+- Windows: `%LOCALAPPDATA%\io.drmowinckels.entracte\logs\entracte.log`
 
 ### `help`
 
@@ -123,7 +123,7 @@ Flags can be combined freely; profile is applied first, colour after. Unknown va
 The CLI uses two channels depending on the command:
 
 - **Action commands** (`pause`, `resume`, `trigger`, `skip`) ship to the running instance through the OS's single-instance channel. They're fire-and-forget — no return value. If no instance is running, the binary boots the tray app and the action is ignored.
-- **Query / mutation commands** (`status`, `profile`, `settings`) talk to the running app over a localhost-only TCP socket. The running app writes its port to `~/Library/Application Support/app.entracte/ipc-port` (or the platform equivalent) at startup; the CLI reads that file and connects. These commands require the app to be running and print their response to your terminal.
+- **Query / mutation commands** (`status`, `profile`, `settings`) talk to the running app over a localhost-only TCP socket. The running app writes its port to `~/Library/Application Support/io.drmowinckels.entracte/ipc-port` (or the platform equivalent) at startup; the CLI reads that file and connects. These commands require the app to be running and print their response to your terminal.
 - **Local commands** (`log`, `help`) never touch the running app and always print to the calling terminal.
 
 ## Tips

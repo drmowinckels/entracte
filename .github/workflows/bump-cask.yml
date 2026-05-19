@@ -1,0 +1,127 @@
+name: Bump Homebrew cask
+
+# Opens a same-repo PR bumping Casks/entracte.rb (version + both sha256
+# lines) whenever a new non-prerelease GitHub release is published.
+# Uses the default GITHUB_TOKEN — no PAT required because the cask
+# lives in this repo (users tap with `brew tap drmowinckels/entracte
+# https://github.com/drmowinckels/entracte`).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to bump from (e.g. v0.1.2)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-cask-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  bump-cask:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag and version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          else
+            tag="${{ inputs.tag }}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+
+      - name: Fetch SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ steps.meta.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "SHA256SUMS.txt"
+
+      - name: Extract DMG checksums
+        id: shas
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          arm_file="Entracte_${version}_aarch64.dmg"
+          intel_file="Entracte_${version}_x64.dmg"
+
+          arm=$(awk -v f="$arm_file"     '$2 == f { print $1 }' SHA256SUMS.txt)
+          intel=$(awk -v f="$intel_file" '$2 == f { print $1 }' SHA256SUMS.txt)
+
+          if [ -z "$arm" ] || [ -z "$intel" ]; then
+            echo "::error::missing DMG checksum(s) — looked for ${arm_file} and ${intel_file}"
+            echo "SHA256SUMS.txt contents:"
+            cat SHA256SUMS.txt
+            exit 1
+          fi
+
+          echo "arm=$arm" >> "$GITHUB_OUTPUT"
+          echo "intel=$intel" >> "$GITHUB_OUTPUT"
+
+      - name: Bump cask
+        run: |
+          cask=Casks/entracte.rb
+          version="${{ steps.meta.outputs.version }}"
+          arm="${{ steps.shas.outputs.arm }}"
+          intel="${{ steps.shas.outputs.intel }}"
+
+          sed -i -E "s/^(  version) \"[^\"]+\"/\1 \"${version}\"/" "$cask"
+          sed -i -E "s|^(  sha256 arm:[[:space:]]+\")[0-9a-f]{64}(\")|\1${arm}\2|" "$cask"
+          sed -i -E "s|^(         intel:[[:space:]]+\")[0-9a-f]{64}(\")|\1${intel}\2|" "$cask"
+
+          grep -q "version \"${version}\"" "$cask" \
+            || { echo "::error::version line not updated"; exit 1; }
+          grep -q "${arm}" "$cask" \
+            || { echo "::error::arm sha not updated"; exit 1; }
+          grep -q "${intel}" "$cask" \
+            || { echo "::error::intel sha not updated"; exit 1; }
+
+          grep -E '^(  version|  sha256|         intel:)' "$cask"
+
+      - name: Commit, push, open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          branch="bump-cask/${version}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet Casks/entracte.rb; then
+            echo "Cask already at ${version} — nothing to bump."
+            exit 0
+          fi
+
+          git checkout -b "$branch"
+          git add Casks/entracte.rb
+          git commit -m "Bump cask to ${version}"
+          git push --force-with-lease origin "$branch"
+
+          # Idempotent: reuse an open PR for this version if one exists.
+          if gh pr view "$branch" --json number --jq .number >/dev/null 2>&1; then
+            echo "PR for $branch already exists — branch updated in place."
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "Bump cask to ${version}" \
+              --body "Automated cask bump triggered by [\`${{ steps.meta.outputs.tag }}\`](https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.tag }}).
+
+          - version → \`${version}\`
+          - sha256 arm → \`${{ steps.shas.outputs.arm }}\`
+          - sha256 intel → \`${{ steps.shas.outputs.intel }}\`
+
+          Once merged, \`brew upgrade --cask entracte\` picks up the new version."
+          fi

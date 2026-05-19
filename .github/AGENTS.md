@@ -8,7 +8,7 @@ Cross-platform break reminder app named after the theatre interval between acts.
 - **Backend**: Rust + Tauri 2 + Tokio, lives in [src-tauri](../src-tauri/).
 - **Notable deps**: `chrono` (local time), `user-idle` (cross-platform idle), `tauri-plugin-notification`, `tauri-plugin-opener`. Windows-only: `winreg`, `windows-sys`.
 - **License**: Apache-2.0.
-- **Bundle id**: `app.entracte`. Lib crate: `entracte_lib`. (Previously `dev.mowinckel.entracte` — old installs keep their data dir under the old id until the user migrates it manually.)
+- **Bundle id**: `io.drmowinckels.entracte`. Lib crate: `entracte_lib`. (History: `dev.mowinckel.entracte` → `app.entracte` → `io.drmowinckels.entracte`, the last rename happened pre-v0.0.1 in preparation for Homebrew submission. Pre-rename dev installs keep their data dir under the old id until the user migrates it manually.)
 
 ## Layout
 
