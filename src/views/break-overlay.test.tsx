@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { announceBreak, dialogLabel, remainingAriaLabel } from "../lib/a11y";
 import { DEFAULT_OVERLAY_SETTINGS } from "./break-overlay/types";
+import type { AnnouncedKind } from "../lib/a11y";
 import type { BreakEvent } from "./break-overlay/types";
 
 type Handler = (event: { payload: unknown }) => void;
@@ -220,4 +222,64 @@ describe("BreakOverlay action handlers", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(invokeMock).toHaveBeenCalledWith("end_break", { reason: "dismissed" });
   });
+});
+
+describe("BreakOverlay ARIA contract", () => {
+  afterEach(() => {
+    listeners.clear();
+    currentBreak = null;
+  });
+
+  it("non-strict mode exposes a dialog and no alert region", async () => {
+    const { getByRole, queryByRole, getByLabelText } = await startBreak(false);
+    getByRole("dialog", { name: dialogLabel("micro") });
+    expect(queryByRole("alert")).toBeNull();
+    getByLabelText(remainingAriaLabel(sampleBreak.duration_secs));
+  });
+
+  it("strict mode exposes an assertive alert region and no dialog", async () => {
+    const { getByRole, queryByRole } = await startBreak(true, {
+      enforceable: true,
+      postpone_available: false,
+    });
+    expect(queryByRole("dialog")).toBeNull();
+    const alert = getByRole("alert");
+    expect(alert.textContent).toBe(
+      announceBreak("micro", sampleBreak.duration_secs),
+    );
+    expect(alert.getAttribute("aria-live")).toBe("assertive");
+  });
+
+  const kinds: ReadonlyArray<{
+    kind: AnnouncedKind;
+    duration: number;
+  }> = [
+    { kind: "micro", duration: 30 },
+    { kind: "long", duration: 300 },
+    { kind: "sleep", duration: 600 },
+  ];
+
+  it.each(kinds)(
+    "non-strict dialog name matches dialogLabel($kind)",
+    async ({ kind, duration }) => {
+      const { getByRole } = await startBreak(false, {
+        kind,
+        duration_secs: duration,
+      });
+      getByRole("dialog", { name: dialogLabel(kind) });
+    },
+  );
+
+  it.each(kinds)(
+    "strict alert text matches announceBreak($kind, $duration) exactly",
+    async ({ kind, duration }) => {
+      const { getByRole } = await startBreak(true, {
+        kind,
+        duration_secs: duration,
+        enforceable: true,
+        postpone_available: false,
+      });
+      expect(getByRole("alert").textContent).toBe(announceBreak(kind, duration));
+    },
+  );
 });
