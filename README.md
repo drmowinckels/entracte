@@ -67,6 +67,17 @@ Entracte keeps a local history of breaks taken, dismissed, and suppressed, with 
   <img src="docs/screenshots/stats-heatmap.png" alt="Stats charts: time-of-day distribution and 12-week heatmap" width="480" />
 </p>
 
+## Install
+
+**macOS** — via Homebrew (the cask lives in this repo, so tap from URL):
+
+```sh
+brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte
+brew install --cask drmowinckels/entracte/entracte
+```
+
+**Linux / Windows** — download the `.deb`, `.rpm`, `.AppImage`, `.msi`, or `.exe` from the [latest release](https://github.com/drmowinckels/entracte/releases/latest).
+
 ## Command line
 
 The same `entracte` binary doubles as a small CLI for scripting / hotkey wiring. Action commands forward to the running tray app:
@@ -158,6 +169,6 @@ Functional and usable day-to-day on macOS. Windows and Linux build and run; some
 
 Settings persist to a JSON file in the OS app-config dir:
 
-- **macOS** — `~/Library/Application Support/app.entracte/`
-- **Windows** — `%APPDATA%\app.entracte\`
-- **Linux** — `~/.config/app.entracte/`
+- **macOS** — `~/Library/Application Support/io.drmowinckels.entracte/`
+- **Windows** — `%APPDATA%\io.drmowinckels.entracte\`
+- **Linux** — `~/.config/io.drmowinckels.entracte/`

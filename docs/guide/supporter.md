@@ -42,9 +42,9 @@ The key is bound to the machine you activate it on. You can remove it from one m
 
 Activation calls the license API and stores a small `supporter.json` in Entracte's app-data directory:
 
-- **macOS** — `~/Library/Application Support/app.entracte/supporter.json`
-- **Windows** — `%APPDATA%\app.entracte\supporter.json`
-- **Linux** — `~/.config/app.entracte/supporter.json`
+- **macOS** — `~/Library/Application Support/io.drmowinckels.entracte/supporter.json`
+- **Windows** — `%APPDATA%\io.drmowinckels.entracte\supporter.json`
+- **Linux** — `~/.config/io.drmowinckels.entracte/supporter.json`
 
 It's deliberately _not_ in `settings.json` — that file is often synced through dotfile managers, and a supporter key is machine-bound by design.
 

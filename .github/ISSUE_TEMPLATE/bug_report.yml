@@ -70,9 +70,9 @@ body:
 
         Entracte writes to `entracte.log` in the OS-standard app log directory:
 
-        - **macOS**: `~/Library/Logs/app.entracte/entracte.log`
-        - **Linux**: `~/.local/share/app.entracte/logs/entracte.log` (XDG, may vary)
-        - **Windows**: `%LOCALAPPDATA%\app.entracte\logs\entracte.log`
+        - **macOS**: `~/Library/Logs/io.drmowinckels.entracte/entracte.log`
+        - **Linux**: `~/.local/share/io.drmowinckels.entracte/logs/entracte.log` (XDG, may vary)
+        - **Windows**: `%LOCALAPPDATA%\io.drmowinckels.entracte\logs\entracte.log`
 
         The last few rotated files (`entracte.log.1`, `.2`, …) live in the same directory if the bug pre-dates the most recent restart.
 

@@ -26,7 +26,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev rpm
 
       - uses: actions/setup-node@v6
         with:
@@ -53,8 +53,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
           tagName: ${{ github.ref_name }}
@@ -127,3 +125,83 @@ jobs:
           draft: true
           tag_name: ${{ github.ref_name }}
           files: signed/*
+
+  # Aggregate SHA256 checksums for every artifact on the draft release into
+  # SHA256SUMS.txt (uploaded as an asset) and a markdown table appended to
+  # the release body. The table sits between HTML markers so re-runs replace
+  # the section instead of stacking duplicates. Needed by the Homebrew cask
+  # bump and any other downstream packagers that pin by sha256.
+  checksums:
+    needs: [build-unix, sign-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p assets
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --dir assets \
+            --pattern '*'
+
+      - name: Compute SHA256SUMS.txt
+        run: |
+          cd assets
+          # Checksum every artifact except updater signatures and any
+          # pre-existing checksum files from a prior re-run.
+          mapfile -t files < <(ls -1 | grep -vE '\.(sig|sha256)$|^SHA256SUMS')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no artifacts found on draft release"
+            exit 1
+          fi
+          shasum -a 256 "${files[@]}" | tee ../SHA256SUMS.txt
+
+      - name: Upload SHA256SUMS.txt as a release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" SHA256SUMS.txt \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+      - name: Splice checksum table into release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          START='<!-- checksums:start -->'
+          END='<!-- checksums:end -->'
+
+          {
+            echo "## Checksums"
+            echo ""
+            echo "| File | SHA256 |"
+            echo "| --- | --- |"
+            while read -r sum file; do
+              echo "| \`${file}\` | \`${sum}\` |"
+            done < SHA256SUMS.txt
+          } > checksums.md
+
+          gh release view "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --json body --jq '.body // ""' > current.md
+
+          # Strip any previous checksums block (markers + content between them).
+          awk -v s="$START" -v e="$END" '
+            $0 == s { skip = 1; next }
+            $0 == e { skip = 0; next }
+            !skip   { print }
+          ' current.md > stripped.md
+
+          {
+            cat stripped.md
+            printf '\n%s\n' "$START"
+            cat checksums.md
+            printf '%s\n' "$END"
+          } > combined.md
+
+          gh release edit "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --notes-file combined.md

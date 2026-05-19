@@ -347,7 +347,7 @@ pub fn call(req: &IpcRequest, data_dir: &Path) -> Result<IpcResponse, String> {
 }
 
 pub fn ipc_data_dir() -> Option<PathBuf> {
-    const BUNDLE: &str = "app.entracte";
+    const BUNDLE: &str = "io.drmowinckels.entracte";
     #[cfg(target_os = "macos")]
     {
         std::env::var_os("HOME").map(|h| {
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn ipc_data_dir_contains_bundle_id() {
         let d = ipc_data_dir().expect("resolves on test platform");
-        assert!(d.to_string_lossy().contains("app.entracte"));
+        assert!(d.to_string_lossy().contains("io.drmowinckels.entracte"));
     }
 
     #[test]
