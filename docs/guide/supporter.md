@@ -6,6 +6,13 @@ The supporter pack itself is wired end-to-end in the app, but the storefront inf
 In the meantime the pack ships as source-only: every gated feature is in the codebase and unlocks for anyone running a build with a valid record, but there's no way to buy a key yet. Nothing in the free experience is affected.
 :::
 
+<div style="text-align: center; margin: 2rem 0 1rem;">
+  <video controls preload="metadata" poster="/videos/entracte_supporter_poster.jpg" playsinline style="display: block; margin: 0 auto; max-width: 960px; width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" aria-label="90-second tour of the supporter pack — custom themes, custom colour, editable break hints, custom CSS, custom sounds, and the license-removal flow.">
+    <source src="/videos/entracte_supporter.mp4" type="video/mp4" />
+    Your browser doesn't support inline video — <a href="/videos/entracte_supporter.mp4">download the clip</a> instead.
+  </video>
+</div>
+
 Entracte is free and open source under Apache 2.0. If you'd like to support development, the supporter pack unlocks a few personalisation extras and helps keep the project moving.
 
 It's intentionally light: nothing core depends on it. Every scheduling, suppression, profile, hooks, stats, accessibility, and CLI feature stays available to everyone, regardless of whether you have a supporter key.
