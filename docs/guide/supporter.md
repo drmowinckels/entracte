@@ -12,13 +12,15 @@ It's intentionally light: nothing core depends on it. Every scheduling, suppress
 
 ## What's in it
 
-- **Custom overlay colour** — pick any hex or use the colour picker, on top of the built-in themes.
-- **Theme rotation** — the `Rotate` option shuffles between your preset palettes break to break.
-- **Editable break hints** — customise the prompts shown during a break, or rotate your own list.
-- **Custom sounds** — point each break kind at your own audio file (end-chime or looping ambient).
-- **Custom CSS** — freeform stylesheet injected into the settings window and the break overlay for full visual customisation.
+| Tab                  | Setting             | What it unlocks                                                                                                                                     |
+| -------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Breaks → Overlay     | **Theme = Custom…** | Pick any colour via hex input or the native colour picker (with synchronised controls and an auto-darken cap so the overlay still dims the screen). |
+| Breaks → Overlay     | **Theme = Rotate**  | A different preset per break, never the same one twice in a row.                                                                                    |
+| Breaks → Break ideas | **Edit hint pools** | Add / remove / rewrite the prompts shown during a break. Mix selectors and rotation cadence remain free.                                            |
+| Breaks → Custom CSS  | **Stylesheet**      | Freeform CSS injected into the settings window and the break overlay for full visual customisation.                                                 |
+| Schedule → Sound     | **Custom file…**    | Point each break kind at your own audio file (end-chime or looping ambient).                                                                        |
 
-The defaults remain available even after your key expires, so you'll never lose access to a break you've configured — only the ability to edit personalisation while the key is inactive.
+Nothing in the scheduling, suppression, profile, hooks, stats, accessibility, or CLI surface is gated; the defaults remain usable forever. If your key later goes inactive you'll never lose access to a break you've configured — only the ability to edit personalisation while the key is inactive.
 
 ## How to get one
 
