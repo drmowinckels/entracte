@@ -9,10 +9,10 @@
 //! away — so the scheduler layers this check on top of HID idle.
 //!
 //! Each backend returns `Option<bool>`:
-//!   - `Some(true)`  — confidently locked
-//!   - `Some(false)` — confidently unlocked
-//!   - `None`        — couldn't determine (no GUI session, API
-//!                     unavailable, helper binary missing)
+//! - `Some(true)` — confidently locked
+//! - `Some(false)` — confidently unlocked
+//! - `None` — couldn't determine (no GUI session, API unavailable,
+//!   helper binary missing)
 //!
 //! Callers treat `None` as "trust HID idle alone"; the scheduler only
 //! promotes idleness when we get a definitive `Some(true)`.
