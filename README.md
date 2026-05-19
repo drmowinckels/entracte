@@ -94,6 +94,46 @@ A **Supporter pack** is in the works as a way to back development — personalis
 - Rust + [Tauri 2](https://tauri.app) + Tokio backend.
 - Per-OS native hooks for Do Not Disturb, camera-in-use, and idle detection.
 
+## Architecture
+
+The scheduler is the brain: a Tokio tick loop in [src-tauri/src/scheduler/](src-tauri/src/scheduler/) that consults native hooks, applies pause/suppress rules, and decides when (and how) to surface a break. The tray, CLI, and settings UI all push into the same scheduler; the overlay and stats are downstream of its decisions.
+
+```mermaid
+flowchart LR
+    subgraph UI["User surface"]
+        Tray["Tray icon + menu"]
+        CLI["entracte CLI"]
+        SettingsUI["Settings UI<br/>(React)"]
+        Overlay["Break overlay<br/>(React)"]
+        SysNotification["System notification"]
+    end
+
+    subgraph Backend["Rust / Tauri backend"]
+        IPC["ipc.rs<br/>CLI ↔ app bridge"]
+        Scheduler["scheduler/<br/>tick loop"]
+        Hooks["Native hooks<br/>DnD · camera · idle · session lock"]
+    end
+
+    subgraph Stores["On-disk state"]
+        Config[("config.json<br/>profiles + settings")]
+        Stats[("stats.json<br/>break history")]
+        Pause[("pause state")]
+    end
+
+    CLI -->|subcommands| IPC
+    Tray -->|menu actions| Scheduler
+    IPC --> Scheduler
+    SettingsUI <-->|tauri invoke| Scheduler
+    Hooks -->|suppress signals| Scheduler
+    Scheduler -->|fires break| Overlay
+    Scheduler -->|notify-only mode| SysNotification
+    Scheduler <--> Config
+    Scheduler --> Stats
+    Scheduler <--> Pause
+```
+
+Platform support matrix, scheduler internals, and OS-specific quirks are documented in [.github/AGENTS.md](.github/AGENTS.md).
+
 ## Development
 
 ```sh
