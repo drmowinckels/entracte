@@ -42,6 +42,7 @@ notarization
 codesigned
 SignPath
 signpath
+NSIS
 TEAMID
 Bootswatch
 proscenium
