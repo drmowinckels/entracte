@@ -1,5 +1,7 @@
 # Contributing
 
+The fastest path from `git clone` to a passing PR: install the prerequisites below, run `npm run tauri dev` to confirm the app builds, then read [Architecture internals](./architecture-internals) for the module map and the 1Hz run-loop walkthrough. When you're ready to make a change, the patterns lower on this page — adding a Tauri command, adding a setting, adding a suppression guard — are the seams the codebase is built around.
+
 ## Layout
 
 - `src-tauri/` — the Rust backend (Tauri 2 + Tokio).
@@ -42,12 +44,13 @@ npm run audit:a11y
 CI enforces all four. Run them locally before pushing:
 
 ```sh
-cargo fmt   --manifest-path src-tauri/Cargo.toml --check
+cargo fmt    --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --manifest-path src-tauri/Cargo.toml --no-deps
 npx tsc --noEmit
 ```
 
-The cargo step also runs `cargo doc --no-deps` with `-D warnings` so broken intra-doc links fail the build.
+The `cargo doc` step rejects broken intra-doc links — a renamed module that's still referenced from a `[link]` somewhere will fail the build, even when nothing else has drifted.
 
 ## Branch / PR workflow
 
@@ -61,28 +64,26 @@ The cargo step also runs `cargo doc --no-deps` with `-D warnings` so broken intr
 Every IPC entry-point is a `#[tauri::command]` somewhere under `src-tauri/src/scheduler/commands/`. The pattern:
 
 1. Add the function to the right submodule (`settings.rs`, `breaks.rs`, `profiles.rs`, etc.).
-2. Add a `///` doc comment — at minimum: what it does, what events it emits, what errors it returns.
-3. Register it in `lib.rs` inside the `tauri::generate_handler![...]` macro.
-4. If the renderer needs to call it, add a wrapper in the relevant `views/settings/hooks/use-*.ts` so the call stays out of components.
+2. Add a `///` doc comment — at minimum: what it does, what events it emits, what errors it returns. This is what surfaces in the generated [Rust API reference](./rust-api), and CI fails the build if intra-doc links break.
+3. Register it in `lib.rs` inside the `tauri::generate_handler![...]` macro. Tauri's capability layer authorises commands per-name; a function tagged `#[tauri::command]` that's not in the macro is silently unreachable from the renderer.
+4. If the renderer needs to call it, add a wrapper in the relevant `views/settings/hooks/use-*.ts` so the call stays out of components. The hooks layer is where shape drift gets caught — the `invoke` boundary itself is untyped (see [#13](https://github.com/drmowinckels/entracte/issues/13)).
 
 See the [IPC contract](./ipc) for the existing surface.
 
 ## Adding a setting
 
-1. Add the field to the Rust `Settings` struct in `src-tauri/src/scheduler/settings.rs`, with a sensible default in the `Default` impl.
-2. Add the matching field to the TS `SchedulerSettings` type in `src/views/settings/types.ts`.
+1. Add the field to the Rust `Settings` struct in `src-tauri/src/scheduler/settings.rs`, with a sensible default in the `Default` impl. The default is what older installs get when their `settings.json` lacks the field — the `#[serde(default)]` and `#[serde(alias = ...)]` pattern in the same file is how settings migrate forward without a schema version bump.
+2. Add the matching field to the TS `SchedulerSettings` type in `src/views/settings/types.ts`. The two types are mirrored by hand — no parity test yet ([#13](https://github.com/drmowinckels/entracte/issues/13)) — so skipping this step turns into a renderer runtime crash, not a compile error.
 3. Render a control on the relevant tab under `src/views/settings/tabs/`.
-4. If you're adding a new field that the scheduler should react to, wire it into `run_loop.rs` and add a test.
-
-The serde defaults make missing fields harmless on older `settings.json` files, but the TS type drift is not enforced by anything yet (see [#13](https://github.com/drmowinckels/entracte/issues/13) for the parity-test idea).
+4. If the scheduler should react to the field at runtime, wire it into `run_loop.rs` and add a test. Settings that only affect rendering (overlay theme, hints, etc.) don't need this step — the run-loop only reads the fields it cares about each tick.
 
 ## Adding a break suppression / guard
 
 The 1Hz loop in `src-tauri/src/scheduler/run_loop.rs` consults each guard in order. To add one:
 
-1. Add the detection module (e.g. `dnd.rs`, `camera.rs`, `video.rs`) or extend an existing one.
-2. Add the `GuardReason` variant in `src-tauri/src/stats.rs`.
-3. Hook the check into `run_loop` before the fire-decision; if active, reset the per-kind timers, log via `log_suppressions`, and `continue`.
+1. Add the detection module (e.g. `dnd.rs`, `camera.rs`, `video.rs`) or extend an existing one. Per-OS branches live inside the module; the public surface is a single boolean check the run-loop can call cheaply on every tick.
+2. Add the `GuardReason` variant in `src-tauri/src/stats.rs`. This is what shows up in the Insights tab's "Breaks suppressed by" breakdown — without a variant, the suppression is invisible to the user even though the break didn't fire.
+3. Hook the check into `run_loop` before the fire-decision; if active, reset the per-kind timers, log via `log_suppressions`, and `continue`. Order matters — earlier guards in the chain win when several would trigger on the same tick, so place the new guard wherever the precedence ought to fall.
 4. Add a setting that gates it (see "Adding a setting" above) and surface it on the Quiet tab.
 
 ## Filing issues

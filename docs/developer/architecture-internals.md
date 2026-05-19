@@ -1,6 +1,6 @@
 # Architecture internals
 
-The user-facing [Architecture overview](../architecture/) covers the shape from outside; this page is what you'd want before editing the code.
+The 1Hz async loop in [`scheduler::run_loop`](#the-1hz-run-loop) is the heart of Entracte: every second it walks a fixed decision tree — paused, bedtime, suppressed, overdue, fire — and the rest of the code exists to feed it state or react to its events. This page maps the modules that surround it, the on-disk state it persists, the concurrency rules every command obeys, and the events the renderer subscribes to. The user-facing [Architecture overview](../architecture/) covers the shape from outside; this page is what you'd want before editing the code.
 
 ## Module map
 
