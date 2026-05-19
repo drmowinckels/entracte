@@ -85,8 +85,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // session as locked, promote `idle_secs` past both thresholds
         // so the screen-time, suppression, and typing-defer paths
         // below all treat the user as idle.
-        let idle_secs =
-            promote_idle_for_lock(raw_idle_secs, session_lock::screen_locked(), &s);
+        let idle_secs = promote_idle_for_lock(raw_idle_secs, session_lock::screen_locked(), &s);
         let is_active = idle_secs < s.micro_idle_reset_secs;
         let today_str = local_today_string();
         let budget_secs = s.daily_screen_time_budget_minutes.saturating_mul(60);
@@ -668,11 +667,7 @@ static LOCK_STATE_LAST_LOCKED: AtomicBool = AtomicBool::new(false);
 /// thresholds so every downstream check (screen-time, suppression,
 /// typing-defer) treats the user as idle. `None` (couldn't determine
 /// lock state) leaves `raw_idle_secs` untouched — trust HID alone.
-pub(super) fn idle_secs_with_lock(
-    raw_idle_secs: u64,
-    locked: Option<bool>,
-    s: &Settings,
-) -> u64 {
+pub(super) fn idle_secs_with_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
     if matches!(locked, Some(true)) {
         raw_idle_secs
             .max(s.micro_idle_reset_secs)

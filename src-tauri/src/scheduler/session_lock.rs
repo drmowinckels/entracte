@@ -45,8 +45,7 @@ mod inner {
             if raw.is_null() {
                 return None;
             }
-            let dict: CFDictionary<CFString, CFType> =
-                CFDictionary::wrap_under_create_rule(raw);
+            let dict: CFDictionary<CFString, CFType> = CFDictionary::wrap_under_create_rule(raw);
             let key = CFString::from_static_string("CGSSessionScreenIsLocked");
             // Apple populates the key with `kCFBooleanTrue` while the
             // screen is locked. The key may be absent on a clean
@@ -78,8 +77,7 @@ mod inner {
 #[cfg(target_os = "windows")]
 mod inner {
     use windows_sys::Win32::System::StationsAndDesktops::{
-        CloseDesktop, GetUserObjectInformationW, OpenInputDesktop,
-        DESKTOP_READOBJECTS, UOI_NAME,
+        CloseDesktop, GetUserObjectInformationW, OpenInputDesktop, DESKTOP_READOBJECTS, UOI_NAME,
     };
 
     pub fn screen_locked() -> Option<bool> {
