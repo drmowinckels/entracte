@@ -123,10 +123,10 @@ The overlay tries to be friendly to a range of needs.
 ## Supporter pack
 
 ::: warning Coming soon — work in progress
-Purchase and license activation are temporarily hidden in **About → Supporter** while the Lemon Squeezy store is under review (~10 days). All the gated features below are in the codebase; only the storefront is missing. See the [Supporter pack page](./supporter) for the full status.
+Purchase and license activation are temporarily hidden in **About → Supporter** while we set up the storefront infrastructure. All the gated features below are in the codebase; only the storefront is missing. See the [Supporter pack page](./supporter) for the full status.
 :::
 
-Entracte is free and open source. A small set of personalisation extras is gated behind the supporter pack — a one-time Lemon Squeezy purchase that funds continued development. Nothing in the scheduling, suppression, profile, hooks, stats, accessibility, or CLI surface is gated; the defaults remain usable forever.
+Entracte is free and open source. A small set of personalisation extras will be gated behind the supporter pack — a one-time purchase that funds continued development, once the infrastructure is in place. Nothing in the scheduling, suppression, profile, hooks, stats, accessibility, or CLI surface is gated; the defaults remain usable forever.
 
 | Tab                  | Setting             | What it unlocks                                                                                                                                     |
 | -------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -136,4 +136,4 @@ Entracte is free and open source. A small set of personalisation extras is gated
 | Breaks → Custom CSS  | **Stylesheet**      | Freeform CSS injected into the settings window and the break overlay for full visual customisation.                                                 |
 | Schedule → Sound     | **Custom file…**    | Point each break kind at your own audio file (end-chime or looping ambient).                                                                        |
 
-Activation lives in **About → Supporter** in Preferences. The key is machine-bound, validated against Lemon Squeezy once a day, and tolerates 30 days offline before it re-locks. See [Supporter pack](./supporter) for the full purchase, activation, and on-disk-storage details.
+Activation lives in **About → Supporter** in Preferences. The key is machine-bound, revalidated once a day, and tolerates 30 days offline before it re-locks. See [Supporter pack](./supporter) for the full purchase, activation, and on-disk-storage details.

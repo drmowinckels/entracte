@@ -1,7 +1,7 @@
 # Supporter pack
 
 ::: warning Coming soon — work in progress
-The supporter pack itself is wired end-to-end in the app, but the [Lemon Squeezy](https://lemonsqueezy.com/) storefront is still under review. **Purchase and license activation are temporarily hidden** in the **About → Supporter** tab while we wait for approval — expected within ~10 days from this note.
+The supporter pack itself is wired end-to-end in the app, but the storefront infrastructure is still being set up. **Purchase and license activation are temporarily hidden** in the **About → Supporter** tab while we get the payment flow in place.
 
 In the meantime the pack ships as source-only: every gated feature is in the codebase and unlocks for anyone running a build with a valid record, but there's no way to buy a key yet. Nothing in the free experience is affected.
 :::
@@ -23,15 +23,15 @@ The defaults remain available even after your key expires, so you'll never lose 
 ## How to get one
 
 1. Open Entracte → tray menu → **About** → **Supporter** → **Become a supporter →**.
-2. Pay through Lemon Squeezy. They're the merchant of record, so they handle VAT and sales tax wherever you are.
-3. The receipt email contains your license key.
+2. Complete checkout through the payment partner. They'll act as merchant of record, handling VAT and sales tax wherever you are.
+3. The receipt email will contain your license key.
 4. Back in **About → Supporter**, paste the key and click **Verify**.
 
 The key is bound to the machine you activate it on. You can remove it from one machine and activate it on another at any time.
 
 ## How the key is stored and validated
 
-Activation calls the [Lemon Squeezy License API](https://docs.lemonsqueezy.com/api/license-keys) and stores a small `supporter.json` in Entracte's app-data directory:
+Activation calls the license API and stores a small `supporter.json` in Entracte's app-data directory:
 
 - **macOS** — `~/Library/Application Support/app.entracte/supporter.json`
 - **Windows** — `%APPDATA%\app.entracte\supporter.json`
