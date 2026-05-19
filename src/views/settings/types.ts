@@ -133,10 +133,38 @@ type SuppressionCount = {
   count: number;
 };
 
+export type SuppressionByKind = {
+  kind: string;
+  reason: string;
+  label: string;
+  count: number;
+};
+
 export type DayBucket = {
   date: string;
   taken: number;
   dismissed: number;
+};
+
+export type WeekdayBucket = {
+  weekday: number;
+  taken: number;
+  dismissed: number;
+};
+
+export type PreviousPeriod = {
+  breaks_taken: number;
+  breaks_dismissed: number;
+  postponed_total: number;
+  skipped_total: number;
+};
+
+export type PostponeFollowThrough = {
+  total: number;
+  taken: number;
+  dismissed: number;
+  skipped: number;
+  unresolved: number;
 };
 
 export type StatsDigest = {
@@ -151,10 +179,14 @@ export type StatsDigest = {
   postponed_total: number;
   skipped_total: number;
   suppressions: SuppressionCount[];
+  suppressions_by_kind: SuppressionByKind[];
   pause_total_secs: number;
   pause_count: number;
   by_hour: number[];
   by_day: DayBucket[];
+  by_weekday: WeekdayBucket[];
+  previous: PreviousPeriod;
+  postpone_follow_through: PostponeFollowThrough;
 };
 
 export type StatsRange = "week" | "month";

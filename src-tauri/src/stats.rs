@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Local, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Timelike, Utc, Weekday};
 use log::error;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -176,10 +176,42 @@ pub struct SuppressionCount {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SuppressionByKind {
+    pub kind: String,
+    pub reason: String,
+    pub label: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DayBucket {
     pub date: String,
     pub taken: u32,
     pub dismissed: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WeekdayBucket {
+    pub weekday: u8,
+    pub taken: u32,
+    pub dismissed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct PreviousPeriod {
+    pub breaks_taken: u32,
+    pub breaks_dismissed: u32,
+    pub postponed_total: u32,
+    pub skipped_total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct PostponeFollowThrough {
+    pub total: u32,
+    pub taken: u32,
+    pub dismissed: u32,
+    pub skipped: u32,
+    pub unresolved: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -195,10 +227,18 @@ pub struct Digest {
     pub postponed_total: u32,
     pub skipped_total: u32,
     pub suppressions: Vec<SuppressionCount>,
+    pub suppressions_by_kind: Vec<SuppressionByKind>,
     pub pause_total_secs: u64,
     pub pause_count: u32,
     pub by_hour: Vec<u32>,
     pub by_day: Vec<DayBucket>,
+    pub by_weekday: Vec<WeekdayBucket>,
+    pub previous: PreviousPeriod,
+    pub postpone_follow_through: PostponeFollowThrough,
+}
+
+fn weekday_index(d: Weekday) -> u8 {
+    d.num_days_from_monday() as u8
 }
 
 pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>) -> Digest {
@@ -207,6 +247,7 @@ pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>)
         _ => 7,
     };
     let range_start = now - Duration::days(days_back);
+    let prev_range_start = now - Duration::days(days_back * 2);
 
     let mut micro_taken = 0u32;
     let mut micro_dismissed = 0u32;
@@ -218,12 +259,35 @@ pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>)
     let mut pause_total_secs: u64 = 0;
     let mut pause_count = 0u32;
     let mut by_hour = vec![0u32; 24];
+    let mut by_weekday_taken = [0u32; 7];
+    let mut by_weekday_dismissed = [0u32; 7];
     let mut sup_map: HashMap<GuardReason, u32> = HashMap::new();
+    let mut sup_kind_map: HashMap<(BreakKind, GuardReason), u32> = HashMap::new();
+    let mut previous = PreviousPeriod::default();
     let mut open_pause: Option<DateTime<Utc>> = None;
 
     for e in events {
         let local = e.t.with_timezone(&Local);
-        if local < range_start || local > now {
+        let in_range = local >= range_start && local <= now;
+        let in_prev = local >= prev_range_start && local < range_start;
+        if !in_range && !in_prev {
+            continue;
+        }
+        if in_prev {
+            match &e.event {
+                EventPayload::BreakEnd { kind, outcome } => match (*kind, *outcome) {
+                    (BreakKind::Micro | BreakKind::Long, Outcome::Completed) => {
+                        previous.breaks_taken += 1
+                    }
+                    (BreakKind::Micro | BreakKind::Long, Outcome::Dismissed) => {
+                        previous.breaks_dismissed += 1
+                    }
+                    (BreakKind::Sleep, _) => {}
+                },
+                EventPayload::BreakPostponed { .. } => previous.postponed_total += 1,
+                EventPayload::BreakSkipped { .. } => previous.skipped_total += 1,
+                _ => {}
+            }
             continue;
         }
         match &e.event {
@@ -235,16 +299,25 @@ pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>)
                     (BreakKind::Long, Outcome::Dismissed) => long_dismissed += 1,
                     (BreakKind::Sleep, _) => sleep_shown += 1,
                 }
-                if matches!(outcome, Outcome::Completed) {
-                    let h = local.hour() as usize;
-                    by_hour[h] += 1;
+                let wd = weekday_index(local.weekday()) as usize;
+                match (*kind, *outcome) {
+                    (BreakKind::Micro | BreakKind::Long, Outcome::Completed) => {
+                        by_weekday_taken[wd] += 1;
+                        let h = local.hour() as usize;
+                        by_hour[h] += 1;
+                    }
+                    (BreakKind::Micro | BreakKind::Long, Outcome::Dismissed) => {
+                        by_weekday_dismissed[wd] += 1;
+                    }
+                    (BreakKind::Sleep, _) => {}
                 }
             }
             EventPayload::BreakPostponed { .. } => postponed_total += 1,
             EventPayload::BreakSkipped { .. } => skipped_total += 1,
             EventPayload::BreakResumed { .. } => {}
-            EventPayload::GuardSuppress { reason, .. } => {
+            EventPayload::GuardSuppress { kind, reason } => {
                 *sup_map.entry(*reason).or_insert(0) += 1;
+                *sup_kind_map.entry((*kind, *reason)).or_insert(0) += 1;
             }
             EventPayload::PauseStart { .. } => {
                 open_pause = Some(e.t);
@@ -269,6 +342,32 @@ pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>)
         })
         .collect();
     suppressions.sort_by_key(|s| std::cmp::Reverse(s.count));
+
+    let mut suppressions_by_kind: Vec<SuppressionByKind> = sup_kind_map
+        .into_iter()
+        .map(|((kind, reason), count)| SuppressionByKind {
+            kind: kind_str(kind).to_string(),
+            reason: format!("{reason:?}").to_lowercase(),
+            label: reason.label().to_string(),
+            count,
+        })
+        .collect();
+    suppressions_by_kind.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.reason.cmp(&b.reason))
+    });
+
+    let by_weekday: Vec<WeekdayBucket> = (0u8..7)
+        .map(|w| WeekdayBucket {
+            weekday: w,
+            taken: by_weekday_taken[w as usize],
+            dismissed: by_weekday_dismissed[w as usize],
+        })
+        .collect();
+
+    let postpone_follow_through = compute_postpone_follow_through(events, range_start, now);
 
     let heatmap_days = 84i64;
     let heatmap_start = (now - Duration::days(heatmap_days - 1)).date_naive();
@@ -316,11 +415,62 @@ pub fn compute_digest(events: &[LoggedEvent], range: &str, now: DateTime<Local>)
         postponed_total,
         skipped_total,
         suppressions,
+        suppressions_by_kind,
         pause_total_secs,
         pause_count,
         by_hour,
         by_day,
+        by_weekday,
+        previous,
+        postpone_follow_through,
     }
+}
+
+/// For every `BreakPostponed` event inside `[range_start, now]`, look
+/// forward in the (chronologically ordered) event stream for the next
+/// `BreakEnd` or `BreakSkipped` of the same kind and bucket the outcome.
+/// Intervening postpones of the same kind don't resolve — we keep
+/// scanning. A postpone with no later resolution in the log counts as
+/// `unresolved`.
+fn compute_postpone_follow_through(
+    events: &[LoggedEvent],
+    range_start: DateTime<Local>,
+    now: DateTime<Local>,
+) -> PostponeFollowThrough {
+    let mut out = PostponeFollowThrough::default();
+    for (i, e) in events.iter().enumerate() {
+        let EventPayload::BreakPostponed { kind, .. } = &e.event else {
+            continue;
+        };
+        let local = e.t.with_timezone(&Local);
+        if local < range_start || local > now {
+            continue;
+        }
+        out.total += 1;
+        let mut resolved = false;
+        for f in &events[i + 1..] {
+            match &f.event {
+                EventPayload::BreakEnd { kind: k2, outcome } if k2 == kind => {
+                    match outcome {
+                        Outcome::Completed => out.taken += 1,
+                        Outcome::Dismissed => out.dismissed += 1,
+                    }
+                    resolved = true;
+                    break;
+                }
+                EventPayload::BreakSkipped { kind: k2, .. } if k2 == kind => {
+                    out.skipped += 1;
+                    resolved = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if !resolved {
+            out.unresolved += 1;
+        }
+    }
+    out
 }
 
 type CsvFields<'a> = (
@@ -787,5 +937,286 @@ mod tests {
         )];
         let csv = export_csv(&events);
         assert!(csv.lines().nth(1).unwrap().contains("typing"));
+    }
+
+    #[test]
+    fn by_weekday_indexes_monday_zero_to_sunday_six() {
+        let n = now();
+        let thursday = Local.with_ymd_and_hms(2026, 5, 14, 10, 0, 0).unwrap();
+        let sunday = Local.with_ymd_and_hms(2026, 5, 10, 10, 0, 0).unwrap();
+        let events = vec![
+            ev(
+                thursday,
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Micro,
+                    outcome: Outcome::Completed,
+                },
+            ),
+            ev(
+                sunday,
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Long,
+                    outcome: Outcome::Dismissed,
+                },
+            ),
+        ];
+        let d = compute_digest(&events, "week", n);
+        assert_eq!(d.by_weekday.len(), 7);
+        assert_eq!(d.by_weekday[3].weekday, 3);
+        assert_eq!(d.by_weekday[3].taken, 1);
+        assert_eq!(d.by_weekday[6].weekday, 6);
+        assert_eq!(d.by_weekday[6].dismissed, 1);
+    }
+
+    #[test]
+    fn by_weekday_ignores_sleep_prompts() {
+        let n = now();
+        let events = vec![ev(
+            n,
+            EventPayload::BreakEnd {
+                kind: BreakKind::Sleep,
+                outcome: Outcome::Completed,
+            },
+        )];
+        let d = compute_digest(&events, "week", n);
+        assert!(d.by_weekday.iter().all(|w| w.taken == 0));
+    }
+
+    #[test]
+    fn previous_period_tallies_one_window_back() {
+        let n = now();
+        let events = vec![
+            ev(
+                n - Duration::days(2),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Micro,
+                    outcome: Outcome::Completed,
+                },
+            ),
+            ev(
+                n - Duration::days(9),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Long,
+                    outcome: Outcome::Completed,
+                },
+            ),
+            ev(
+                n - Duration::days(10),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Long,
+                    outcome: Outcome::Dismissed,
+                },
+            ),
+            ev(
+                n - Duration::days(8),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Micro,
+                    minutes: 5,
+                },
+            ),
+            ev(
+                n - Duration::days(20),
+                EventPayload::BreakSkipped {
+                    kind: BreakKind::Micro,
+                    source: SkipSource::User,
+                },
+            ),
+        ];
+        let d = compute_digest(&events, "week", n);
+        assert_eq!(d.micro_taken + d.long_taken, 1);
+        assert_eq!(d.previous.breaks_taken, 1);
+        assert_eq!(d.previous.breaks_dismissed, 1);
+        assert_eq!(d.previous.postponed_total, 1);
+        assert_eq!(
+            d.previous.skipped_total, 0,
+            "events older than two windows back are excluded"
+        );
+    }
+
+    #[test]
+    fn suppressions_by_kind_splits_reason_per_break_kind() {
+        let n = now();
+        let events = vec![
+            ev(
+                n - Duration::hours(1),
+                EventPayload::GuardSuppress {
+                    kind: BreakKind::Long,
+                    reason: GuardReason::Dnd,
+                },
+            ),
+            ev(
+                n - Duration::hours(2),
+                EventPayload::GuardSuppress {
+                    kind: BreakKind::Long,
+                    reason: GuardReason::Dnd,
+                },
+            ),
+            ev(
+                n - Duration::hours(3),
+                EventPayload::GuardSuppress {
+                    kind: BreakKind::Micro,
+                    reason: GuardReason::Dnd,
+                },
+            ),
+            ev(
+                n - Duration::hours(4),
+                EventPayload::GuardSuppress {
+                    kind: BreakKind::Micro,
+                    reason: GuardReason::Camera,
+                },
+            ),
+        ];
+        let d = compute_digest(&events, "week", n);
+        assert_eq!(d.suppressions_by_kind.len(), 3);
+        assert_eq!(d.suppressions_by_kind[0].kind, "long");
+        assert_eq!(d.suppressions_by_kind[0].reason, "dnd");
+        assert_eq!(d.suppressions_by_kind[0].count, 2);
+        let micro_dnd = d
+            .suppressions_by_kind
+            .iter()
+            .find(|s| s.kind == "micro" && s.reason == "dnd")
+            .expect("micro/dnd present");
+        assert_eq!(micro_dnd.count, 1);
+        let total_dnd: u32 = d
+            .suppressions_by_kind
+            .iter()
+            .filter(|s| s.reason == "dnd")
+            .map(|s| s.count)
+            .sum();
+        let agg_dnd = d
+            .suppressions
+            .iter()
+            .find(|s| s.reason == "dnd")
+            .unwrap()
+            .count;
+        assert_eq!(
+            total_dnd, agg_dnd,
+            "per-kind split must sum to the flat suppressions count"
+        );
+    }
+
+    #[test]
+    fn postpone_follow_through_taken_dismissed_skipped_unresolved() {
+        let n = now();
+        let events = vec![
+            // Postponed and later taken
+            ev(
+                n - Duration::hours(5),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Micro,
+                    minutes: 5,
+                },
+            ),
+            ev(
+                n - Duration::hours(4),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Micro,
+                    outcome: Outcome::Completed,
+                },
+            ),
+            // Postponed and later dismissed
+            ev(
+                n - Duration::hours(3),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Long,
+                    minutes: 10,
+                },
+            ),
+            ev(
+                n - Duration::hours(2),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Long,
+                    outcome: Outcome::Dismissed,
+                },
+            ),
+            // Postponed and later skipped
+            ev(
+                n - Duration::hours(1) - Duration::minutes(30),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Micro,
+                    minutes: 5,
+                },
+            ),
+            ev(
+                n - Duration::hours(1),
+                EventPayload::BreakSkipped {
+                    kind: BreakKind::Micro,
+                    source: SkipSource::User,
+                },
+            ),
+            // Postponed with no resolution after it
+            ev(
+                n - Duration::minutes(10),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Long,
+                    minutes: 10,
+                },
+            ),
+        ];
+        let d = compute_digest(&events, "week", n);
+        assert_eq!(d.postpone_follow_through.total, 4);
+        assert_eq!(d.postpone_follow_through.taken, 1);
+        assert_eq!(d.postpone_follow_through.dismissed, 1);
+        assert_eq!(d.postpone_follow_through.skipped, 1);
+        assert_eq!(d.postpone_follow_through.unresolved, 1);
+    }
+
+    #[test]
+    fn postpone_follow_through_skips_intervening_other_kind() {
+        let n = now();
+        let events = vec![
+            ev(
+                n - Duration::hours(3),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Long,
+                    minutes: 5,
+                },
+            ),
+            // BreakEnd of a different kind — must not resolve the long postpone
+            ev(
+                n - Duration::hours(2),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Micro,
+                    outcome: Outcome::Completed,
+                },
+            ),
+            ev(
+                n - Duration::hours(1),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Long,
+                    outcome: Outcome::Completed,
+                },
+            ),
+        ];
+        let d = compute_digest(&events, "week", n);
+        assert_eq!(d.postpone_follow_through.total, 1);
+        assert_eq!(d.postpone_follow_through.taken, 1);
+        assert_eq!(d.postpone_follow_through.unresolved, 0);
+    }
+
+    #[test]
+    fn postpone_follow_through_only_counts_postpones_in_range() {
+        let n = now();
+        let events = vec![
+            ev(
+                n - Duration::days(20),
+                EventPayload::BreakPostponed {
+                    kind: BreakKind::Micro,
+                    minutes: 5,
+                },
+            ),
+            ev(
+                n - Duration::days(19),
+                EventPayload::BreakEnd {
+                    kind: BreakKind::Micro,
+                    outcome: Outcome::Completed,
+                },
+            ),
+        ];
+        let d = compute_digest(&events, "week", n);
+        assert_eq!(
+            d.postpone_follow_through.total, 0,
+            "postpone outside the week range should not contribute"
+        );
     }
 }

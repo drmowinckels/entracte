@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHeatmapWeeks,
+  deltaDirection,
+  deltaPct,
   dismissalRate,
   formatHoursMinutes,
+  groupSuppressionsByReason,
   heatmapLevel,
   heatmapMonthLabels,
   weekdayFromISO,
+  weekdayLabel,
   type DayBucket,
 } from "./stats-format";
 
@@ -72,6 +76,100 @@ describe("weekdayFromISO", () => {
     expect(weekdayFromISO("2026-05-11")).toBe(0);
     expect(weekdayFromISO("2026-05-12")).toBe(1);
     expect(weekdayFromISO("2026-05-17")).toBe(6);
+  });
+});
+
+describe("weekdayLabel", () => {
+  it("returns Mon..Sun for 0..6", () => {
+    expect(weekdayLabel(0)).toBe("Mon");
+    expect(weekdayLabel(2)).toBe("Wed");
+    expect(weekdayLabel(6)).toBe("Sun");
+  });
+
+  it("returns empty string for out-of-range input", () => {
+    expect(weekdayLabel(-1)).toBe("");
+    expect(weekdayLabel(7)).toBe("");
+  });
+});
+
+describe("deltaPct", () => {
+  it("returns em-dash when previous is zero", () => {
+    expect(deltaPct(5, 0)).toBe("—");
+    expect(deltaPct(0, 0)).toBe("—");
+  });
+
+  it("returns 0% when curr equals prev", () => {
+    expect(deltaPct(4, 4)).toBe("0%");
+  });
+
+  it("formats positive deltas with a plus sign", () => {
+    expect(deltaPct(13, 10)).toBe("+30%");
+    expect(deltaPct(2, 1)).toBe("+100%");
+  });
+
+  it("formats negative deltas with a minus sign", () => {
+    expect(deltaPct(7, 10)).toBe("−30%");
+    expect(deltaPct(0, 4)).toBe("−100%");
+  });
+});
+
+describe("groupSuppressionsByReason", () => {
+  it("returns no rows when the input is empty", () => {
+    expect(groupSuppressionsByReason([])).toEqual([]);
+  });
+
+  it("collapses per-(kind, reason) rows into one entry per reason", () => {
+    const grouped = groupSuppressionsByReason([
+      { kind: "long", reason: "dnd", label: "Do Not Disturb", count: 4 },
+      { kind: "micro", reason: "dnd", label: "Do Not Disturb", count: 2 },
+      { kind: "micro", reason: "camera", label: "Camera in use", count: 3 },
+    ]);
+    expect(grouped).toHaveLength(2);
+    const dnd = grouped.find((r) => r.reason === "dnd");
+    expect(dnd?.total).toBe(6);
+    expect(dnd?.segments).toEqual([
+      { kind: "micro", count: 2 },
+      { kind: "long", count: 4 },
+    ]);
+  });
+
+  it("orders reasons by total descending, then alphabetically", () => {
+    const grouped = groupSuppressionsByReason([
+      { kind: "long", reason: "camera", label: "Camera in use", count: 1 },
+      { kind: "long", reason: "dnd", label: "Do Not Disturb", count: 5 },
+      { kind: "long", reason: "idle", label: "Idle", count: 5 },
+    ]);
+    expect(grouped.map((r) => r.reason)).toEqual(["dnd", "idle", "camera"]);
+  });
+
+  it("orders kind segments in canonical micro → long → sleep order", () => {
+    const grouped = groupSuppressionsByReason([
+      { kind: "sleep", reason: "dnd", label: "Do Not Disturb", count: 1 },
+      { kind: "long", reason: "dnd", label: "Do Not Disturb", count: 1 },
+      { kind: "micro", reason: "dnd", label: "Do Not Disturb", count: 1 },
+    ]);
+    expect(grouped[0].segments.map((s) => s.kind)).toEqual([
+      "micro",
+      "long",
+      "sleep",
+    ]);
+  });
+});
+
+describe("deltaDirection", () => {
+  it("returns flat when counts are equal (including both zero)", () => {
+    expect(deltaDirection(0, 0)).toBe("flat");
+    expect(deltaDirection(5, 5)).toBe("flat");
+  });
+
+  it("returns up when curr exceeds prev", () => {
+    expect(deltaDirection(6, 5)).toBe("up");
+    expect(deltaDirection(1, 0)).toBe("up");
+  });
+
+  it("returns down when curr is below prev", () => {
+    expect(deltaDirection(4, 5)).toBe("down");
+    expect(deltaDirection(0, 1)).toBe("down");
   });
 });
 

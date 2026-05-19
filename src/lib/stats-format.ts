@@ -23,6 +23,84 @@ export function dismissalRate(taken: number, dismissed: number): string {
   return `${Math.round((dismissed / total) * 100)}%`;
 }
 
+/** Short Monday-anchored weekday label. `0 -> Mon`, `6 -> Sun`. */
+export function weekdayLabel(weekday: number): string {
+  return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday] ?? "";
+}
+
+export type SuppressionRowInput = {
+  kind: string;
+  reason: string;
+  label: string;
+  count: number;
+};
+
+export type SuppressionByReason = {
+  reason: string;
+  label: string;
+  total: number;
+  segments: { kind: string; count: number }[];
+};
+
+/** Collapse the per-(kind, reason) suppression rows into one entry per
+ * reason, with each kind preserved as a segment. The reason list is
+ * sorted by total count descending so the highest-impact row comes
+ * first; segments within a reason are sorted by kind for stable colour
+ * ordering across renders. */
+export function groupSuppressionsByReason(
+  rows: SuppressionRowInput[],
+): SuppressionByReason[] {
+  const byReason = new Map<
+    string,
+    { reason: string; label: string; segments: Map<string, number> }
+  >();
+  for (const r of rows) {
+    let bucket = byReason.get(r.reason);
+    if (!bucket) {
+      bucket = { reason: r.reason, label: r.label, segments: new Map() };
+      byReason.set(r.reason, bucket);
+    }
+    bucket.segments.set(
+      r.kind,
+      (bucket.segments.get(r.kind) ?? 0) + r.count,
+    );
+  }
+  const KIND_ORDER = ["micro", "long", "sleep"];
+  return [...byReason.values()]
+    .map((b) => {
+      const segments = [...b.segments.entries()]
+        .map(([kind, count]) => ({ kind, count }))
+        .sort(
+          (a, b) =>
+            KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
+            a.kind.localeCompare(b.kind),
+        );
+      const total = segments.reduce((acc, s) => acc + s.count, 0);
+      return { reason: b.reason, label: b.label, total, segments };
+    })
+    .sort((a, b) => b.total - a.total || a.reason.localeCompare(b.reason));
+}
+
+/** "+34%" / "−12%" / "—" delta string for a current-vs-previous count
+ * pair. Returns `"—"` when the previous period is zero (no baseline)
+ * so the UI doesn't shout "∞%" at the user the first time they open
+ * Insights with a week of data. */
+export function deltaPct(curr: number, prev: number): string {
+  if (prev === 0) return "—";
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  if (pct === 0) return "0%";
+  const sign = pct > 0 ? "+" : "−";
+  return `${sign}${Math.abs(pct)}%`;
+}
+
+/** Direction of a current-vs-previous comparison — drives the colour
+ * class on delta chips. Equal counts read as `"flat"` so the renderer
+ * can stay quiet. */
+export function deltaDirection(curr: number, prev: number): "up" | "down" | "flat" {
+  if (curr === prev) return "flat";
+  return curr > prev ? "up" : "down";
+}
+
 /** Map a day's `count` to a 5-level shade (0–4) for the heatmap
  * cell's `data-level`. CSS picks the actual colours per level. */
 export function heatmapLevel(count: number, max: number): number {
