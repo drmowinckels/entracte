@@ -15,6 +15,8 @@ Tagged releases appear on the [Releases page](https://github.com/drmowinckels/en
 
 Both `.dmg` builds are code-signed and notarised with an Apple Developer ID certificate, so macOS Gatekeeper opens them without the "unidentified developer" warning. Mount the disk image, drag **Entracte** into Applications, eject.
 
+A [Homebrew Cask](https://brew.sh/) is also planned — once submitted and accepted by `homebrew-cask`, you'll be able to install via `brew install --cask entracte` and let Homebrew handle upgrades.
+
 ### Windows
 
 - `Entracte_<version>_x64-setup.exe` — NSIS installer
