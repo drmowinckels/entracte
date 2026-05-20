@@ -73,7 +73,8 @@ export default withMermaid({
       { icon: "github", link: "https://github.com/drmowinckels/entracte" },
     ],
     footer: {
-      message: "Released under the Apache 2.0 License.",
+      message:
+        'Released under the Apache 2.0 License. <a href="/legal/terms">Terms</a> · <a href="/legal/privacy">Privacy</a>.',
       copyright: "Copyright © Athanasia Mowinckel",
     },
     search: { provider: "local" },
