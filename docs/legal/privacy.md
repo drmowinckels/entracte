@@ -45,7 +45,7 @@ If you purchase the Entracte Supporter Pack, the following personal data is invo
 
 Supporter Pack purchases are processed by **Lemon Squeezy** (Lemon Squeezy LLC), who acts as **merchant of record**. Lemon Squeezy collects and processes the information needed to take payment, calculate VAT or sales tax, issue an invoice, and email you a receipt and your license key. This typically includes your name, email address, billing address (for tax purposes), and payment-method details.
 
-Lemon Squeezy is the data controller for that processing. Their handling of your data is governed by the [Lemon Squeezy Privacy Policy](https://www.lemonsqueezy.com/legal/privacy-policy). Payment-method details (card number, CVV, etc.) are handled by Lemon Squeezy and its payment processors; we never see them.
+Lemon Squeezy is the data controller for that processing. Their handling of your data is governed by the [Lemon Squeezy Privacy Policy](https://www.lemonsqueezy.com/privacy). Payment-method details (card number, CVV, etc.) are handled by Lemon Squeezy and its payment processors; we never see them.
 
 ### 2.2 Data we receive from Lemon Squeezy
 

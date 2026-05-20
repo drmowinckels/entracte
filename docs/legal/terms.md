@@ -18,7 +18,7 @@ The Supporter Pack is an optional one-time digital purchase that unlocks persona
 
 ### 2.1 Merchant of record
 
-Supporter Pack purchases are processed by **Lemon Squeezy** (Lemon Squeezy LLC), who acts as merchant of record. Lemon Squeezy is responsible for payment processing, invoicing, VAT and sales tax collection and remittance, and providing payment receipts. Their own [terms](https://www.lemonsqueezy.com/legal/terms-of-service) and [privacy policy](https://www.lemonsqueezy.com/legal/privacy-policy) apply to the payment transaction.
+Supporter Pack purchases are processed by **Lemon Squeezy** (Lemon Squeezy LLC), who acts as merchant of record. Lemon Squeezy is responsible for payment processing, invoicing, VAT and sales tax collection and remittance, and providing payment receipts. Their own [terms](https://www.lemonsqueezy.com/terms) and [privacy policy](https://www.lemonsqueezy.com/privacy) apply to the payment transaction.
 
 ### 2.2 Delivery
 
