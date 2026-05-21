@@ -1,0 +1,47 @@
+name: Praise / kind words
+description: Tell us Entracte helped, share what you love, or leave a thank-you. No bug, no problem — just a nice word.
+labels: ["praise"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hi 👋 — thanks for taking the time to leave a kind note.
+
+        Open-source maintenance is mostly bug reports and broken CI, so positive feedback genuinely fuels the project. It also helps in a concrete way: signals of public adoption and engagement are what gatekeepers like the [SignPath Foundation](https://signpath.org/foundation) look at when deciding whether to issue free code-signing certificates for open-source projects. Public praise on this repo is one of those signals.
+
+        Nothing below is required — answer whichever prompts feel natural and skip the rest.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What did Entracte help with?
+      description: A break habit that finally stuck, a wrist that stopped hurting, the bedtime nudge that actually got you off the laptop — whatever it is.
+      placeholder: |
+        I've tried about six break-reminder apps and bounced off all of them because they were too intrusive. The notification-only mode in Entracte is the first thing that's actually lasted past week two.
+    validations:
+      required: false
+
+  - type: textarea
+    id: favourite
+    attributes:
+      label: Favourite feature, or something that surprised you?
+      description: Big or small — the windowed overlay, a specific theme, the CLI, a tiny detail.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything about your setup?
+      description: Optional — OS, how you discovered Entracte, what your work day looks like. Helps put the feedback in context.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: share
+    attributes:
+      label: Sharing
+      description: All optional, all appreciated.
+      options:
+        - label: I'm happy for this praise to be quoted (anonymously or by GitHub handle) on the project website or social posts.
+        - label: I've also starred ⭐ the repo or shared Entracte somewhere — these public signals help the project clear the bar for free Windows code-signing.

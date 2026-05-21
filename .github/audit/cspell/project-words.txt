@@ -159,3 +159,5 @@ Vion
 Shtooka
 rgba
 Datatilsynet
+macapps
+winget
