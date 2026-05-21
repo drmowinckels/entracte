@@ -137,13 +137,17 @@ pub async fn activate_with(
     instance_name: &str,
     now: DateTime<Utc>,
 ) -> Result<SupporterRecord, String> {
-    activate_with_base(path, client, LS_API_BASE, key, instance_name, now).await
+    activate_with_base(path, client, LS_API_BASE, None, key, instance_name, now).await
 }
 
+/// Override `manual_verifier` to bypass the embedded production public
+/// key (e.g. tests that mint a token with a freshly generated keypair).
+/// Production always passes `None`.
 pub(crate) async fn activate_with_base(
     path: &Path,
     client: &reqwest::Client,
     ls_base: &str,
+    manual_verifier: Option<&ed25519_dalek::VerifyingKey>,
     key: &str,
     instance_name: &str,
     now: DateTime<Utc>,
@@ -153,7 +157,10 @@ pub(crate) async fn activate_with_base(
         return Err("license key is empty".to_string());
     }
     let record = if manual::looks_like_manual_token(key) {
-        manual::verify(key)?;
+        match manual_verifier {
+            Some(vk) => manual::verify_with(key, vk)?,
+            None => manual::verify(key)?,
+        };
         SupporterRecord {
             license_key: key.to_string(),
             instance_id: String::new(),
@@ -535,9 +542,17 @@ mod tests {
     async fn activate_with_base_rejects_empty_key() {
         let p = unique_temp_path("activate-empty");
         let client = reqwest::Client::new();
-        let err = activate_with_base(&p, &client, "http://unused", "   ", "host", Utc::now())
-            .await
-            .unwrap_err();
+        let err = activate_with_base(
+            &p,
+            &client,
+            "http://unused",
+            None,
+            "   ",
+            "host",
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("empty"), "got: {err}");
         assert!(!p.exists(), "no record should have been written");
     }
@@ -555,7 +570,7 @@ mod tests {
         let p = unique_temp_path("activate-ls");
         let client = reqwest::Client::new();
         let now = Utc::now();
-        let rec = activate_with_base(&p, &client, &server.url(), "LS-KEY", "host-a", now)
+        let rec = activate_with_base(&p, &client, &server.url(), None, "LS-KEY", "host-a", now)
             .await
             .unwrap();
         assert_eq!(rec.source, SupporterSource::LemonSqueezy);
@@ -577,35 +592,82 @@ mod tests {
             .await;
         let p = unique_temp_path("activate-ls-fail");
         let client = reqwest::Client::new();
-        let err = activate_with_base(&p, &client, &server.url(), "BAD", "host-b", Utc::now())
-            .await
-            .unwrap_err();
+        let err = activate_with_base(
+            &p,
+            &client,
+            &server.url(),
+            None,
+            "BAD",
+            "host-b",
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("not found"), "got: {err}");
         assert!(!p.exists(), "no record should have been written");
     }
 
     #[tokio::test]
-    async fn activate_with_base_manual_path_persists_without_network() {
-        // Sign with a fresh key — `manual::verify` will reject the
-        // signature (placeholder pubkey embedded), so we expect Err.
-        // That still proves: a) the manual branch is taken, b) the LS
-        // mock is never called (we don't even stand one up), c) no
-        // record gets written on signature failure.
+    async fn activate_with_base_manual_path_persists_record_with_injected_verifier() {
+        // Sign with a freshly minted keypair and inject the matching
+        // verifying key — proves the manual branch a) takes precedence
+        // over the LS path (no mock stood up), b) builds a record with
+        // source: Manual + empty instance_id, and c) persists it to
+        // disk.
         let sk = fresh_signing_key();
+        let vk = sk.verifying_key();
         let license = manual::ManualLicense {
             name: "Tester".to_string(),
             issued_at: Utc::now(),
         };
         let token = manual::sign(&sk, &license).unwrap();
-        let p = unique_temp_path("activate-manual");
+        let p = unique_temp_path("activate-manual-ok");
         let client = reqwest::Client::new();
-        let err = activate_with_base(&p, &client, "http://unused", &token, "host-c", Utc::now())
-            .await
-            .unwrap_err();
-        assert!(
-            err.contains("verify") || err.contains("placeholder"),
-            "got: {err}"
-        );
+        let now = Utc::now();
+        let rec = activate_with_base(
+            &p,
+            &client,
+            "http://unused",
+            Some(&vk),
+            &token,
+            "host-c",
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rec.source, SupporterSource::Manual);
+        assert_eq!(rec.instance_id, "");
+        assert_eq!(rec.license_key, token);
+        assert_eq!(rec.activated_at, now);
+        let on_disk = load(&p).unwrap();
+        assert_eq!(on_disk, rec);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_manual_path_rejects_tampered_token() {
+        let sk = fresh_signing_key();
+        let vk = sk.verifying_key();
+        let license = manual::ManualLicense {
+            name: "Tester".to_string(),
+            issued_at: Utc::now(),
+        };
+        let mut token = manual::sign(&sk, &license).unwrap();
+        token.push('!');
+        let p = unique_temp_path("activate-manual-tamper");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(
+            &p,
+            &client,
+            "http://unused",
+            Some(&vk),
+            &token,
+            "host-d",
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(!err.is_empty(), "expected verification failure");
         assert!(!p.exists(), "no record should have been written");
     }
 
