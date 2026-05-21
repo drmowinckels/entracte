@@ -22,9 +22,27 @@ A [Homebrew Cask](https://brew.sh/) is also planned — once submitted and accep
 - `Entracte_<version>_x64-setup.exe` — NSIS installer
 - `Entracte_<version>_x64_en-US.msi` — MSI for managed deployment
 
-Windows installers are code-signed by the [SignPath Foundation](https://signpath.org/) under their free open-source code-signing programme, with certificate issuance and signing infrastructure provided by [SignPath.io](https://signpath.io/). SmartScreen recognises the publisher and lets the installer run without the "unrecognised publisher" warning.
+::: warning Currently unsigned
+Windows installers are **not code-signed yet**. When you run the installer, Windows SmartScreen will show a blue "Windows protected your PC" dialog naming an "unknown publisher". To continue: click **More info**, then **Run anyway**.
 
-Double-click the installer; the standard Windows installation wizard takes over.
+This is a verification gap, not a security issue — the installer is the same `.msi` / `.exe` built and published by GitHub Actions from this repository, and you can verify the SHA-256 checksums against the [release assets](https://github.com/drmowinckels/entracte/releases/latest).
+
+We applied to the [SignPath Foundation](https://signpath.org/foundation) free OSS code-signing programme and were turned down on the first attempt — they look for projects that have already built up public visibility (stars, forks, contributors, third-party write-ups), and Entracte is too new to clear that bar yet. We can reapply once the project has more external traction. **[Here's how you can help →](#help-us-get-windows-signed)**
+:::
+
+Double-click the installer; once past the SmartScreen prompt, the standard Windows installation wizard takes over.
+
+#### Help us get Windows signed
+
+SignPath Foundation rejected our first application on the grounds that Entracte doesn't yet show enough public adoption to qualify. They don't judge the code — they look at the project's external footprint. Concrete things that move the needle:
+
+- ⭐ [Star the repository](https://github.com/drmowinckels/entracte) — this is the single clearest signal.
+- 🗣️ Talk about it where you hang out — Reddit (r/macapps, r/windows, r/productivity), Mastodon, Bluesky, blog posts, YouTube, Hacker News. Independent mentions are weighted heavily.
+- 🐛 [File a bug](https://github.com/drmowinckels/entracte/issues/new?template=bug_report.yml), [request a feature](https://github.com/drmowinckels/entracte/issues/new?template=feature_request.yml), or [send some praise](https://github.com/drmowinckels/entracte/issues/new?template=praise.yml) — engagement counts.
+- 🔧 [Contribute a fix](https://github.com/drmowinckels/entracte/blob/main/CONTRIBUTING.md) — being able to point at a contributor list demonstrates a real community.
+- 📦 If you maintain a package repo (Scoop, Chocolatey, winget), packaging Entracte for it adds another data point.
+
+Once we have evidence to satisfy SignPath's criteria, we'll reapply. The CI signing pipeline is already wired up — the day approval comes through, the very next release ships signed with no code changes required. The bring-up notes live in [.github/SIGNPATH_SETUP.md](https://github.com/drmowinckels/entracte/blob/main/.github/SIGNPATH_SETUP.md).
 
 ### Linux
 

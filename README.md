@@ -78,6 +78,8 @@ brew install --cask drmowinckels/entracte/entracte
 
 **Linux / Windows** — download the `.deb`, `.rpm`, `.AppImage`, `.msi`, or `.exe` from the [latest release](https://github.com/drmowinckels/entracte/releases/latest).
 
+> **Windows users:** the `.msi` / `.exe` aren't code-signed yet — SignPath Foundation turned down our first application on visibility grounds (the project is too new). SmartScreen will warn you when you run the installer; click **More info → Run anyway** to proceed. See [the install guide](https://entracte.drmowinckels.io/guide/install#windows) for how you can [help us get there](https://entracte.drmowinckels.io/guide/install#help-us-get-windows-signed) — stars, forks, mentions, and contributions all count.
+
 ## Command line
 
 The same `entracte` binary doubles as a small CLI for scripting / hotkey wiring. Action commands forward to the running tray app:
