@@ -14,7 +14,7 @@ const MAX_NAME_BYTES: usize = 1024;
 /// The all-zero placeholder is rejected by `embedded_verifying_key()` so
 /// dev builds fail closed rather than accepting forgeries.
 const EMBEDDED_PUBLIC_KEY_HEX: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "2ee366ddb411a7181b40c57b2469902be5f36984817adadf56aa0c4fd2dc0589";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManualLicense {
