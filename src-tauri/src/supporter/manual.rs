@@ -116,13 +116,13 @@ fn embedded_verifying_key() -> Result<VerifyingKey, String> {
 fn parse_verifying_key_hex(hex_str: &str) -> Result<VerifyingKey, String> {
     let bytes = hex::decode(hex_str)
         .map_err(|e| format!("embedded manual-license public key is not valid hex: {e}"))?;
-    let array: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
-        "embedded manual-license public key must be 32 bytes".to_string()
-    })?;
+    let array: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| "embedded manual-license public key must be 32 bytes".to_string())?;
     if array == [0u8; 32] {
         return Err(
-            "manual licence verification disabled: placeholder public key not replaced"
-                .to_string(),
+            "manual licence verification disabled: placeholder public key not replaced".to_string(),
         );
     }
     VerifyingKey::from_bytes(&array)

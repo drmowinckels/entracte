@@ -125,7 +125,10 @@ fn sign_cmd(args: &[String]) -> ExitCode {
     let key_array: [u8; 32] = match key_bytes.as_slice().try_into() {
         Ok(a) => a,
         Err(_) => {
-            eprintln!("private key must be 32 bytes ({} provided)", key_bytes.len());
+            eprintln!(
+                "private key must be 32 bytes ({} provided)",
+                key_bytes.len()
+            );
             return ExitCode::FAILURE;
         }
     };
