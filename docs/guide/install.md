@@ -27,7 +27,7 @@ Windows installers are **not code-signed yet**. When you run the installer, Wind
 
 This is a verification gap, not a security issue — the installer is the same `.msi` / `.exe` built and published by GitHub Actions from this repository, and you can verify the SHA-256 checksums against the [release assets](https://github.com/drmowinckels/entracte/releases/latest).
 
-We applied to the [SignPath Foundation](https://signpath.org/foundation) free OSS code-signing programme and were turned down on the first attempt — they look for projects that have already built up public visibility (stars, forks, contributors, third-party write-ups), and Entracte is too new to clear that bar yet. We can reapply once the project has more external traction. **[Here's how you can help →](#help-us-get-windows-signed)**
+We applied to the [SignPath Foundation](https://signpath.org/) free OSS code-signing programme and were turned down on the first attempt — they look for projects that have already built up public visibility (stars, forks, contributors, third-party write-ups), and Entracte is too new to clear that bar yet. We can reapply once the project has more external traction. **[Here's how you can help →](#help-us-get-windows-signed)**
 :::
 
 Double-click the installer; once past the SmartScreen prompt, the standard Windows installation wizard takes over.
