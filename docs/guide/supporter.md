@@ -1,11 +1,5 @@
 # Supporter pack
 
-::: warning Coming soon — work in progress
-The supporter pack itself is wired end-to-end in the app, but the storefront infrastructure is still being set up. **Purchase and license activation are temporarily hidden** in the **About → Supporter** tab while we get the payment flow in place.
-
-In the meantime the pack ships as source-only: every gated feature is in the codebase and unlocks for anyone running a build with a valid record, but there's no way to buy a key yet. Nothing in the free experience is affected.
-:::
-
 <div style="text-align: center; margin: 2rem 0 1rem;">
   <video controls preload="metadata" poster="/videos/entracte_supporter_poster.jpg" playsinline style="display: block; margin: 0 auto; max-width: 960px; width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" aria-label="90-second tour of the supporter pack — custom themes, custom colour, editable break hints, custom CSS, custom sounds, and the license-removal flow.">
     <source src="/videos/entracte_supporter.mp4" type="video/mp4" />
@@ -49,6 +43,12 @@ Activation calls the license API and stores a small `supporter.json` in Entracte
 It's deliberately _not_ in `settings.json` — that file is often synced through dotfile managers, and a supporter key is machine-bound by design.
 
 Entracte revalidates the key once a day in the background. If you're offline there's a 30-day grace window — flights, ferries, and conference Wi-Fi don't lock you out. If validation comes back invalid (refund, manual revocation), the local record is removed and the personalisation gates re-engage.
+
+## Community licences
+
+A small number of licences are also issued by hand, off the storefront — typically to contributors, translators, and people who've helped Entracte along in some way. They start with `ENT1-` instead of the Lemon Squeezy format and are pasted into **About → Supporter** the same way. They verify offline against a key built into the app, so they don't talk to the storefront, don't expire, and aren't subject to the 30-day grace window. Everything else (one device at a time, transferable, unlocks the same personalisation extras) behaves identically.
+
+If you've contributed and would like one, open an issue or reach out — there's no online form for it.
 
 ## Honour system, by design
 

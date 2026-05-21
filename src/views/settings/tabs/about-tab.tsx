@@ -7,11 +7,21 @@ import type { UseSupporter } from "../hooks/use-supporter";
 import { writeToClipboard } from "../utils";
 
 const TOAST_MS = 3000;
+const SUPPORTER_CHECKOUT_URL =
+  "https://shop.drmowinckels.io/checkout/buy/40af6bbf-154c-4321-948e-3329b1176319";
 
 export function AboutTab({ supporter }: { supporter: UseSupporter }) {
   const [version, setVersion] = useState("");
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
+  const [licenseInput, setLicenseInput] = useState("");
   const update = useUpdateCheck();
+
+  const onVerify = async () => {
+    const trimmed = licenseInput.trim();
+    if (!trimmed) return;
+    const ok = await supporter.verify(trimmed);
+    if (ok) setLicenseInput("");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -101,12 +111,35 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
               colours, rotating themes, custom sounds, custom CSS, and editable
               break hints — is unlocked by becoming a supporter once, forever.
             </p>
+            <div className="actions inline">
+              <button onClick={() => openUrl(SUPPORTER_CHECKOUT_URL)}>
+                Become a supporter →
+              </button>
+            </div>
             <p className="about-meta">
-              <strong>Coming soon.</strong> The storefront infrastructure is
-              still being set up; purchase and license activation will go live
-              once the payment flow is in place. Until then, the pack ships as
-              source-only.
+              Already have a license? Paste it below and click Verify.
             </p>
+            <div className="supporter-entry">
+              <input
+                type="text"
+                value={licenseInput}
+                onChange={(e) => setLicenseInput(e.target.value)}
+                placeholder="License key"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                disabled={supporter.pending}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onVerify();
+                }}
+              />
+              <button
+                onClick={onVerify}
+                disabled={supporter.pending || licenseInput.trim() === ""}
+              >
+                {supporter.pending ? "Verifying…" : "Verify"}
+              </button>
+            </div>
           </>
         )}
         {supporter.message && (
