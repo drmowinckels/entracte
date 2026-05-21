@@ -5,10 +5,20 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub mod manual;
+
 const LS_API_BASE: &str = "https://api.lemonsqueezy.com/v1";
 const VALIDATE_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 const OFFLINE_GRACE: Duration = Duration::from_secs(60 * 60 * 24 * 30);
 const FILE_NAME: &str = "supporter.json";
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SupporterSource {
+    #[default]
+    LemonSqueezy,
+    Manual,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SupporterRecord {
@@ -16,6 +26,8 @@ pub struct SupporterRecord {
     pub instance_id: String,
     pub activated_at: DateTime<Utc>,
     pub last_validated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub source: SupporterSource,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,7 +40,7 @@ pub struct SupporterStatus {
 impl SupporterStatus {
     pub fn from_record(record: Option<&SupporterRecord>, now: DateTime<Utc>) -> Self {
         match record {
-            Some(r) if is_within_grace(r.last_validated_at, now) => Self {
+            Some(r) if record_is_active(r, now) => Self {
                 is_supporter: true,
                 masked_key: Some(mask_key(&r.license_key)),
                 last_validated_at: Some(r.last_validated_at),
@@ -44,6 +56,13 @@ impl SupporterStatus {
                 last_validated_at: None,
             },
         }
+    }
+}
+
+fn record_is_active(record: &SupporterRecord, now: DateTime<Utc>) -> bool {
+    match record.source {
+        SupporterSource::Manual => manual::verify(&record.license_key).is_ok(),
+        SupporterSource::LemonSqueezy => is_within_grace(record.last_validated_at, now),
     }
 }
 
@@ -81,7 +100,7 @@ pub fn delete(path: &Path) -> std::io::Result<()> {
 /// Used by gated IPC paths (e.g. `custom_css`) to authorise per-call.
 pub fn is_supporter_now(path: &Path) -> bool {
     match load(path) {
-        Some(r) => is_within_grace(r.last_validated_at, Utc::now()),
+        Some(r) => record_is_active(&r, Utc::now()),
         None => false,
     }
 }
@@ -95,6 +114,72 @@ pub fn is_within_grace(last_validated_at: DateTime<Utc>, now: DateTime<Utc>) -> 
 pub fn needs_revalidation(last_validated_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     let elapsed = now.signed_duration_since(last_validated_at);
     elapsed >= chrono::Duration::from_std(VALIDATE_INTERVAL).unwrap()
+}
+
+/// Whether the daily background loop should hit the storefront for this
+/// record. Manual (community) licences carry their proof on the token
+/// itself, so the network round-trip is skipped.
+pub fn needs_remote_revalidation(record: &SupporterRecord, now: DateTime<Utc>) -> bool {
+    !matches!(record.source, SupporterSource::Manual)
+        && needs_revalidation(record.last_validated_at, now)
+}
+
+/// Pure activation helper: sniffs the key's source, runs the matching
+/// verification path (offline Ed25519 for `ENT1-…`, Lemon Squeezy API
+/// for everything else), and persists the resulting record to disk.
+///
+/// The Tauri command is a thin shim over this so the orchestration can
+/// be exercised end-to-end without spinning up a Tauri runtime.
+pub async fn activate_with(
+    path: &Path,
+    client: &reqwest::Client,
+    key: &str,
+    instance_name: &str,
+    now: DateTime<Utc>,
+) -> Result<SupporterRecord, String> {
+    activate_with_base(path, client, LS_API_BASE, None, key, instance_name, now).await
+}
+
+/// Override `manual_verifier` to bypass the embedded production public
+/// key (e.g. tests that mint a token with a freshly generated keypair).
+/// Production always passes `None`.
+pub(crate) async fn activate_with_base(
+    path: &Path,
+    client: &reqwest::Client,
+    ls_base: &str,
+    manual_verifier: Option<&ed25519_dalek::VerifyingKey>,
+    key: &str,
+    instance_name: &str,
+    now: DateTime<Utc>,
+) -> Result<SupporterRecord, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("license key is empty".to_string());
+    }
+    let record = if manual::looks_like_manual_token(key) {
+        match manual_verifier {
+            Some(vk) => manual::verify_with(key, vk)?,
+            None => manual::verify(key)?,
+        };
+        SupporterRecord {
+            license_key: key.to_string(),
+            instance_id: String::new(),
+            activated_at: now,
+            last_validated_at: now,
+            source: SupporterSource::Manual,
+        }
+    } else {
+        let instance_id = activate_remote_at(client, ls_base, key, instance_name).await?;
+        SupporterRecord {
+            license_key: key.to_string(),
+            instance_id,
+            activated_at: now,
+            last_validated_at: now,
+            source: SupporterSource::LemonSqueezy,
+        }
+    };
+    save(path, &record).map_err(|e| e.to_string())?;
+    Ok(record)
 }
 
 pub fn mask_key(key: &str) -> String {
@@ -202,9 +287,31 @@ pub(crate) async fn validate_remote_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
 
     fn epoch(seconds_ago: i64) -> DateTime<Utc> {
         Utc::now() - chrono::Duration::seconds(seconds_ago)
+    }
+
+    fn lemonsqueezy_record(
+        license_key: &str,
+        instance_id: &str,
+        activated_at: DateTime<Utc>,
+        last_validated_at: DateTime<Utc>,
+    ) -> SupporterRecord {
+        SupporterRecord {
+            license_key: license_key.to_string(),
+            instance_id: instance_id.to_string(),
+            activated_at,
+            last_validated_at,
+            source: SupporterSource::LemonSqueezy,
+        }
+    }
+
+    fn fresh_signing_key() -> SigningKey {
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).unwrap();
+        SigningKey::from_bytes(&seed)
     }
 
     #[test]
@@ -250,12 +357,7 @@ mod tests {
 
     #[test]
     fn status_from_fresh_record_unlocks() {
-        let rec = SupporterRecord {
-            license_key: "ABCD-1111-2222-3333".to_string(),
-            instance_id: "i-1".to_string(),
-            activated_at: epoch(86_400),
-            last_validated_at: epoch(60),
-        };
+        let rec = lemonsqueezy_record("ABCD-1111-2222-3333", "i-1", epoch(86_400), epoch(60));
         let s = SupporterStatus::from_record(Some(&rec), Utc::now());
         assert!(s.is_supporter);
         assert_eq!(s.masked_key.as_deref(), Some("****-****-****-3333"));
@@ -264,12 +366,12 @@ mod tests {
     #[test]
     fn status_from_stale_record_locks_but_keeps_masked_key() {
         let now = Utc::now();
-        let rec = SupporterRecord {
-            license_key: "ZZZZ-9999-8888-7777".to_string(),
-            instance_id: "i-2".to_string(),
-            activated_at: now - chrono::Duration::days(60),
-            last_validated_at: now - chrono::Duration::days(45),
-        };
+        let rec = lemonsqueezy_record(
+            "ZZZZ-9999-8888-7777",
+            "i-2",
+            now - chrono::Duration::days(60),
+            now - chrono::Duration::days(45),
+        );
         let s = SupporterStatus::from_record(Some(&rec), now);
         assert!(!s.is_supporter);
         assert_eq!(s.masked_key.as_deref(), Some("****-****-****-7777"));
@@ -287,12 +389,7 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         let p = file_path(&dir);
-        let rec = SupporterRecord {
-            license_key: "ABCDEFGH".to_string(),
-            instance_id: "abc".to_string(),
-            activated_at: Utc::now(),
-            last_validated_at: Utc::now(),
-        };
+        let rec = lemonsqueezy_record("ABCDEFGH", "abc", Utc::now(), Utc::now());
         save(&p, &rec).unwrap();
         let loaded = load(&p).unwrap();
         assert_eq!(loaded, rec);
@@ -334,12 +431,12 @@ mod tests {
     #[test]
     fn is_supporter_now_true_for_fresh_record() {
         let p = unique_temp_path("isnow-fresh");
-        let rec = SupporterRecord {
-            license_key: "ABCD-1111-2222-3333".to_string(),
-            instance_id: "i-fresh".to_string(),
-            activated_at: Utc::now() - chrono::Duration::days(1),
-            last_validated_at: Utc::now() - chrono::Duration::minutes(5),
-        };
+        let rec = lemonsqueezy_record(
+            "ABCD-1111-2222-3333",
+            "i-fresh",
+            Utc::now() - chrono::Duration::days(1),
+            Utc::now() - chrono::Duration::minutes(5),
+        );
         save(&p, &rec).unwrap();
         assert!(is_supporter_now(&p));
         let _ = fs::remove_file(&p);
@@ -349,15 +446,257 @@ mod tests {
     fn is_supporter_now_false_for_stale_record_past_grace_window() {
         // 45 days since last_validated_at — outside the 30-day offline grace.
         let p = unique_temp_path("isnow-stale");
-        let rec = SupporterRecord {
-            license_key: "ZZZZ-9999-8888-7777".to_string(),
-            instance_id: "i-stale".to_string(),
-            activated_at: Utc::now() - chrono::Duration::days(60),
-            last_validated_at: Utc::now() - chrono::Duration::days(45),
-        };
+        let rec = lemonsqueezy_record(
+            "ZZZZ-9999-8888-7777",
+            "i-stale",
+            Utc::now() - chrono::Duration::days(60),
+            Utc::now() - chrono::Duration::days(45),
+        );
         save(&p, &rec).unwrap();
         assert!(!is_supporter_now(&p));
         let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn record_without_source_field_deserialises_as_lemonsqueezy() {
+        // Records on disk before the `source` field was introduced must
+        // still parse and behave as Lemon Squeezy records (the only kind
+        // that existed). `serde(default)` carries that contract; this
+        // test fails closed if anyone removes the attribute.
+        let now = Utc::now();
+        let body = serde_json::json!({
+            "license_key": "LEGACY-KEY",
+            "instance_id": "i-legacy",
+            "activated_at": now,
+            "last_validated_at": now,
+        });
+        let parsed: SupporterRecord = serde_json::from_value(body).unwrap();
+        assert_eq!(parsed.source, SupporterSource::LemonSqueezy);
+    }
+
+    #[test]
+    fn save_load_round_trip_preserves_manual_source() {
+        let dir = std::env::temp_dir().join(format!(
+            "entracte-supporter-manual-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let p = file_path(&dir);
+        let rec = SupporterRecord {
+            license_key: "ENT1-placeholder".to_string(),
+            instance_id: String::new(),
+            activated_at: Utc::now(),
+            last_validated_at: Utc::now(),
+            source: SupporterSource::Manual,
+        };
+        save(&p, &rec).unwrap();
+        let loaded = load(&p).unwrap();
+        assert_eq!(loaded.source, SupporterSource::Manual);
+        assert_eq!(loaded, rec);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn record_is_active_lemonsqueezy_uses_grace_window() {
+        let now = Utc::now();
+        let fresh = lemonsqueezy_record("K", "i", now, now - chrono::Duration::days(1));
+        assert!(record_is_active(&fresh, now));
+        let stale = lemonsqueezy_record("K", "i", now, now - chrono::Duration::days(45));
+        assert!(!record_is_active(&stale, now));
+    }
+
+    #[test]
+    fn needs_remote_revalidation_true_for_stale_lemonsqueezy() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record("K", "i", now, now - chrono::Duration::hours(25));
+        assert!(needs_remote_revalidation(&rec, now));
+    }
+
+    #[test]
+    fn needs_remote_revalidation_false_for_fresh_lemonsqueezy() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record("K", "i", now, now - chrono::Duration::hours(2));
+        assert!(!needs_remote_revalidation(&rec, now));
+    }
+
+    #[test]
+    fn needs_remote_revalidation_always_false_for_manual() {
+        // Manual records never round-trip to the storefront, even if
+        // `last_validated_at` is ancient — the signature is what matters.
+        let now = Utc::now();
+        let rec = SupporterRecord {
+            license_key: "ENT1-irrelevant".to_string(),
+            instance_id: String::new(),
+            activated_at: now - chrono::Duration::days(365),
+            last_validated_at: now - chrono::Duration::days(365),
+            source: SupporterSource::Manual,
+        };
+        assert!(!needs_remote_revalidation(&rec, now));
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_rejects_empty_key() {
+        let p = unique_temp_path("activate-empty");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(
+            &p,
+            &client,
+            "http://unused",
+            None,
+            "   ",
+            "host",
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("empty"), "got: {err}");
+        assert!(!p.exists(), "no record should have been written");
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_lemon_squeezy_path_persists_record() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"activated": true, "instance": {"id": "inst-77"}}"#)
+            .create_async()
+            .await;
+        let p = unique_temp_path("activate-ls");
+        let client = reqwest::Client::new();
+        let now = Utc::now();
+        let rec = activate_with_base(&p, &client, &server.url(), None, "LS-KEY", "host-a", now)
+            .await
+            .unwrap();
+        assert_eq!(rec.source, SupporterSource::LemonSqueezy);
+        assert_eq!(rec.instance_id, "inst-77");
+        assert_eq!(rec.license_key, "LS-KEY");
+        let on_disk = load(&p).unwrap();
+        assert_eq!(on_disk, rec);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_lemon_squeezy_failure_does_not_persist() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_body(r#"{"activated": false, "error": "license_key not found"}"#)
+            .create_async()
+            .await;
+        let p = unique_temp_path("activate-ls-fail");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(
+            &p,
+            &client,
+            &server.url(),
+            None,
+            "BAD",
+            "host-b",
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("not found"), "got: {err}");
+        assert!(!p.exists(), "no record should have been written");
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_manual_path_persists_record_with_injected_verifier() {
+        // Sign with a freshly minted keypair and inject the matching
+        // verifying key — proves the manual branch a) takes precedence
+        // over the LS path (no mock stood up), b) builds a record with
+        // source: Manual + empty instance_id, and c) persists it to
+        // disk.
+        let sk = fresh_signing_key();
+        let vk = sk.verifying_key();
+        let license = manual::ManualLicense {
+            name: "Tester".to_string(),
+            issued_at: Utc::now(),
+        };
+        let token = manual::sign(&sk, &license).unwrap();
+        let p = unique_temp_path("activate-manual-ok");
+        let client = reqwest::Client::new();
+        let now = Utc::now();
+        let rec = activate_with_base(
+            &p,
+            &client,
+            "http://unused",
+            Some(&vk),
+            &token,
+            "host-c",
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rec.source, SupporterSource::Manual);
+        assert_eq!(rec.instance_id, "");
+        assert_eq!(rec.license_key, token);
+        assert_eq!(rec.activated_at, now);
+        let on_disk = load(&p).unwrap();
+        assert_eq!(on_disk, rec);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_manual_path_rejects_tampered_token() {
+        let sk = fresh_signing_key();
+        let vk = sk.verifying_key();
+        let license = manual::ManualLicense {
+            name: "Tester".to_string(),
+            issued_at: Utc::now(),
+        };
+        let mut token = manual::sign(&sk, &license).unwrap();
+        token.push('!');
+        let p = unique_temp_path("activate-manual-tamper");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(
+            &p,
+            &client,
+            "http://unused",
+            Some(&vk),
+            &token,
+            "host-d",
+            Utc::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(!err.is_empty(), "expected verification failure");
+        assert!(!p.exists(), "no record should have been written");
+    }
+
+    #[test]
+    fn record_is_active_manual_requires_valid_signature() {
+        let sk = fresh_signing_key();
+        let license = manual::ManualLicense {
+            name: "Contributor".to_string(),
+            issued_at: Utc::now(),
+        };
+        let token = manual::sign(&sk, &license).unwrap();
+        let rec = SupporterRecord {
+            license_key: token,
+            instance_id: String::new(),
+            activated_at: Utc::now(),
+            last_validated_at: Utc::now() - chrono::Duration::days(365),
+            source: SupporterSource::Manual,
+        };
+        // No grace window applies to manual records: even with
+        // last_validated_at a year stale, the signature is what matters.
+        // The embedded pubkey is the placeholder, so `manual::verify`
+        // rejects this — `record_is_active` returns false until a real
+        // pubkey is wired in.
+        assert!(!record_is_active(&rec, Utc::now()));
+
+        // Tampering with the token rejects under either pubkey.
+        let mut bad = rec.clone();
+        bad.license_key.push('!');
+        assert!(!record_is_active(&bad, Utc::now()));
     }
 
     // ----- HTTP-layer tests for activate_remote_at / validate_remote_at -----

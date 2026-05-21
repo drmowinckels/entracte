@@ -6,6 +6,7 @@ authors = ["Athanasia Mowinckel"]
 license = "Apache-2.0"
 repository = "https://github.com/drmowinckels/entracte"
 edition = "2021"
+default-run = "entracte"
 
 [lib]
 name = "entracte_lib"
@@ -34,6 +35,8 @@ shell-words = "1"
 getrandom = "0.2"
 hex = "0.4"
 subtle = "2"
+ed25519-dalek = "2"
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

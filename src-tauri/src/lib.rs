@@ -12,7 +12,7 @@ mod scheduler;
 mod screen_time_store;
 mod secure_io;
 mod stats;
-mod supporter;
+pub mod supporter;
 #[cfg(test)]
 mod test_support;
 mod tray;
@@ -188,7 +188,7 @@ fn spawn_supporter_revalidation(path: std::path::PathBuf) {
                 tokio::time::sleep(std::time::Duration::from_secs(60 * 60 * 24)).await;
                 continue;
             };
-            if supporter::needs_revalidation(record.last_validated_at, chrono::Utc::now()) {
+            if supporter::needs_remote_revalidation(&record, chrono::Utc::now()) {
                 match supporter::validate_remote(&client, &record.license_key, &record.instance_id)
                     .await
                 {
@@ -229,21 +229,17 @@ async fn verify_supporter_key(
     state: tauri::State<'_, SupporterAppState>,
     license_key: String,
 ) -> Result<supporter::SupporterStatus, String> {
-    let key = license_key.trim().to_string();
-    if key.is_empty() {
-        return Err("license key is empty".to_string());
-    }
     let host = sysinfo::System::host_name().unwrap_or_else(|| "entracte-machine".to_string());
     let instance_name = format!("entracte-{host}");
-    let instance_id = supporter::activate_remote(&state.client, &key, &instance_name).await?;
     let now = chrono::Utc::now();
-    let record = supporter::SupporterRecord {
-        license_key: key,
-        instance_id,
-        activated_at: now,
-        last_validated_at: now,
-    };
-    supporter::save(&state.path, &record).map_err(|e| e.to_string())?;
+    let record = supporter::activate_with(
+        &state.path,
+        &state.client,
+        &license_key,
+        &instance_name,
+        now,
+    )
+    .await?;
     Ok(supporter::SupporterStatus::from_record(Some(&record), now))
 }
 

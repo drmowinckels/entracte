@@ -1096,6 +1096,23 @@ body,
   font-family: inherit;
 }
 
+.settings .supporter-entry {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.settings .supporter-entry input[type="text"] {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.95rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+
 .settings .profile-row input[type="text"] {
   background: var(--input-bg);
   border: 1px solid var(--input-border);
