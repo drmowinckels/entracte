@@ -232,4 +232,57 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("cap"), "got: {err}");
     }
+
+    fn sign_raw_message(sk: &SigningKey, message: &[u8]) -> String {
+        let signature = sk.sign(message);
+        let mut wire = Vec::with_capacity(message.len() + SIGNATURE_LENGTH);
+        wire.extend_from_slice(message);
+        wire.extend_from_slice(&signature.to_bytes());
+        format!("{TOKEN_PREFIX}{}", URL_SAFE_NO_PAD.encode(&wire))
+    }
+
+    #[test]
+    fn verify_rejects_payload_shorter_than_header() {
+        let (sk, vk) = fresh_keypair();
+        let token = sign_raw_message(&sk, &[0x01, 0, 0, 0, 0]);
+        let err = verify_with(&token, &vk).unwrap_err();
+        assert!(err.contains("truncated"), "got: {err}");
+    }
+
+    #[test]
+    fn verify_rejects_unknown_version_byte() {
+        let (sk, vk) = fresh_keypair();
+        let mut message = vec![0x02_u8];
+        message.extend_from_slice(&0_i64.to_be_bytes());
+        message.extend_from_slice(&0_u16.to_be_bytes());
+        let token = sign_raw_message(&sk, &message);
+        let err = verify_with(&token, &vk).unwrap_err();
+        assert!(err.contains("unsupported"), "got: {err}");
+    }
+
+    #[test]
+    fn verify_rejects_name_length_mismatch() {
+        let (sk, vk) = fresh_keypair();
+        let mut message = vec![TOKEN_VERSION];
+        message.extend_from_slice(&0_i64.to_be_bytes());
+        message.extend_from_slice(&50_u16.to_be_bytes());
+        let token = sign_raw_message(&sk, &message);
+        let err = verify_with(&token, &vk).unwrap_err();
+        assert!(err.contains("length mismatch"), "got: {err}");
+    }
+
+    #[test]
+    fn verify_rejects_name_exceeding_max() {
+        // encode_message refuses to produce oversized tokens, so we
+        // assemble the wire bytes by hand to reach the decoder branch.
+        let (sk, vk) = fresh_keypair();
+        let oversized = (MAX_NAME_BYTES + 1) as u16;
+        let mut message = vec![TOKEN_VERSION];
+        message.extend_from_slice(&0_i64.to_be_bytes());
+        message.extend_from_slice(&oversized.to_be_bytes());
+        message.extend(std::iter::repeat_n(b'a', oversized as usize));
+        let token = sign_raw_message(&sk, &message);
+        let err = verify_with(&token, &vk).unwrap_err();
+        assert!(err.contains("maximum length"), "got: {err}");
+    }
 }

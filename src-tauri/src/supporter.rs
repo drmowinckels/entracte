@@ -116,6 +116,65 @@ pub fn needs_revalidation(last_validated_at: DateTime<Utc>, now: DateTime<Utc>) 
     elapsed >= chrono::Duration::from_std(VALIDATE_INTERVAL).unwrap()
 }
 
+/// Whether the daily background loop should hit the storefront for this
+/// record. Manual (community) licences carry their proof on the token
+/// itself, so the network round-trip is skipped.
+pub fn needs_remote_revalidation(record: &SupporterRecord, now: DateTime<Utc>) -> bool {
+    !matches!(record.source, SupporterSource::Manual)
+        && needs_revalidation(record.last_validated_at, now)
+}
+
+/// Pure activation helper: sniffs the key's source, runs the matching
+/// verification path (offline Ed25519 for `ENT1-…`, Lemon Squeezy API
+/// for everything else), and persists the resulting record to disk.
+///
+/// The Tauri command is a thin shim over this so the orchestration can
+/// be exercised end-to-end without spinning up a Tauri runtime.
+pub async fn activate_with(
+    path: &Path,
+    client: &reqwest::Client,
+    key: &str,
+    instance_name: &str,
+    now: DateTime<Utc>,
+) -> Result<SupporterRecord, String> {
+    activate_with_base(path, client, LS_API_BASE, key, instance_name, now).await
+}
+
+pub(crate) async fn activate_with_base(
+    path: &Path,
+    client: &reqwest::Client,
+    ls_base: &str,
+    key: &str,
+    instance_name: &str,
+    now: DateTime<Utc>,
+) -> Result<SupporterRecord, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("license key is empty".to_string());
+    }
+    let record = if manual::looks_like_manual_token(key) {
+        manual::verify(key)?;
+        SupporterRecord {
+            license_key: key.to_string(),
+            instance_id: String::new(),
+            activated_at: now,
+            last_validated_at: now,
+            source: SupporterSource::Manual,
+        }
+    } else {
+        let instance_id = activate_remote_at(client, ls_base, key, instance_name).await?;
+        SupporterRecord {
+            license_key: key.to_string(),
+            instance_id,
+            activated_at: now,
+            last_validated_at: now,
+            source: SupporterSource::LemonSqueezy,
+        }
+    };
+    save(path, &record).map_err(|e| e.to_string())?;
+    Ok(record)
+}
+
 pub fn mask_key(key: &str) -> String {
     let trimmed = key.trim();
     let tail: String = trimmed
@@ -441,6 +500,113 @@ mod tests {
         assert!(record_is_active(&fresh, now));
         let stale = lemonsqueezy_record("K", "i", now, now - chrono::Duration::days(45));
         assert!(!record_is_active(&stale, now));
+    }
+
+    #[test]
+    fn needs_remote_revalidation_true_for_stale_lemonsqueezy() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record("K", "i", now, now - chrono::Duration::hours(25));
+        assert!(needs_remote_revalidation(&rec, now));
+    }
+
+    #[test]
+    fn needs_remote_revalidation_false_for_fresh_lemonsqueezy() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record("K", "i", now, now - chrono::Duration::hours(2));
+        assert!(!needs_remote_revalidation(&rec, now));
+    }
+
+    #[test]
+    fn needs_remote_revalidation_always_false_for_manual() {
+        // Manual records never round-trip to the storefront, even if
+        // `last_validated_at` is ancient — the signature is what matters.
+        let now = Utc::now();
+        let rec = SupporterRecord {
+            license_key: "ENT1-irrelevant".to_string(),
+            instance_id: String::new(),
+            activated_at: now - chrono::Duration::days(365),
+            last_validated_at: now - chrono::Duration::days(365),
+            source: SupporterSource::Manual,
+        };
+        assert!(!needs_remote_revalidation(&rec, now));
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_rejects_empty_key() {
+        let p = unique_temp_path("activate-empty");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(&p, &client, "http://unused", "   ", "host", Utc::now())
+            .await
+            .unwrap_err();
+        assert!(err.contains("empty"), "got: {err}");
+        assert!(!p.exists(), "no record should have been written");
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_lemon_squeezy_path_persists_record() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"activated": true, "instance": {"id": "inst-77"}}"#)
+            .create_async()
+            .await;
+        let p = unique_temp_path("activate-ls");
+        let client = reqwest::Client::new();
+        let now = Utc::now();
+        let rec = activate_with_base(&p, &client, &server.url(), "LS-KEY", "host-a", now)
+            .await
+            .unwrap();
+        assert_eq!(rec.source, SupporterSource::LemonSqueezy);
+        assert_eq!(rec.instance_id, "inst-77");
+        assert_eq!(rec.license_key, "LS-KEY");
+        let on_disk = load(&p).unwrap();
+        assert_eq!(on_disk, rec);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_lemon_squeezy_failure_does_not_persist() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/licenses/activate")
+            .with_status(200)
+            .with_body(r#"{"activated": false, "error": "license_key not found"}"#)
+            .create_async()
+            .await;
+        let p = unique_temp_path("activate-ls-fail");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(&p, &client, &server.url(), "BAD", "host-b", Utc::now())
+            .await
+            .unwrap_err();
+        assert!(err.contains("not found"), "got: {err}");
+        assert!(!p.exists(), "no record should have been written");
+    }
+
+    #[tokio::test]
+    async fn activate_with_base_manual_path_persists_without_network() {
+        // Sign with a fresh key — `manual::verify` will reject the
+        // signature (placeholder pubkey embedded), so we expect Err.
+        // That still proves: a) the manual branch is taken, b) the LS
+        // mock is never called (we don't even stand one up), c) no
+        // record gets written on signature failure.
+        let sk = fresh_signing_key();
+        let license = manual::ManualLicense {
+            name: "Tester".to_string(),
+            issued_at: Utc::now(),
+        };
+        let token = manual::sign(&sk, &license).unwrap();
+        let p = unique_temp_path("activate-manual");
+        let client = reqwest::Client::new();
+        let err = activate_with_base(&p, &client, "http://unused", &token, "host-c", Utc::now())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("verify") || err.contains("placeholder"),
+            "got: {err}"
+        );
+        assert!(!p.exists(), "no record should have been written");
     }
 
     #[test]
