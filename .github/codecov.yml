@@ -47,5 +47,6 @@ ignore:
   - "src/vite-env.d.ts"
   - "src-tauri/target/**"
   - "src-tauri/gen/**"
+  - "src-tauri/src/updater.rs" # thin tauri-plugin-updater shim, no mockable AppHandle surface
   - "scripts/**"
   - "docs/**"
