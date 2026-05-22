@@ -105,7 +105,7 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
         return;
       }
       await invoke("import_backup_from_path", { path });
-      window.location.reload();
+      await refreshDigest(range);
     } catch (e) {
       console.error("backup import failed", e);
     }
