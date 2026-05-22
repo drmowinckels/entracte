@@ -7,16 +7,7 @@ coverage:
         informational: true
     patch:
       default:
-        # 100% was aspirational but proved impossible to sustain on PRs
-        # that add defensive error / branch paths (signature mismatch
-        # arms, filesystem-error fall-through, regex-shape rejection
-        # branches in PII redactors). Those lines are intentionally
-        # never reached in the success path, and many can't be tested
-        # without filesystem-permission mocks. 90% keeps the gate
-        # meaningful — a dramatic drop still trips it — while leaving
-        # room for security-hardening PRs to ship without fighting
-        # branch-coverage artifacts on every push.
-        target: 90%
+        target: 100%
         threshold: 0%
         informational: false
 
