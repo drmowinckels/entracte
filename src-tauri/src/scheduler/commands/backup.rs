@@ -167,7 +167,7 @@ pub async fn export_backup_to_path(
 ) -> Result<(), String> {
     let settings_json = serde_json::to_string_pretty(&scheduler.snapshot_profiles_file().await)
         .map_err(|e| format!("failed to serialise settings: {e}"))?;
-    let events_jsonl = fs::read_to_string(&scheduler.events_path).unwrap_or_default();
+    let events_jsonl = read_optional_text(&scheduler.events_path)?.unwrap_or_default();
     let pause_json = read_optional_text(&scheduler.pause_path)?;
     let screen_time_json = read_optional_text(&scheduler.screen_time_path)?;
     let supporter_json = read_optional_text(&supporter_path_for(scheduler.inner()))?;
