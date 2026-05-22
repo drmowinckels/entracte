@@ -81,7 +81,7 @@ jobs:
       - name: Deploy preview to Netlify
         id: netlify
         # SHA-pinned: this action sees NETLIFY_AUTH_TOKEN. Update via dependabot.
-        uses: nwtgck/actions-netlify@dbedb29b68382c3d884447aa3968acec7af4fe73 # v3.0.0
+        uses: nwtgck/actions-netlify@4cbaf4c08f1a7bfa537d6113472ef4424e4eb654 # v3.0.0
         with:
           publish-dir: docs/.vitepress/dist
           # Each PR gets its own alias so successive pushes overwrite
