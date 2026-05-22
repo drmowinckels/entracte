@@ -171,6 +171,24 @@ mod tests {
     }
 
     #[test]
+    fn redact_license_shapes_keeps_short_ent1_prefix_intact() {
+        // `ENT1-AB` is too short to be a real signed token (min 12 chars
+        // post-prefix). We must NOT redact it — otherwise legitimate text
+        // that happens to start with `ENT1-` gets clobbered.
+        let got = redact_license_shapes("filename ENT1-AB.log");
+        assert_eq!(got, "filename ENT1-AB.log");
+    }
+
+    #[test]
+    fn redact_license_shapes_rejects_almost_ls_key_with_non_alnum_group() {
+        // Five hyphen-separated 4-char groups where one group contains a
+        // non-alphanumeric char must NOT be redacted. Covers the
+        // "trailing group fails alphanum" branch in looks_like_ls_key_at.
+        let got = redact_license_shapes("ABCD-1111-22!2-3333-4444");
+        assert!(!got.contains("[REDACTED-LS-KEY]"), "got: {got}");
+    }
+
+    #[test]
     fn redact_and_truncate_respects_char_boundary() {
         // Use a multi-byte UTF-8 codepoint (3 bytes) right at the cap edge.
         let mut s = "a".repeat(MAX_FIELD_BYTES - 1);

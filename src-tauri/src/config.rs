@@ -309,6 +309,19 @@ mod tests {
     }
 
     #[test]
+    fn load_too_large_file_returns_default() {
+        // Exceeds MAX_CONFIG_BYTES (4 MiB). `read_capped` returns
+        // ErrorKind::InvalidData, falling through to the
+        // not-NotFound arm in `load()`.
+        let (_dir, path) = temp_file();
+        let blob = "x".repeat(5 * 1024 * 1024);
+        fs::write(&path, &blob).unwrap();
+        let loaded = load(&path);
+        assert_eq!(loaded.profiles.len(), 1);
+        assert_eq!(loaded.active, DEFAULT_PROFILE_NAME);
+    }
+
+    #[test]
     fn save_creates_parent_dirs() {
         let dir = temp_dir();
         let path = dir.path().join("a").join("b").join("settings.json");

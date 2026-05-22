@@ -251,6 +251,21 @@ mod tests {
     }
 
     #[test]
+    fn redact_log_tail_keeps_short_ent1_prefix_intact() {
+        // ENT1-XY is shorter than a real token — must not be redacted.
+        let input = "[INFO file] opening ENT1-XY.json\n";
+        let out = redact_log_tail(input);
+        assert_eq!(out, "[INFO file] opening ENT1-XY.json");
+    }
+
+    #[test]
+    fn redact_log_tail_rejects_ls_key_with_non_alnum_group() {
+        let input = "[INFO bug] reproducer ABCD-1111-22!2-3333-4444 oh no\n";
+        let out = redact_log_tail(input);
+        assert!(!out.contains("[REDACTED-LS-KEY]"), "got: {out}");
+    }
+
+    #[test]
     fn redact_sensitive_handles_non_object_input() {
         let value = serde_json::json!("not-an-object");
         let redacted = redact_sensitive(value.clone());

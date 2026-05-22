@@ -553,6 +553,27 @@ mod tests {
     }
 
     #[test]
+    fn signature_matches_returns_false_for_empty_signature() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::hours(2),
+            now - chrono::Duration::minutes(5),
+        );
+        // signature is empty by construction
+        assert!(!signature_matches(&rec));
+    }
+
+    #[test]
+    fn load_returns_none_for_malformed_json_on_disk() {
+        let p = unique_temp_path("malformed");
+        fs::write(&p, "{ this is not json").unwrap();
+        assert!(load(&p).is_none());
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
     fn load_accepts_legacy_record_without_signature() {
         // A record written by an older app version has signature: "".
         // We must still parse it so the user isn't downgraded; the next
