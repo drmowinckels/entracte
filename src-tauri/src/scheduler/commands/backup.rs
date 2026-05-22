@@ -305,6 +305,7 @@ mod tests {
             activated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             last_validated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             source: SupporterSource::Manual,
+            signature: String::new(),
         }
     }
 
@@ -500,6 +501,7 @@ mod rig_tests {
             activated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             last_validated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             source: SupporterSource::Manual,
+            signature: String::new(),
         })
         .unwrap()
     }
@@ -782,6 +784,7 @@ mod rig_tests {
                 activated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
                 last_validated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
                 source: SupporterSource::LemonSqueezy,
+                signature: String::new(),
             },
         )
         .unwrap();
