@@ -9,23 +9,25 @@ use crate::config::{self, ProfilesFile};
 use crate::pause_store::PauseSnapshot;
 use crate::scheduler::pause::restore_pause_state;
 use crate::scheduler::screen_time::ScreenTimeState;
-use crate::scheduler::timers::local_today_string;
+use crate::scheduler::timers::{local_today_string, reset_timers_keep_sleep};
 use crate::scheduler::Scheduler;
 use crate::screen_time_store::ScreenTimeSnapshot;
 use crate::secure_io::write_user_only;
 use crate::stats::LoggedEvent;
+use crate::supporter::{SupporterRecord, SupporterSource};
 use crate::SupporterAppState;
 
 const BACKUP_SCHEMA_VERSION: u32 = 1;
+const BUNDLE_APP_ID: &str = "io.drmowinckels.entracte";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BackupManifest {
     schema_version: u32,
     created_at: String,
     app: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BackupFiles {
     settings_json: String,
     events_jsonl: String,
@@ -34,10 +36,29 @@ struct BackupFiles {
     supporter_json: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BackupBundle {
     manifest: BackupManifest,
     files: BackupFiles,
+}
+
+/// Filter what the export writes for the supporter file.
+///
+/// LemonSqueezy records are bound to an `instance_id` tied to the host
+/// they were activated on — restoring them on a different machine
+/// silently grants up to 30 days of offline grace before the
+/// background revalidator deactivates them server-side. To avoid
+/// users sharing licence files across devices and getting cut off
+/// later, strip LemonSqueezy records on export and only carry the
+/// manual (Ed25519) source through, which verifies locally with no
+/// machine binding.
+fn exportable_supporter(raw: Option<String>) -> Option<String> {
+    let text = raw?;
+    match serde_json::from_str::<SupporterRecord>(&text) {
+        Ok(record) if matches!(record.source, SupporterSource::Manual) => Some(text),
+        Ok(_) => None,
+        Err(_) => None,
+    }
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>, String> {
@@ -61,15 +82,34 @@ fn validate_events_jsonl(events_jsonl: &str) -> Result<(), String> {
 }
 
 fn validate_bundle(bundle: &BackupBundle) -> Result<(), String> {
-    if bundle.manifest.schema_version != BACKUP_SCHEMA_VERSION {
+    if bundle.manifest.app != BUNDLE_APP_ID {
         return Err(format!(
-            "unsupported backup schema version {}, expected {}",
-            bundle.manifest.schema_version, BACKUP_SCHEMA_VERSION
+            "backup file is for a different app ({}), expected {BUNDLE_APP_ID}",
+            bundle.manifest.app,
+        ));
+    }
+    if bundle.manifest.schema_version > BACKUP_SCHEMA_VERSION {
+        return Err(format!(
+            "backup schema version {} is newer than this app supports (max {BACKUP_SCHEMA_VERSION}) — please update Entracte",
+            bundle.manifest.schema_version,
         ));
     }
 
-    serde_json::from_str::<ProfilesFile>(&bundle.files.settings_json)
+    let profiles_file = serde_json::from_str::<ProfilesFile>(&bundle.files.settings_json)
         .map_err(|e| format!("settings_json is invalid: {e}"))?;
+    if profiles_file.profiles.is_empty() {
+        return Err("settings_json has no profiles".to_string());
+    }
+    if !profiles_file
+        .profiles
+        .iter()
+        .any(|p| p.name == profiles_file.active)
+    {
+        return Err(format!(
+            "settings_json active profile {:?} is not in the profile list",
+            profiles_file.active,
+        ));
+    }
     validate_events_jsonl(&bundle.files.events_jsonl)?;
 
     if let Some(pause_json) = &bundle.files.pause_json {
@@ -81,7 +121,7 @@ fn validate_bundle(bundle: &BackupBundle) -> Result<(), String> {
             .map_err(|e| format!("screen_time_json is invalid: {e}"))?;
     }
     if let Some(supporter_json) = &bundle.files.supporter_json {
-        let _: serde_json::Value = serde_json::from_str(supporter_json)
+        serde_json::from_str::<SupporterRecord>(supporter_json)
             .map_err(|e| format!("supporter_json is invalid: {e}"))?;
     }
     Ok(())
@@ -111,8 +151,16 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
 
     write_user_only(&scheduler.config_path, bundle.files.settings_json.as_bytes())
         .map_err(|e| format!("failed to write {}: {e}", scheduler.config_path.display()))?;
-    write_user_only(&scheduler.events_path, bundle.files.events_jsonl.as_bytes())
-        .map_err(|e| format!("failed to write {}: {e}", scheduler.events_path.display()))?;
+    // The Logger thread opens `events_path` fresh for each append. Hold
+    // its `write_lock` across the temp+rename so an in-flight append
+    // can't land on the old inode (which we're about to unlink) and
+    // disappear with it. Mirrors `stats::clear_log`'s coordination.
+    {
+        let logger_lock = scheduler.logger.write_lock();
+        let _guard = logger_lock.lock().unwrap_or_else(|p| p.into_inner());
+        write_user_only(&scheduler.events_path, bundle.files.events_jsonl.as_bytes())
+            .map_err(|e| format!("failed to write {}: {e}", scheduler.events_path.display()))?;
+    }
     write_optional(&scheduler.pause_path, &bundle.files.pause_json)?;
     write_optional(&scheduler.screen_time_path, &bundle.files.screen_time_json)?;
     write_optional(supporter_path, &bundle.files.supporter_json)?;
@@ -130,9 +178,11 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
         let mut settings = scheduler.settings.lock().await;
         *settings = profiles_file.active_settings();
     }
+    let restored_pause = restore_pause_state(&scheduler.pause_path);
+    let paused = matches!(restored_pause, crate::scheduler::PauseState::PausedUntil(_));
     {
         let mut pause_state = scheduler.pause_state.lock().await;
-        *pause_state = restore_pause_state(&scheduler.pause_path);
+        *pause_state = restored_pause;
     }
     {
         let mut screen_time = scheduler.screen_time.lock().await;
@@ -142,12 +192,17 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
             &today,
         );
     }
+    // Reseed the break-timer cursors against the restored settings.
+    // The 1Hz run loop reads `timers` every tick; without this reset
+    // it would compare the restored `Settings::micro_interval_secs`
+    // against pre-import `last_micro`, potentially firing a break
+    // immediately. `set_active_profile` does the same when switching.
+    {
+        let mut timers = scheduler.timers.lock().await;
+        reset_timers_keep_sleep(&mut timers);
+    }
 
     let _ = app.emit("profile:changed", profiles_file.active);
-    let paused = matches!(
-        &*scheduler.pause_state.lock().await,
-        crate::scheduler::PauseState::PausedUntil(_)
-    );
     let _ = app.emit("pause:changed", paused);
     let _ = app.emit("stats:cleared", ());
     Ok(())
@@ -164,13 +219,13 @@ pub async fn export_backup_to_path(
     let events_jsonl = read_optional_text(&scheduler.events_path)?.unwrap_or_default();
     let pause_json = read_optional_text(&scheduler.pause_path)?;
     let screen_time_json = read_optional_text(&scheduler.screen_time_path)?;
-    let supporter_json = read_optional_text(&supporter_state.path)?;
+    let supporter_json = exportable_supporter(read_optional_text(&supporter_state.path)?);
 
     let bundle = BackupBundle {
         manifest: BackupManifest {
             schema_version: BACKUP_SCHEMA_VERSION,
             created_at: Utc::now().to_rfc3339(),
-            app: "io.drmowinckels.entracte".to_string(),
+            app: BUNDLE_APP_ID.to_string(),
         },
         files: BackupFiles {
             settings_json,
@@ -205,97 +260,171 @@ pub async fn import_backup_from_path<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Profile;
     use crate::scheduler::Settings;
     use crate::test_support::temp_dir;
+    use chrono::TimeZone;
 
-    #[test]
-    fn validate_bundle_rejects_bad_schema_version() {
-        let bundle = BackupBundle {
-            manifest: BackupManifest {
-                schema_version: 999,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
-            },
+    fn default_profiles_json() -> String {
+        serde_json::to_string(&ProfilesFile::single(
+            "Default".to_string(),
+            Settings::default(),
+        ))
+        .unwrap()
+    }
+
+    fn manifest() -> BackupManifest {
+        BackupManifest {
+            schema_version: BACKUP_SCHEMA_VERSION,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            app: BUNDLE_APP_ID.to_string(),
+        }
+    }
+
+    fn valid_bundle() -> BackupBundle {
+        BackupBundle {
+            manifest: manifest(),
             files: BackupFiles {
-                settings_json: serde_json::to_string(&ProfilesFile::single(
-                    "Default".to_string(),
-                    Settings::default(),
-                ))
-                .unwrap(),
+                settings_json: default_profiles_json(),
                 events_jsonl: String::new(),
                 pause_json: None,
                 screen_time_json: None,
                 supporter_json: None,
             },
-        };
-        assert!(validate_bundle(&bundle).is_err());
+        }
+    }
+
+    fn manual_supporter_record() -> SupporterRecord {
+        SupporterRecord {
+            license_key: "manual-key".to_string(),
+            instance_id: "i".to_string(),
+            activated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            last_validated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            source: SupporterSource::Manual,
+        }
+    }
+
+    fn lemon_supporter_record() -> SupporterRecord {
+        SupporterRecord {
+            source: SupporterSource::LemonSqueezy,
+            ..manual_supporter_record()
+        }
+    }
+
+    #[test]
+    fn validate_bundle_accepts_minimal_valid_bundle() {
+        validate_bundle(&valid_bundle()).expect("baseline bundle is valid");
+    }
+
+    #[test]
+    fn validate_bundle_rejects_future_schema_version() {
+        let mut bundle = valid_bundle();
+        bundle.manifest.schema_version = BACKUP_SCHEMA_VERSION + 1;
+        let err = validate_bundle(&bundle).expect_err("future schema is rejected");
+        assert!(err.contains("newer than this app supports"));
+    }
+
+    #[test]
+    fn validate_bundle_accepts_older_schema_version() {
+        // We're at v1 today, so this is a no-op assertion until v2; the
+        // test exists so a v2 bump that flips `>` back to `!=` breaks
+        // immediately.
+        if BACKUP_SCHEMA_VERSION == 0 {
+            return;
+        }
+        let mut bundle = valid_bundle();
+        bundle.manifest.schema_version = 0;
+        validate_bundle(&bundle).expect("older schemas are accepted");
+    }
+
+    #[test]
+    fn validate_bundle_rejects_wrong_app_id() {
+        let mut bundle = valid_bundle();
+        bundle.manifest.app = "com.someone.else".to_string();
+        let err = validate_bundle(&bundle).expect_err("foreign app id is rejected");
+        assert!(err.contains("different app"));
+    }
+
+    #[test]
+    fn validate_bundle_rejects_empty_profiles() {
+        let mut bundle = valid_bundle();
+        bundle.files.settings_json =
+            serde_json::to_string(&ProfilesFile { profiles: vec![], active: String::new() })
+                .unwrap();
+        let err = validate_bundle(&bundle).expect_err("empty profiles is rejected");
+        assert!(err.contains("no profiles"));
+    }
+
+    #[test]
+    fn validate_bundle_rejects_active_not_in_profiles() {
+        let mut bundle = valid_bundle();
+        bundle.files.settings_json = serde_json::to_string(&ProfilesFile {
+            profiles: vec![Profile {
+                name: "Default".to_string(),
+                settings: Settings::default(),
+            }],
+            active: "Nonexistent".to_string(),
+        })
+        .unwrap();
+        let err = validate_bundle(&bundle).expect_err("dangling active profile is rejected");
+        assert!(err.contains("not in the profile list"));
     }
 
     #[test]
     fn validate_bundle_rejects_invalid_events_line() {
-        let bundle = BackupBundle {
-            manifest: BackupManifest {
-                schema_version: BACKUP_SCHEMA_VERSION,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
-            },
-            files: BackupFiles {
-                settings_json: serde_json::to_string(&ProfilesFile::single(
-                    "Default".to_string(),
-                    Settings::default(),
-                ))
-                .unwrap(),
-                events_jsonl: "{\"bad\":\"event\"}\n".to_string(),
-                pause_json: None,
-                screen_time_json: None,
-                supporter_json: None,
-            },
-        };
-        assert!(validate_bundle(&bundle).is_err());
+        let mut bundle = valid_bundle();
+        bundle.files.events_jsonl = r#"{"bad":"event"}"#.to_string();
+        let err = validate_bundle(&bundle).expect_err("bad event is rejected");
+        assert!(err.contains("events_jsonl"));
     }
 
     #[test]
     fn validate_bundle_rejects_invalid_settings_json() {
-        let bundle = BackupBundle {
-            manifest: BackupManifest {
-                schema_version: BACKUP_SCHEMA_VERSION,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
-            },
-            files: BackupFiles {
-                settings_json: "{ not valid".to_string(),
-                events_jsonl: String::new(),
-                pause_json: None,
-                screen_time_json: None,
-                supporter_json: None,
-            },
-        };
+        let mut bundle = valid_bundle();
+        bundle.files.settings_json = "{ not valid".to_string();
         let err = validate_bundle(&bundle).expect_err("malformed settings is rejected");
         assert!(err.contains("settings_json is invalid"));
     }
 
     #[test]
     fn validate_bundle_rejects_invalid_pause_json() {
-        let bundle = BackupBundle {
-            manifest: BackupManifest {
-                schema_version: BACKUP_SCHEMA_VERSION,
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
-            },
-            files: BackupFiles {
-                settings_json: serde_json::to_string(&ProfilesFile::single(
-                    "Default".to_string(),
-                    Settings::default(),
-                ))
-                .unwrap(),
-                events_jsonl: String::new(),
-                pause_json: Some("not-json".to_string()),
-                screen_time_json: None,
-                supporter_json: None,
-            },
-        };
+        let mut bundle = valid_bundle();
+        bundle.files.pause_json = Some("not-json".to_string());
         let err = validate_bundle(&bundle).expect_err("malformed pause is rejected");
         assert!(err.contains("pause_json is invalid"));
+    }
+
+    #[test]
+    fn validate_bundle_rejects_invalid_supporter_json() {
+        let mut bundle = valid_bundle();
+        bundle.files.supporter_json = Some("{\"not\":\"a record\"}".to_string());
+        let err = validate_bundle(&bundle).expect_err("malformed supporter is rejected");
+        assert!(err.contains("supporter_json is invalid"));
+    }
+
+    #[test]
+    fn exportable_supporter_keeps_manual_records() {
+        let text = serde_json::to_string(&manual_supporter_record()).unwrap();
+        assert_eq!(exportable_supporter(Some(text.clone())), Some(text));
+    }
+
+    #[test]
+    fn exportable_supporter_drops_lemonsqueezy_records() {
+        let text = serde_json::to_string(&lemon_supporter_record()).unwrap();
+        assert!(
+            exportable_supporter(Some(text)).is_none(),
+            "LemonSqueezy records are machine-bound and shouldn't ride along in backups",
+        );
+    }
+
+    #[test]
+    fn exportable_supporter_drops_unparseable_payload() {
+        assert!(exportable_supporter(Some("garbage".to_string())).is_none());
+    }
+
+    #[test]
+    fn exportable_supporter_passes_none_through() {
+        assert!(exportable_supporter(None).is_none());
     }
 
     #[test]
@@ -350,12 +479,26 @@ mod rig_tests {
     use super::*;
     use crate::config::{Profile, DEFAULT_PROFILE_NAME};
     use crate::scheduler::Settings;
+    use crate::supporter::SupporterRecord;
     use crate::test_support::{mock_app_with_scheduler, temp_dir};
+    use chrono::TimeZone;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use tauri::Listener;
+    use std::time::{Duration, Instant};
+    use tauri::{Listener, Manager};
 
-    async fn write_bundle_to(scheduler: &Scheduler, supporter_path: &Path) -> BackupBundle {
+    fn manual_supporter_text() -> String {
+        serde_json::to_string(&SupporterRecord {
+            license_key: "manual-key".to_string(),
+            instance_id: "i".to_string(),
+            activated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            last_validated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            source: SupporterSource::Manual,
+        })
+        .unwrap()
+    }
+
+    async fn build_bundle_for(scheduler: &Scheduler, supporter_path: &Path) -> BackupBundle {
         let profiles_file = scheduler.snapshot_profiles_file().await;
         let settings_json = serde_json::to_string_pretty(&profiles_file).unwrap();
         let events_jsonl = read_optional_text(&scheduler.events_path)
@@ -368,7 +511,7 @@ mod rig_tests {
             manifest: BackupManifest {
                 schema_version: BACKUP_SCHEMA_VERSION,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
             },
             files: BackupFiles {
                 settings_json,
@@ -380,14 +523,17 @@ mod rig_tests {
         }
     }
 
+    fn supporter_path_in(dir: &Path) -> std::path::PathBuf {
+        dir.join("supporter.json")
+    }
+
     #[tokio::test]
     async fn round_trip_restores_profiles_and_emits_events() {
-        // Source scheduler: two profiles, "Work" active.
         let source_settings = Settings {
             micro_interval_secs: 600,
             ..Settings::default()
         };
-        let (_src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
+        let (src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
             vec![
                 Profile {
                     name: DEFAULT_PROFILE_NAME.to_string(),
@@ -405,26 +551,22 @@ mod rig_tests {
             &src_sched.snapshot_profiles_file().await,
         )
         .unwrap();
-        let src_supporter = src_sched.config_path.parent().unwrap().join("supporter.json");
-        let bundle = write_bundle_to(&src_sched, &src_supporter).await;
+        let bundle = build_bundle_for(&src_sched, &supporter_path_in(src_dir.path())).await;
 
-        // Destination scheduler: single Default profile, fresh state.
-        let (_dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
-        let dest_supporter = dest_sched
-            .config_path
-            .parent()
-            .unwrap()
-            .join("supporter.json");
+        let (dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        let dest_supporter = supporter_path_in(dest_dir.path());
 
         let profile_emitted = Arc::new(AtomicBool::new(false));
         let pause_emitted = Arc::new(AtomicBool::new(false));
         let stats_emitted = Arc::new(AtomicBool::new(false));
-        let p = profile_emitted.clone();
-        let pa = pause_emitted.clone();
-        let s = stats_emitted.clone();
-        app.listen("profile:changed", move |_| p.store(true, Ordering::SeqCst));
-        app.listen("pause:changed", move |_| pa.store(true, Ordering::SeqCst));
-        app.listen("stats:cleared", move |_| s.store(true, Ordering::SeqCst));
+        {
+            let p = profile_emitted.clone();
+            let pa = pause_emitted.clone();
+            let s = stats_emitted.clone();
+            app.listen("profile:changed", move |_| p.store(true, Ordering::SeqCst));
+            app.listen("pause:changed", move |_| pa.store(true, Ordering::SeqCst));
+            app.listen("stats:cleared", move |_| s.store(true, Ordering::SeqCst));
+        }
 
         apply_bundle_to_scheduler(&app.handle().clone(), &dest_sched, &dest_supporter, bundle)
             .await
@@ -434,12 +576,10 @@ mod rig_tests {
         assert_eq!(
             dest_sched.active_profile_name.lock().await.as_str(),
             "Work",
-            "active profile is restored from bundle",
         );
         assert_eq!(
             dest_sched.settings.lock().await.micro_interval_secs,
             source_settings.micro_interval_secs,
-            "active settings reflect the restored profile",
         );
         assert!(profile_emitted.load(Ordering::SeqCst));
         assert!(pause_emitted.load(Ordering::SeqCst));
@@ -447,25 +587,16 @@ mod rig_tests {
     }
 
     #[tokio::test]
-    async fn round_trip_restores_supporter_file_when_present() {
-        let src_dir = temp_dir();
-        let src_supporter = src_dir.path().join("supporter.json");
-        let supporter_text = "{\"license_key\":\"abc\",\"instance_id\":\"i\",\"activated_at\":\
-            \"2026-01-01T00:00:00Z\",\"last_validated_at\":\"2026-01-01T00:00:00Z\",\
-            \"source\":\"manual\"}";
-        fs::write(&src_supporter, supporter_text).unwrap();
-        let (_dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
-        let dest_supporter = dest_sched
-            .config_path
-            .parent()
-            .unwrap()
-            .join("supporter.json");
+    async fn round_trip_restores_supporter_when_manual() {
+        let supporter_text = manual_supporter_text();
+        let (dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        let dest_supporter = supporter_path_in(dest_dir.path());
 
         let bundle = BackupBundle {
             manifest: BackupManifest {
                 schema_version: BACKUP_SCHEMA_VERSION,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
             },
             files: BackupFiles {
                 settings_json: serde_json::to_string(&ProfilesFile::single(
@@ -476,26 +607,31 @@ mod rig_tests {
                 events_jsonl: String::new(),
                 pause_json: None,
                 screen_time_json: None,
-                supporter_json: Some(supporter_text.to_string()),
+                supporter_json: Some(supporter_text.clone()),
             },
         };
-
         apply_bundle_to_scheduler(&app.handle().clone(), &dest_sched, &dest_supporter, bundle)
             .await
             .unwrap();
-
         assert_eq!(fs::read_to_string(&dest_supporter).unwrap(), supporter_text);
     }
 
     #[tokio::test]
-    async fn import_rejects_bundle_with_invalid_schema() {
-        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
-        let supporter = sched.config_path.parent().unwrap().join("supporter.json");
+    async fn import_resets_break_timers_against_restored_settings() {
+        let (dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        // Stash a stale `last_micro` so we can prove it was reset.
+        let stale = Instant::now() - Duration::from_secs(60 * 60);
+        {
+            let mut t = dest_sched.timers.lock().await;
+            t.last_micro = stale;
+            t.micro_warned = true;
+            t.micro_postpone_count = 3;
+        }
         let bundle = BackupBundle {
             manifest: BackupManifest {
-                schema_version: 999,
+                schema_version: BACKUP_SCHEMA_VERSION,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
-                app: "io.drmowinckels.entracte".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
             },
             files: BackupFiles {
                 settings_json: serde_json::to_string(&ProfilesFile::single(
@@ -509,9 +645,165 @@ mod rig_tests {
                 supporter_json: None,
             },
         };
-        let err = apply_bundle_to_scheduler(&app.handle().clone(), &sched, &supporter, bundle)
-            .await
-            .expect_err("schema mismatch is rejected");
-        assert!(err.contains("unsupported backup schema version"));
+        apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &dest_sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .unwrap();
+        let t = dest_sched.timers.lock().await;
+        assert!(
+            t.last_micro > stale,
+            "last_micro was reseeded against post-import wall clock",
+        );
+        assert!(!t.micro_warned, "warn flag cleared");
+        assert_eq!(t.micro_postpone_count, 0, "postpone counter cleared");
+    }
+
+    #[tokio::test]
+    async fn import_rejects_future_schema() {
+        let (dest_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        let mut bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION + 1,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: None,
+                screen_time_json: None,
+                supporter_json: None,
+            },
+        };
+        bundle.manifest.schema_version = BACKUP_SCHEMA_VERSION + 1;
+        let err = apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .expect_err("future schema rejected");
+        assert!(err.contains("newer than this app supports"));
+    }
+
+    /// Real end-to-end: write a bundle via `export_backup_to_path`,
+    /// blow away in-memory state, then `import_backup_from_path` and
+    /// observe state come back.
+    #[tokio::test]
+    async fn export_then_import_through_commands_round_trips_state() {
+        let bundle_dir = temp_dir();
+        let bundle_path = bundle_dir.path().join("entracte-backup.json");
+
+        // Source app: two profiles, "Work" active. Persist so the
+        // export command reads the same state we just set up.
+        let source_settings = Settings {
+            micro_interval_secs: 777,
+            ..Settings::default()
+        };
+        let (src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
+            vec![
+                Profile {
+                    name: DEFAULT_PROFILE_NAME.to_string(),
+                    settings: Settings::default(),
+                },
+                Profile {
+                    name: "Work".to_string(),
+                    settings: source_settings.clone(),
+                },
+            ],
+            "Work",
+        );
+        crate::config::save(
+                &src_sched.config_path,
+                &src_sched.snapshot_profiles_file().await,
+            )
+            .unwrap();
+        let src_app = crate::test_support::wrap_in_mock_app(src_sched.clone());
+        src_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(src_dir.path()),
+            client: reqwest::Client::new(),
+        });
+
+        export_backup_to_path(
+            src_app.state::<Scheduler>(),
+            src_app.state::<crate::SupporterAppState>(),
+            bundle_path.to_string_lossy().to_string(),
+        )
+        .await
+        .expect("export writes the bundle");
+        assert!(bundle_path.exists());
+
+        // Destination app: single Default profile. Run import.
+        let (dest_dir, dest_app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        import_backup_from_path(
+            dest_app.handle().clone(),
+            dest_app.state::<Scheduler>(),
+            dest_app.state::<crate::SupporterAppState>(),
+            bundle_path.to_string_lossy().to_string(),
+        )
+        .await
+        .expect("import succeeds");
+
+        assert_eq!(dest_sched.profiles.lock().await.len(), 2);
+        assert_eq!(
+            dest_sched.active_profile_name.lock().await.as_str(),
+            "Work",
+        );
+        assert_eq!(
+            dest_sched.settings.lock().await.micro_interval_secs,
+            source_settings.micro_interval_secs,
+        );
+    }
+
+    #[tokio::test]
+    async fn export_strips_lemonsqueezy_supporter_record() {
+        let bundle_dir = temp_dir();
+        let bundle_path = bundle_dir.path().join("entracte-backup.json");
+        let (src_dir, src_sched) = crate::test_support::test_scheduler(Settings::default());
+        let src_supporter = supporter_path_in(src_dir.path());
+        crate::supporter::save(
+            &src_supporter,
+            &SupporterRecord {
+                license_key: "ls-key".to_string(),
+                instance_id: "i".to_string(),
+                activated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                last_validated_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                source: SupporterSource::LemonSqueezy,
+            },
+        )
+        .unwrap();
+        let src_app = crate::test_support::wrap_in_mock_app(src_sched.clone());
+        src_app.manage(crate::SupporterAppState {
+            path: src_supporter,
+            client: reqwest::Client::new(),
+        });
+
+        export_backup_to_path(
+            src_app.state::<Scheduler>(),
+            src_app.state::<crate::SupporterAppState>(),
+            bundle_path.to_string_lossy().to_string(),
+        )
+        .await
+        .unwrap();
+
+        let bundle: BackupBundle =
+            serde_json::from_str(&fs::read_to_string(&bundle_path).unwrap()).unwrap();
+        assert!(
+            bundle.files.supporter_json.is_none(),
+            "LemonSqueezy record must not ride along in the bundle",
+        );
     }
 }

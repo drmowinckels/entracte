@@ -46,6 +46,9 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
   // fire on every render and re-trigger `refreshDigest` indefinitely.
   const { stats: session, digest, digestLoading, reset, refreshDigest } = stats;
   const [range, setRange] = useState<StatsRange>("week");
+  const [backupStatus, setBackupStatus] = useState<
+    { kind: "ok" | "err"; message: string } | null
+  >(null);
 
   useEffect(() => {
     refreshDigest(range);
@@ -77,6 +80,7 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
   };
 
   const onExportBackup = async () => {
+    setBackupStatus(null);
     try {
       const path = await saveDialog({
         defaultPath: `entracte-backup-${localDateString()}.json`,
@@ -84,12 +88,15 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
       });
       if (typeof path !== "string" || !path) return;
       await invoke("export_backup_to_path", { path });
+      setBackupStatus({ kind: "ok", message: `Backup written to ${path}` });
     } catch (e) {
       console.error("backup export failed", e);
+      setBackupStatus({ kind: "err", message: `Backup export failed: ${e}` });
     }
   };
 
   const onImportBackup = async () => {
+    setBackupStatus(null);
     try {
       const path = await openDialog({
         multiple: false,
@@ -99,15 +106,17 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
       if (typeof path !== "string" || !path) return;
       if (
         !confirm(
-          "Import this backup and replace your current Entracte settings/history on this machine?",
+          "Importing replaces your profiles, settings, break history, pause state, and supporter record on this machine. Continue?",
         )
       ) {
         return;
       }
       await invoke("import_backup_from_path", { path });
       await refreshDigest(range);
+      setBackupStatus({ kind: "ok", message: "Backup imported" });
     } catch (e) {
       console.error("backup import failed", e);
+      setBackupStatus({ kind: "err", message: `Backup import failed: ${e}` });
     }
   };
 
@@ -278,6 +287,16 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
                 Clear history
               </button>
             </div>
+            {backupStatus && (
+              <p
+                className={
+                  backupStatus.kind === "err" ? "placeholder" : "stat-card-sub"
+                }
+                role={backupStatus.kind === "err" ? "alert" : "status"}
+              >
+                {backupStatus.message}
+              </p>
+            )}
           </section>
         </>
       )}
