@@ -1018,4 +1018,127 @@ mod rig_tests {
             "LemonSqueezy record must not ride along in the bundle",
         );
     }
+
+    /// Drives `export_backup_to_path` + `import_backup_from_path`
+    /// through the real Tauri IPC pipeline (not the bare function
+    /// calls). Builds the `#[tauri::command]` wrappers exactly the way
+    /// the renderer does — `mock_builder().invoke_handler(generate_handler![...])`
+    /// + `get_ipc_response` — so the macro-generated dispatchers
+    /// (`__cmd__<name>`) actually run, covering the decorator lines
+    /// that direct function calls leave untouched.
+    #[tokio::test]
+    async fn backup_commands_round_trip_through_tauri_ipc() {
+        use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+        use tauri::webview::InvokeRequest;
+        use tauri::{ipc::CallbackFn, WebviewWindowBuilder};
+
+        let bundle_dir = temp_dir();
+        let bundle_path = bundle_dir.path().join("entracte-backup.json");
+
+        // Source app: two profiles, "Work" active.
+        let source_settings = Settings {
+            micro_interval_secs: 1234,
+            ..Settings::default()
+        };
+        let (src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
+            vec![
+                Profile {
+                    name: DEFAULT_PROFILE_NAME.to_string(),
+                    settings: Settings::default(),
+                },
+                Profile {
+                    name: "Work".to_string(),
+                    settings: source_settings.clone(),
+                },
+            ],
+            "Work",
+        );
+        crate::config::save(
+            &src_sched.config_path,
+            &src_sched.snapshot_profiles_file().await,
+        )
+        .unwrap();
+
+        let src_app = mock_builder()
+            .invoke_handler(tauri::generate_handler![
+                super::export_backup_to_path,
+                super::import_backup_from_path,
+            ])
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        src_app.manage(src_sched);
+        src_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(src_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let src_webview = WebviewWindowBuilder::new(&src_app, "main", Default::default())
+            .build()
+            .unwrap();
+        let url = if cfg!(any(windows, target_os = "android")) {
+            "http://tauri.localhost"
+        } else {
+            "tauri://localhost"
+        }
+        .parse()
+        .unwrap();
+        get_ipc_response(
+            &src_webview,
+            InvokeRequest {
+                cmd: "export_backup_to_path".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url,
+                body: serde_json::json!({ "path": bundle_path.to_string_lossy() }).into(),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_string(),
+            },
+        )
+        .expect("export command succeeds via IPC");
+        assert!(bundle_path.exists(), "export wrote a bundle file");
+
+        // Destination app: single Default profile. Import via IPC.
+        let (dest_dir, dest_sched) = crate::test_support::test_scheduler(Settings::default());
+        let dest_app = mock_builder()
+            .invoke_handler(tauri::generate_handler![
+                super::export_backup_to_path,
+                super::import_backup_from_path,
+            ])
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        dest_app.manage(dest_sched.clone());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let dest_webview = WebviewWindowBuilder::new(&dest_app, "main", Default::default())
+            .build()
+            .unwrap();
+        let url = if cfg!(any(windows, target_os = "android")) {
+            "http://tauri.localhost"
+        } else {
+            "tauri://localhost"
+        }
+        .parse()
+        .unwrap();
+        get_ipc_response(
+            &dest_webview,
+            InvokeRequest {
+                cmd: "import_backup_from_path".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url,
+                body: serde_json::json!({ "path": bundle_path.to_string_lossy() }).into(),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_string(),
+            },
+        )
+        .expect("import command succeeds via IPC");
+
+        assert_eq!(dest_sched.profiles.lock().await.len(), 2);
+        assert_eq!(dest_sched.active_profile_name.lock().await.as_str(), "Work",);
+        assert_eq!(
+            dest_sched.settings.lock().await.micro_interval_secs,
+            source_settings.micro_interval_secs,
+        );
+    }
 }
