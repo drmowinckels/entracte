@@ -145,6 +145,12 @@ fn append_one(path: &Path, event: &LoggedEvent) -> std::io::Result<()> {
         opts.mode(0o600);
     }
     let mut file = opts.open(path)?;
+    // `mode(0o600)` only applies at creation time. If the file was
+    // created at 0o644 by an older app version, every subsequent
+    // append leaves it world-readable. Tighten on every open so
+    // existing files converge to 0o600 without waiting for the
+    // periodic sweep.
+    let _ = crate::secure_io::tighten_existing_file(path);
     let mut line = serde_json::to_string(event).map_err(std::io::Error::other)?;
     line.push('\n');
     file.write_all(line.as_bytes())?;
@@ -595,10 +601,11 @@ fn guard_str(g: GuardReason) -> &'static str {
 /// next event landing.
 pub fn clear_log(path: &Path, write_lock: &std::sync::Mutex<()>) -> std::io::Result<()> {
     let _guard = write_lock.lock().unwrap_or_else(|p| p.into_inner());
-    if path.exists() {
-        std::fs::remove_file(path)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
-    Ok(())
 }
 
 #[cfg(test)]

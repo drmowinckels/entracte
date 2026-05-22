@@ -54,6 +54,19 @@ use screen_time::ScreenTimeState as InternalScreenTimeState;
 use timers::local_today_string;
 use types::BreakEvent as InternalBreakEvent;
 
+/// Recover from poison rather than silently swallow or panic. If the
+/// `current_break` mutex was poisoned by a panicking writer, we still
+/// want to publish into the slot — losing the publish breaks tray
+/// countdown + cold-mount overlay invariants. The inner data is
+/// always valid (we never leave the slot in a half-written state
+/// between locks), so taking it back is safe.
+pub(crate) fn lock_current_break<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| {
+        warn!("current_break mutex was poisoned; recovering inner data");
+        p.into_inner()
+    })
+}
+
 /// Live, mutable state for the break scheduler.
 ///
 /// Constructed once in `lib::run` and shared across the app via

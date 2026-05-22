@@ -123,7 +123,7 @@ pub async fn clear_event_log<R: Runtime>(
 pub fn get_current_break(
     scheduler: tauri::State<'_, Scheduler>,
 ) -> Result<Option<BreakEvent>, String> {
-    Ok(scheduler.current_break.lock().ok().and_then(|s| s.clone()))
+    Ok(super::super::lock_current_break(&scheduler.current_break).clone())
 }
 
 // `BreakStats` doesn't derive `PartialEq` in production (no consumer

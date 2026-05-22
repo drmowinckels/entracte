@@ -79,12 +79,7 @@ impl Scheduler {
                 s.bedtime_start_minutes,
                 s.bedtime_end_minutes,
             );
-        let on_break = self
-            .current_break
-            .lock()
-            .ok()
-            .and_then(|s| s.clone())
-            .is_some();
+        let on_break = super::lock_current_break(&self.current_break).is_some();
         let suppress_reason =
             SuppressReason::from_u8(self.auto_suppress_reason.load(Ordering::Relaxed));
 

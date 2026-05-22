@@ -5,6 +5,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Default to least-privilege. Each job below escalates explicitly when it
+# needs to upload artifacts / draft releases / request an OIDC token.
+permissions:
+  contents: read
+
 jobs:
   build-unix:
     strategy:
@@ -19,6 +24,8 @@ jobs:
             args: ""
 
     runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write # tauri-action drafts/updates the GitHub release
     steps:
       - uses: actions/checkout@v6
 
@@ -44,7 +51,10 @@ jobs:
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      # SHA-pinned: this action handles Apple signing secrets and drafts the
+      # release. A compromised upstream tag could exfiltrate APPLE_CERTIFICATE
+      # / APPLE_PASSWORD or replace artifacts. Update via dependabot.yml.
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -110,7 +120,8 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: signpath/github-action-submit-signing-request@v2
+      # SHA-pinned: this action holds the SignPath OIDC token. Update via dependabot.
+      - uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -120,7 +131,8 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed
 
-      - uses: softprops/action-gh-release@v3
+      # SHA-pinned: uploads to the GitHub release. Update via dependabot.
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           draft: true
           tag_name: ${{ github.ref_name }}

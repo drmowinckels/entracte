@@ -360,7 +360,9 @@ export function BreaksTab({
               <span>Mix</span>
               <select
                 value={settings.micro_hint_mix}
-                onChange={(e) => update("micro_hint_mix", e.target.value)}
+                onChange={(e) =>
+                  update("micro_hint_mix", e.target.value as typeof settings.micro_hint_mix)
+                }
               >
                 <option value="both">Both</option>
                 <option value="physical">Physical only</option>
@@ -402,7 +404,9 @@ export function BreaksTab({
               </span>
               <select
                 value={settings.long_hint_mix}
-                onChange={(e) => update("long_hint_mix", e.target.value)}
+                onChange={(e) =>
+                  update("long_hint_mix", e.target.value as typeof settings.long_hint_mix)
+                }
               >
                 <option value="both">Both</option>
                 <option value="solo">Solo only</option>

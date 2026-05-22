@@ -30,11 +30,23 @@ jobs:
     steps:
       - name: Resolve tag and version
         id: meta
+        # Pipe untrusted workflow_dispatch input via env, never interpolate
+        # `${{ inputs.tag }}` into the shell directly — a tag like
+        # `v1.0.0; rm -rf /` would otherwise be evaluated.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            tag="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "release" ]; then
+            tag="$RELEASE_TAG"
           else
-            tag="${{ inputs.tag }}"
+            tag="$DISPATCH_TAG"
+          fi
+          # Basic shape validation: anything not in [A-Za-z0-9._-] is rejected.
+          if ! printf '%s' "$tag" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+            echo "::error::refusing to use tag '$tag' — contains characters outside [A-Za-z0-9._-]"
+            exit 1
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"

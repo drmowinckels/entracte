@@ -23,10 +23,10 @@ export function announceBreak(kind: AnnouncedKind, durationSecs: number): string
   const seconds = Math.max(0, durationSecs) % 60;
   const duration =
     minutes > 0 && seconds > 0
-      ? `${minutes} minute${minutes === 1 ? "" : "s"} ${seconds} seconds`
+      ? `${minutes} minute${minutes === 1 ? "" : "s"} ${seconds} second${seconds === 1 ? "" : "s"}`
       : minutes > 0
         ? `${minutes} minute${minutes === 1 ? "" : "s"}`
-        : `${seconds} seconds`;
+        : `${seconds} second${seconds === 1 ? "" : "s"}`;
   return `${dialogLabel(kind)} started. ${duration} remaining.`;
 }
 

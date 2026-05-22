@@ -243,9 +243,7 @@ pub async fn end_break<R: Runtime>(
         }
     }
 
-    if let Ok(mut slot) = scheduler.current_break.lock() {
-        *slot = None;
-    }
+    *super::super::lock_current_break(&scheduler.current_break) = None;
     for (label, window) in app.webview_windows() {
         if label.starts_with("overlay-") {
             let _ = window.hide();
@@ -355,9 +353,7 @@ pub async fn postpone_break_impl(
         let mut t = scheduler.timers.lock().await;
         t.active_break = None;
     }
-    if let Ok(mut slot) = scheduler.current_break.lock() {
-        *slot = None;
-    }
+    *super::super::lock_current_break(&scheduler.current_break) = None;
     Ok(PostponeOutcome { postpone_secs })
 }
 
