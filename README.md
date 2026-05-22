@@ -60,7 +60,7 @@ The overlay is always dark — it has to dim everything else — but the accent 
 
 ## Stats
 
-Entracte keeps a local history of breaks taken, dismissed, and suppressed, with a time-of-day breakdown and a 12-week heatmap. Export to CSV or clear at any time.
+Entracte keeps a local history of breaks taken, dismissed, and suppressed, with a time-of-day breakdown and a 12-week heatmap. Export to CSV, export/import a full local backup bundle, or clear at any time.
 
 <p align="center">
   <img src="docs/screenshots/stats-summary.png" alt="Stats summary: breaks taken, dismissal rate, time paused, and reasons breaks were suppressed" width="480" />

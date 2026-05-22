@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   deltaDirection,
   deltaPct,
@@ -72,6 +73,41 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
       await refreshDigest(range);
     } catch (e) {
       console.error("clear failed", e);
+    }
+  };
+
+  const onExportBackup = async () => {
+    try {
+      const path = await saveDialog({
+        defaultPath: `entracte-backup-${localDateString()}.json`,
+        filters: [{ name: "Entracte backup", extensions: ["json"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      await invoke("export_backup_to_path", { path });
+    } catch (e) {
+      console.error("backup export failed", e);
+    }
+  };
+
+  const onImportBackup = async () => {
+    try {
+      const path = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Entracte backup", extensions: ["json"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      if (
+        !confirm(
+          "Import this backup and replace your current Entracte settings/history on this machine?",
+        )
+      ) {
+        return;
+      }
+      await invoke("import_backup_from_path", { path });
+      window.location.reload();
+    } catch (e) {
+      console.error("backup import failed", e);
     }
   };
 
@@ -232,6 +268,12 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
           <section>
             <div className="actions inline">
               <button onClick={onExportCsv}>Export CSV</button>
+              <button className="secondary" onClick={onExportBackup}>
+                Export full backup
+              </button>
+              <button className="secondary" onClick={onImportBackup}>
+                Import full backup
+              </button>
               <button className="secondary" onClick={onClearLog}>
                 Clear history
               </button>

@@ -71,7 +71,7 @@ The Insights tab gathers all stats.
 - **Breaks suppressed by** — per-reason breakdown.
 - **Time of day** — 24-hour histogram of when breaks fired.
 - **Past 12 weeks** — a per-day heatmap.
-- **Manage data** — Export CSV, Clear history.
+- **Manage data** — Export CSV, Export full backup, Import full backup, Clear history. Full backups include settings + break-history files so you can restore this machine later. To keep backups in common cloud accounts (Google Drive, iCloud Drive, OneDrive, Dropbox), save the backup file inside that provider's synced folder.
 - **This session** — in-memory counters since the current run started (Taken / Skipped / Postponed / Skip rate), with a Reset button.
 
 ## Profiles

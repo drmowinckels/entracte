@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod breaks;
 pub mod hooks;
 pub mod profiles;
