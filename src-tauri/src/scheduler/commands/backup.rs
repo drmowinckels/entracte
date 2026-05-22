@@ -133,7 +133,8 @@ fn write_optional(path: &Path, content: &Option<String>) -> Result<(), String> {
             .map_err(|e| format!("failed to write {}: {e}", path.display())),
         None => {
             if path.exists() {
-                fs::remove_file(path).map_err(|e| format!("failed to remove {}: {e}", path.display()))
+                fs::remove_file(path)
+                    .map_err(|e| format!("failed to remove {}: {e}", path.display()))
             } else {
                 Ok(())
             }
@@ -149,8 +150,11 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
 ) -> Result<(), String> {
     validate_bundle(&bundle)?;
 
-    write_user_only(&scheduler.config_path, bundle.files.settings_json.as_bytes())
-        .map_err(|e| format!("failed to write {}: {e}", scheduler.config_path.display()))?;
+    write_user_only(
+        &scheduler.config_path,
+        bundle.files.settings_json.as_bytes(),
+    )
+    .map_err(|e| format!("failed to write {}: {e}", scheduler.config_path.display()))?;
     // The Logger thread opens `events_path` fresh for each append. Hold
     // its `write_lock` across the temp+rename so an in-flight append
     // can't land on the old inode (which we're about to unlink) and
@@ -250,8 +254,8 @@ pub async fn import_backup_from_path<R: Runtime>(
     supporter_state: tauri::State<'_, SupporterAppState>,
     path: String,
 ) -> Result<(), String> {
-    let text =
-        fs::read_to_string(Path::new(&path)).map_err(|e| format!("failed to read backup file: {e}"))?;
+    let text = fs::read_to_string(Path::new(&path))
+        .map_err(|e| format!("failed to read backup file: {e}"))?;
     let bundle: BackupBundle =
         serde_json::from_str(&text).map_err(|e| format!("failed to parse backup file: {e}"))?;
     apply_bundle_to_scheduler(&app, scheduler.inner(), &supporter_state.path, bundle).await
@@ -348,9 +352,11 @@ mod tests {
     #[test]
     fn validate_bundle_rejects_empty_profiles() {
         let mut bundle = valid_bundle();
-        bundle.files.settings_json =
-            serde_json::to_string(&ProfilesFile { profiles: vec![], active: String::new() })
-                .unwrap();
+        bundle.files.settings_json = serde_json::to_string(&ProfilesFile {
+            profiles: vec![],
+            active: String::new(),
+        })
+        .unwrap();
         let err = validate_bundle(&bundle).expect_err("empty profiles is rejected");
         assert!(err.contains("no profiles"));
     }
@@ -573,10 +579,7 @@ mod rig_tests {
             .expect("apply succeeds");
 
         assert_eq!(dest_sched.profiles.lock().await.len(), 2);
-        assert_eq!(
-            dest_sched.active_profile_name.lock().await.as_str(),
-            "Work",
-        );
+        assert_eq!(dest_sched.active_profile_name.lock().await.as_str(), "Work",);
         assert_eq!(
             dest_sched.settings.lock().await.micro_interval_secs,
             source_settings.micro_interval_secs,
@@ -723,10 +726,10 @@ mod rig_tests {
             "Work",
         );
         crate::config::save(
-                &src_sched.config_path,
-                &src_sched.snapshot_profiles_file().await,
-            )
-            .unwrap();
+            &src_sched.config_path,
+            &src_sched.snapshot_profiles_file().await,
+        )
+        .unwrap();
         let src_app = crate::test_support::wrap_in_mock_app(src_sched.clone());
         src_app.manage(crate::SupporterAppState {
             path: supporter_path_in(src_dir.path()),
@@ -758,10 +761,7 @@ mod rig_tests {
         .expect("import succeeds");
 
         assert_eq!(dest_sched.profiles.lock().await.len(), 2);
-        assert_eq!(
-            dest_sched.active_profile_name.lock().await.as_str(),
-            "Work",
-        );
+        assert_eq!(dest_sched.active_profile_name.lock().await.as_str(), "Work",);
         assert_eq!(
             dest_sched.settings.lock().await.micro_interval_secs,
             source_settings.micro_interval_secs,
