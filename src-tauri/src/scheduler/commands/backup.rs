@@ -1074,13 +1074,10 @@ mod rig_tests {
         let src_webview = WebviewWindowBuilder::new(&src_app, "main", Default::default())
             .build()
             .unwrap();
-        let url = if cfg!(any(windows, target_os = "android")) {
-            "http://tauri.localhost"
-        } else {
-            "tauri://localhost"
-        }
-        .parse()
-        .unwrap();
+        // The rig test mod is gated to non-Windows already, and the
+        // mock runtime doesn't enforce origin checks, so the macOS/Linux
+        // scheme is fine on every platform we compile this test on.
+        let url = "tauri://localhost".parse().unwrap();
         get_ipc_response(
             &src_webview,
             InvokeRequest {
@@ -1113,13 +1110,10 @@ mod rig_tests {
         let dest_webview = WebviewWindowBuilder::new(&dest_app, "main", Default::default())
             .build()
             .unwrap();
-        let url = if cfg!(any(windows, target_os = "android")) {
-            "http://tauri.localhost"
-        } else {
-            "tauri://localhost"
-        }
-        .parse()
-        .unwrap();
+        // The rig test mod is gated to non-Windows already, and the
+        // mock runtime doesn't enforce origin checks, so the macOS/Linux
+        // scheme is fine on every platform we compile this test on.
+        let url = "tauri://localhost".parse().unwrap();
         get_ipc_response(
             &dest_webview,
             InvokeRequest {
