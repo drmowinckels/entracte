@@ -331,14 +331,11 @@ mod tests {
 
     #[test]
     fn validate_bundle_accepts_older_schema_version() {
-        // We're at v1 today, so this is a no-op assertion until v2; the
-        // test exists so a v2 bump that flips `>` back to `!=` breaks
-        // immediately.
-        if BACKUP_SCHEMA_VERSION == 0 {
-            return;
-        }
+        // We're at v1 today, so version 0 stands in for "an older
+        // bundle." Exists so a v2 bump that flips `>` back to `!=`
+        // breaks this immediately.
         let mut bundle = valid_bundle();
-        bundle.manifest.schema_version = 0;
+        bundle.manifest.schema_version = BACKUP_SCHEMA_VERSION.saturating_sub(1);
         validate_bundle(&bundle).expect("older schemas are accepted");
     }
 
@@ -410,6 +407,31 @@ mod tests {
     }
 
     #[test]
+    fn validate_bundle_rejects_invalid_screen_time_json() {
+        let mut bundle = valid_bundle();
+        bundle.files.screen_time_json = Some("not-json".to_string());
+        let err = validate_bundle(&bundle).expect_err("malformed screen_time is rejected");
+        assert!(err.contains("screen_time_json is invalid"));
+    }
+
+    #[test]
+    fn validate_events_jsonl_skips_blank_lines() {
+        let mut bundle = valid_bundle();
+        bundle.files.events_jsonl = "\n   \n".to_string();
+        validate_bundle(&bundle).expect("blank lines are tolerated");
+    }
+
+    #[test]
+    fn read_optional_text_propagates_non_notfound_error() {
+        // Reading a directory as if it were a file returns IsADirectory
+        // (or similar non-NotFound kind), which exercises the error
+        // mapping branch.
+        let dir = temp_dir();
+        let err = read_optional_text(dir.path()).expect_err("reading a dir is not NotFound");
+        assert!(err.contains("failed to read"));
+    }
+
+    #[test]
     fn exportable_supporter_keeps_manual_records() {
         let text = serde_json::to_string(&manual_supporter_record()).unwrap();
         assert_eq!(exportable_supporter(Some(text.clone())), Some(text));
@@ -472,6 +494,29 @@ mod tests {
         let path = dir.path().join("never-existed.json");
         write_optional(&path, &None).unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn write_optional_surfaces_write_error() {
+        // Pre-create a directory where the target file should land, so
+        // `write_user_only`'s temp+rename can't replace it — the rename
+        // fails and we get the error-mapping closure.
+        let dir = temp_dir();
+        let path = dir.path().join("blocked.json");
+        fs::create_dir(&path).unwrap();
+        let err = write_optional(&path, &Some("payload".to_string()))
+            .expect_err("write to a directory path fails");
+        assert!(err.contains("failed to write"));
+    }
+
+    #[test]
+    fn write_optional_surfaces_remove_error() {
+        // `fs::remove_file` on a directory returns IsADirectory.
+        let dir = temp_dir();
+        let path = dir.path().join("subdir");
+        fs::create_dir(&path).unwrap();
+        let err = write_optional(&path, &None).expect_err("remove of a dir fails");
+        assert!(err.contains("failed to remove"));
     }
 }
 
@@ -768,6 +813,170 @@ mod rig_tests {
             dest_sched.settings.lock().await.micro_interval_secs,
             source_settings.micro_interval_secs,
         );
+    }
+
+    #[tokio::test]
+    async fn apply_writes_all_optional_payloads() {
+        // Round-trip with every optional payload populated so the
+        // `write_optional` calls inside apply each take the Some branch.
+        let (dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        let pause_text = r#"{"paused":false,"until_epoch_secs":null}"#;
+        let screen_text = r#"{"date":"2026-01-01","seconds":0}"#;
+        let supporter_text = manual_supporter_text();
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: Some(pause_text.to_string()),
+                screen_time_json: Some(screen_text.to_string()),
+                supporter_json: Some(supporter_text.clone()),
+            },
+        };
+        apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &dest_sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .expect("apply succeeds");
+        assert_eq!(
+            fs::read_to_string(&dest_sched.pause_path).unwrap(),
+            pause_text
+        );
+        assert_eq!(
+            fs::read_to_string(&dest_sched.screen_time_path).unwrap(),
+            screen_text,
+        );
+        assert_eq!(
+            fs::read_to_string(supporter_path_in(dest_dir.path())).unwrap(),
+            supporter_text,
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_surfaces_events_write_failure() {
+        // config_path writes cleanly; events_path is blocked by a
+        // directory squatting on it. Exercises the logger-lock branch
+        // and its error mapping.
+        let (dest_dir, app, mut sched) = mock_app_with_scheduler(Settings::default());
+        let blocked = dest_dir.path().join("events-blocked");
+        fs::create_dir(&blocked).unwrap();
+        sched.events_path = blocked;
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: None,
+                screen_time_json: None,
+                supporter_json: None,
+            },
+        };
+        let err = apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .expect_err("events write failure surfaces");
+        assert!(err.contains("failed to write"));
+    }
+
+    #[tokio::test]
+    async fn apply_surfaces_config_write_failure() {
+        // Park a directory at `config_path` so `write_user_only`'s
+        // temp+rename fails on the very first write — proves the
+        // user-facing error is shaped right rather than leaking a raw
+        // io::Error.
+        let (dest_dir, app, mut sched) = mock_app_with_scheduler(Settings::default());
+        let blocked = dest_dir.path().join("settings-blocked");
+        fs::create_dir(&blocked).unwrap();
+        sched.config_path = blocked;
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: None,
+                screen_time_json: None,
+                supporter_json: None,
+            },
+        };
+        let err = apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .expect_err("config write failure surfaces");
+        assert!(err.contains("failed to write"));
+    }
+
+    #[tokio::test]
+    async fn import_command_errors_on_missing_file() {
+        let (dest_dir, dest_app, _dest_sched) = mock_app_with_scheduler(Settings::default());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let bogus = dest_dir.path().join("nope.json");
+        let err = import_backup_from_path(
+            dest_app.handle().clone(),
+            dest_app.state::<Scheduler>(),
+            dest_app.state::<crate::SupporterAppState>(),
+            bogus.to_string_lossy().to_string(),
+        )
+        .await
+        .expect_err("missing file is reported");
+        assert!(err.contains("failed to read backup file"));
+    }
+
+    #[tokio::test]
+    async fn import_command_errors_on_garbage_payload() {
+        let (dest_dir, dest_app, _dest_sched) = mock_app_with_scheduler(Settings::default());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let garbage = dest_dir.path().join("garbage.json");
+        fs::write(&garbage, "not a backup bundle").unwrap();
+        let err = import_backup_from_path(
+            dest_app.handle().clone(),
+            dest_app.state::<Scheduler>(),
+            dest_app.state::<crate::SupporterAppState>(),
+            garbage.to_string_lossy().to_string(),
+        )
+        .await
+        .expect_err("malformed file is reported");
+        assert!(err.contains("failed to parse backup file"));
     }
 
     #[tokio::test]
