@@ -7,6 +7,16 @@ export type MonitorPlacement = "primary" | "active" | "all";
 
 export type ClockFormat = "12h" | "24h";
 
+// Mirrors the Rust enum vocabularies for the four `*_schedule_mode` /
+// `*_break_mode` / `*_hint_mix` fields. The Rust side stores these as
+// `String` and matches on `.as_str()`; the values here are the canonical
+// strings the renderer is allowed to send back. Module-local so knip
+// stays happy — re-export if a consumer outside this file needs them.
+type ScheduleMode = "interval" | "fixed" | "both";
+type BreakDeliveryMode = "overlay" | "windowed" | "notification";
+type MicroHintMix = "both" | "physical" | "psychological";
+type LongHintMix = "both" | "solo" | "social";
+
 export type HookEvent =
   | "break_start"
   | "break_end"
@@ -67,10 +77,10 @@ export type SchedulerSettings = {
   break_health_enabled: boolean;
   micro_physical_hints: string[];
   micro_psychological_hints: string[];
-  micro_hint_mix: string;
+  micro_hint_mix: MicroHintMix;
   long_hints: string[];
   long_social_hints: string[];
-  long_hint_mix: string;
+  long_hint_mix: LongHintMix;
   sleep_hints: string[];
   hint_rotate_seconds: number;
   delay_break_if_typing: boolean;
@@ -83,8 +93,8 @@ export type SchedulerSettings = {
   overlay_font_scale: number;
   micro_fixed_times: string[];
   long_fixed_times: string[];
-  micro_schedule_mode: string;
-  long_schedule_mode: string;
+  micro_schedule_mode: ScheduleMode;
+  long_schedule_mode: ScheduleMode;
   hooks_enabled: boolean;
   hooks: HookConfig[];
   daily_screen_time_enabled: boolean;
@@ -92,8 +102,8 @@ export type SchedulerSettings = {
   daily_screen_time_remind_again_minutes: number;
   tray_countdown_enabled: boolean;
   tray_countdown_target: TrayCountdownTarget;
-  micro_break_mode: string;
-  long_break_mode: string;
+  micro_break_mode: BreakDeliveryMode;
+  long_break_mode: BreakDeliveryMode;
   custom_css: string;
 };
 

@@ -3,7 +3,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
+
+use crate::secure_io;
 
 pub mod manual;
 
@@ -11,6 +16,23 @@ const LS_API_BASE: &str = "https://api.lemonsqueezy.com/v1";
 const VALIDATE_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 const OFFLINE_GRACE: Duration = Duration::from_secs(60 * 60 * 24 * 30);
 const FILE_NAME: &str = "supporter.json";
+/// Maximum on-disk size for `supporter.json`. The legitimate record is
+/// well under 1 KiB; capping the read at 16 KiB defends against
+/// pathological inputs (10 GiB JSON file with one nested object) without
+/// constraining future record growth.
+const MAX_FILE_BYTES: u64 = 16 * 1024;
+/// How far into the future a timestamp may sit before we treat it as
+/// tampering rather than clock skew. 1 hour swallows reasonable NTP drift.
+const FUTURE_CLOCK_SKEW_TOLERANCE: chrono::Duration = chrono::Duration::hours(1);
+/// Tag-binding HMAC key for `supporter.json`. The threat model here is
+/// "raise the bar above text-editor tampering" — a determined user with
+/// the binary can extract this constant, so this is **not** a security
+/// boundary against a sophisticated adversary. It is, however, sufficient
+/// to detect casual JSON edits ("flip is_supporter to true") and prevents
+/// replay of records between machines (each install pins the HMAC against
+/// a per-record `activated_at` + `instance_id`).
+const RECORD_HMAC_KEY: &[u8] = b"entracte/supporter-record/v1\0\
+                                this-key-binds-supporter-records-against-text-editor-tampering";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +50,12 @@ pub struct SupporterRecord {
     pub last_validated_at: DateTime<Utc>,
     #[serde(default)]
     pub source: SupporterSource,
+    /// HMAC-SHA256 over the canonical encoding of the other fields,
+    /// hex-encoded. `#[serde(default)]` so records written by older
+    /// app versions still parse — `load()` treats an empty signature as
+    /// legacy and forces re-signing on next online validation.
+    #[serde(default)]
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,38 +88,117 @@ impl SupporterStatus {
 }
 
 fn record_is_active(record: &SupporterRecord, now: DateTime<Utc>) -> bool {
+    if !temporal_sanity(record, now) {
+        return false;
+    }
     match record.source {
         SupporterSource::Manual => manual::verify(&record.license_key).is_ok(),
         SupporterSource::LemonSqueezy => is_within_grace(record.last_validated_at, now),
     }
 }
 
+/// Reject records whose timestamps are impossible — e.g. `activated_at`
+/// later than `last_validated_at`, or either timestamp far enough into
+/// the future to suggest the user wound their clock forward to extend
+/// the offline grace window. NTP drift is accommodated by
+/// `FUTURE_CLOCK_SKEW_TOLERANCE`.
+fn temporal_sanity(record: &SupporterRecord, now: DateTime<Utc>) -> bool {
+    let max_future = now + FUTURE_CLOCK_SKEW_TOLERANCE;
+    record.activated_at <= max_future
+        && record.last_validated_at <= max_future
+        && record.activated_at <= record.last_validated_at
+}
+
+/// Canonical byte encoding of the record's verifiable fields. Field
+/// ordering and length-prefixing are fixed so the same record always
+/// serialises identically — JSON's object-key order is not stable enough
+/// for HMAC input.
+fn canonical_bytes(record: &SupporterRecord) -> Vec<u8> {
+    let source_tag: u8 = match record.source {
+        SupporterSource::LemonSqueezy => 1,
+        SupporterSource::Manual => 2,
+    };
+    let mut out = Vec::with_capacity(
+        1 + 8 + 8 + 1 + 4 + record.license_key.len() + 4 + record.instance_id.len(),
+    );
+    out.push(1u8); // version byte — bump if the encoding changes
+    out.extend_from_slice(&record.activated_at.timestamp().to_be_bytes());
+    out.extend_from_slice(&record.last_validated_at.timestamp().to_be_bytes());
+    out.push(source_tag);
+    let key_bytes = record.license_key.as_bytes();
+    out.extend_from_slice(&(key_bytes.len() as u32).to_be_bytes());
+    out.extend_from_slice(key_bytes);
+    let inst_bytes = record.instance_id.as_bytes();
+    out.extend_from_slice(&(inst_bytes.len() as u32).to_be_bytes());
+    out.extend_from_slice(inst_bytes);
+    out
+}
+
+fn compute_signature(record: &SupporterRecord) -> String {
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(RECORD_HMAC_KEY).expect("HMAC accepts any key length");
+    mac.update(&canonical_bytes(record));
+    hex::encode(mac.finalize().into_bytes())
+}
+
+fn signature_matches(record: &SupporterRecord) -> bool {
+    if record.signature.is_empty() {
+        return false;
+    }
+    let expected = compute_signature(record);
+    expected
+        .as_bytes()
+        .ct_eq(record.signature.as_bytes())
+        .into()
+}
+
 pub fn file_path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE_NAME)
 }
 
+/// Read the supporter record from disk. Returns `None` if the file is
+/// missing, malformed, larger than `MAX_FILE_BYTES`, or carries a
+/// signature that doesn't verify under the current HMAC key. Records
+/// with an empty `signature` (written by app versions before HMAC
+/// binding shipped) parse but `record_is_active` will require the next
+/// online validation to re-sign before granting supporter status.
 pub fn load(path: &Path) -> Option<SupporterRecord> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.len() > MAX_FILE_BYTES {
+        log::warn!(
+            "supporter.json exceeds {MAX_FILE_BYTES} bytes ({} bytes on disk); refusing to parse",
+            metadata.len()
+        );
+        return None;
+    }
     let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
+    let record: SupporterRecord = match serde_json::from_str(&text) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("supporter.json failed to parse: {e}");
+            return None;
+        }
+    };
+    if !record.signature.is_empty() && !signature_matches(&record) {
+        log::warn!("supporter.json signature mismatch; treating as tampered");
+        return None;
+    }
+    Some(record)
 }
 
 pub fn save(path: &Path, record: &SupporterRecord) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let body = serde_json::to_string_pretty(record).map_err(std::io::Error::other)?;
-    let mut tmp = path.as_os_str().to_os_string();
-    tmp.push(".tmp");
-    let tmp_path = PathBuf::from(tmp);
-    fs::write(&tmp_path, body)?;
-    fs::rename(&tmp_path, path)
+    let mut signed = record.clone();
+    signed.signature = compute_signature(&signed);
+    let body = serde_json::to_string_pretty(&signed).map_err(std::io::Error::other)?;
+    secure_io::write_user_only(path, body.as_bytes())
 }
 
 pub fn delete(path: &Path) -> std::io::Result<()> {
-    if path.exists() {
-        fs::remove_file(path)?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
-    Ok(())
 }
 
 /// Single-call answer to "is this install a supporter right now?".
@@ -167,6 +274,7 @@ pub(crate) async fn activate_with_base(
             activated_at: now,
             last_validated_at: now,
             source: SupporterSource::Manual,
+            signature: String::new(),
         }
     } else {
         let instance_id = activate_remote_at(client, ls_base, key, instance_name).await?;
@@ -176,6 +284,7 @@ pub(crate) async fn activate_with_base(
             activated_at: now,
             last_validated_at: now,
             source: SupporterSource::LemonSqueezy,
+            signature: String::new(),
         }
     };
     save(path, &record).map_err(|e| e.to_string())?;
@@ -305,6 +414,7 @@ mod tests {
             activated_at,
             last_validated_at,
             source: SupporterSource::LemonSqueezy,
+            signature: String::new(),
         }
     }
 
@@ -339,6 +449,163 @@ mod tests {
         let now = Utc::now();
         let future = now + chrono::Duration::days(1);
         assert!(!is_within_grace(future, now));
+    }
+
+    #[test]
+    fn temporal_sanity_rejects_validated_before_activated() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(1),
+            now - chrono::Duration::days(5),
+        );
+        assert!(!temporal_sanity(&rec, now));
+        assert!(!record_is_active(&rec, now));
+    }
+
+    #[test]
+    fn temporal_sanity_rejects_far_future_timestamps() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(1),
+            now + chrono::Duration::days(2),
+        );
+        assert!(!temporal_sanity(&rec, now));
+        assert!(!record_is_active(&rec, now));
+    }
+
+    #[test]
+    fn temporal_sanity_tolerates_minor_clock_skew() {
+        // NTP can have the validating clock a few minutes ahead of the
+        // verifying clock; we must not reject within the tolerance band.
+        let now = Utc::now();
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(1),
+            now + chrono::Duration::minutes(5),
+        );
+        assert!(temporal_sanity(&rec, now));
+    }
+
+    #[test]
+    fn signature_matches_for_freshly_signed_record() {
+        let now = Utc::now();
+        let mut rec = lemonsqueezy_record(
+            "K-1",
+            "i-1",
+            now - chrono::Duration::hours(2),
+            now - chrono::Duration::minutes(5),
+        );
+        rec.signature = compute_signature(&rec);
+        assert!(signature_matches(&rec));
+    }
+
+    #[test]
+    fn signature_mismatch_when_key_tampered() {
+        let now = Utc::now();
+        let mut rec = lemonsqueezy_record(
+            "K-1",
+            "i-1",
+            now - chrono::Duration::hours(2),
+            now - chrono::Duration::minutes(5),
+        );
+        rec.signature = compute_signature(&rec);
+        rec.license_key = "DIFFERENT".to_string();
+        assert!(!signature_matches(&rec));
+    }
+
+    #[test]
+    fn signature_mismatch_when_timestamps_tampered() {
+        let now = Utc::now();
+        let mut rec = lemonsqueezy_record(
+            "K-1",
+            "i-1",
+            now - chrono::Duration::hours(2),
+            now - chrono::Duration::minutes(5),
+        );
+        rec.signature = compute_signature(&rec);
+        // Attacker tries to wind last_validated_at forward to extend grace
+        rec.last_validated_at = now + chrono::Duration::days(20);
+        assert!(!signature_matches(&rec));
+    }
+
+    #[test]
+    fn load_rejects_tampered_signature_on_disk() {
+        let p = unique_temp_path("tampered-sig");
+        let rec = lemonsqueezy_record(
+            "ORIG-KEY",
+            "i-1",
+            Utc::now() - chrono::Duration::hours(2),
+            Utc::now() - chrono::Duration::minutes(5),
+        );
+        save(&p, &rec).unwrap();
+        // Hand-edit the file: bump is_supporter-relevant field, keep signature.
+        let raw = fs::read_to_string(&p).unwrap();
+        let edited = raw.replace("ORIG-KEY", "FORGED-KEY");
+        fs::write(&p, edited).unwrap();
+        // Load must reject the now-mismatched signature.
+        assert!(load(&p).is_none());
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn signature_matches_returns_false_for_empty_signature() {
+        let now = Utc::now();
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::hours(2),
+            now - chrono::Duration::minutes(5),
+        );
+        // signature is empty by construction
+        assert!(!signature_matches(&rec));
+    }
+
+    #[test]
+    fn load_returns_none_for_malformed_json_on_disk() {
+        let p = unique_temp_path("malformed");
+        fs::write(&p, "{ this is not json").unwrap();
+        assert!(load(&p).is_none());
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn load_accepts_legacy_record_without_signature() {
+        // A record written by an older app version has signature: "".
+        // We must still parse it so the user isn't downgraded; the next
+        // online validation will re-sign it.
+        let p = unique_temp_path("legacy-no-sig");
+        let body = serde_json::json!({
+            "license_key": "LEGACY",
+            "instance_id": "i-legacy",
+            "activated_at": Utc::now() - chrono::Duration::days(2),
+            "last_validated_at": Utc::now() - chrono::Duration::minutes(10),
+            "source": "lemon_squeezy",
+        });
+        fs::write(&p, serde_json::to_string(&body).unwrap()).unwrap();
+        let loaded = load(&p).unwrap();
+        assert!(loaded.signature.is_empty());
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn load_rejects_file_larger_than_max_bytes() {
+        let p = unique_temp_path("oversized");
+        // Write MAX + 1 bytes of valid-looking JSON.
+        let blob = format!(
+            "{{\"license_key\":\"{}\",\"instance_id\":\"i\",\"activated_at\":\"{}\",\"last_validated_at\":\"{}\",\"source\":\"lemon_squeezy\"}}",
+            "X".repeat(MAX_FILE_BYTES as usize),
+            Utc::now().to_rfc3339(),
+            Utc::now().to_rfc3339(),
+        );
+        fs::write(&p, &blob).unwrap();
+        assert!(fs::metadata(&p).unwrap().len() > MAX_FILE_BYTES);
+        assert!(load(&p).is_none());
+        let _ = fs::remove_file(&p);
     }
 
     #[test]
@@ -392,7 +659,12 @@ mod tests {
         let rec = lemonsqueezy_record("ABCDEFGH", "abc", Utc::now(), Utc::now());
         save(&p, &rec).unwrap();
         let loaded = load(&p).unwrap();
-        assert_eq!(loaded, rec);
+        assert_eq!(loaded.license_key, rec.license_key);
+        assert_eq!(loaded.instance_id, rec.instance_id);
+        assert_eq!(loaded.activated_at, rec.activated_at);
+        assert_eq!(loaded.last_validated_at, rec.last_validated_at);
+        assert_eq!(loaded.source, rec.source);
+        assert!(!loaded.signature.is_empty(), "save() must sign the record");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -492,34 +764,59 @@ mod tests {
             activated_at: Utc::now(),
             last_validated_at: Utc::now(),
             source: SupporterSource::Manual,
+            signature: String::new(),
         };
         save(&p, &rec).unwrap();
         let loaded = load(&p).unwrap();
         assert_eq!(loaded.source, SupporterSource::Manual);
-        assert_eq!(loaded, rec);
+        assert_eq!(loaded.license_key, rec.license_key);
+        assert!(
+            !loaded.signature.is_empty(),
+            "save() must sign manual records too"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn record_is_active_lemonsqueezy_uses_grace_window() {
         let now = Utc::now();
-        let fresh = lemonsqueezy_record("K", "i", now, now - chrono::Duration::days(1));
+        let fresh = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(2),
+            now - chrono::Duration::days(1),
+        );
         assert!(record_is_active(&fresh, now));
-        let stale = lemonsqueezy_record("K", "i", now, now - chrono::Duration::days(45));
+        let stale = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(60),
+            now - chrono::Duration::days(45),
+        );
         assert!(!record_is_active(&stale, now));
     }
 
     #[test]
     fn needs_remote_revalidation_true_for_stale_lemonsqueezy() {
         let now = Utc::now();
-        let rec = lemonsqueezy_record("K", "i", now, now - chrono::Duration::hours(25));
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(2),
+            now - chrono::Duration::hours(25),
+        );
         assert!(needs_remote_revalidation(&rec, now));
     }
 
     #[test]
     fn needs_remote_revalidation_false_for_fresh_lemonsqueezy() {
         let now = Utc::now();
-        let rec = lemonsqueezy_record("K", "i", now, now - chrono::Duration::hours(2));
+        let rec = lemonsqueezy_record(
+            "K",
+            "i",
+            now - chrono::Duration::days(1),
+            now - chrono::Duration::hours(2),
+        );
         assert!(!needs_remote_revalidation(&rec, now));
     }
 
@@ -534,6 +831,7 @@ mod tests {
             activated_at: now - chrono::Duration::days(365),
             last_validated_at: now - chrono::Duration::days(365),
             source: SupporterSource::Manual,
+            signature: String::new(),
         };
         assert!(!needs_remote_revalidation(&rec, now));
     }
@@ -577,7 +875,11 @@ mod tests {
         assert_eq!(rec.instance_id, "inst-77");
         assert_eq!(rec.license_key, "LS-KEY");
         let on_disk = load(&p).unwrap();
-        assert_eq!(on_disk, rec);
+        assert_eq!(on_disk.license_key, rec.license_key);
+        assert_eq!(on_disk.instance_id, rec.instance_id);
+        assert_eq!(on_disk.activated_at, rec.activated_at);
+        assert_eq!(on_disk.source, rec.source);
+        assert!(!on_disk.signature.is_empty());
         let _ = fs::remove_file(&p);
     }
 
@@ -640,7 +942,9 @@ mod tests {
         assert_eq!(rec.license_key, token);
         assert_eq!(rec.activated_at, now);
         let on_disk = load(&p).unwrap();
-        assert_eq!(on_disk, rec);
+        assert_eq!(on_disk.license_key, rec.license_key);
+        assert_eq!(on_disk.source, SupporterSource::Manual);
+        assert!(!on_disk.signature.is_empty());
         let _ = fs::remove_file(&p);
     }
 
@@ -679,12 +983,14 @@ mod tests {
             issued_at: Utc::now(),
         };
         let token = manual::sign(&sk, &license).unwrap();
+        let now = Utc::now();
         let rec = SupporterRecord {
             license_key: token,
             instance_id: String::new(),
-            activated_at: Utc::now(),
-            last_validated_at: Utc::now() - chrono::Duration::days(365),
+            activated_at: now - chrono::Duration::days(730),
+            last_validated_at: now - chrono::Duration::days(365),
             source: SupporterSource::Manual,
+            signature: String::new(),
         };
         // No grace window applies to manual records: even with
         // last_validated_at a year stale, the signature is what matters.

@@ -4,8 +4,8 @@
   "ignoreDependencies": ["axe-core"],
   "ignoreBinaries": ["lychee"],
   "rules": {
-    "exports": "warn",
+    "exports": "error",
     "types": "warn",
-    "duplicates": "warn"
+    "duplicates": "error"
   }
 }

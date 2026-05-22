@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Keep SHA-pinned GitHub Actions current. The release/audit/docs workflows
+  # pin actions by SHA (with a `# vX.Y.Z` comment) so a compromised upstream
+  # tag can't exfiltrate Apple/SignPath/Netlify secrets. Dependabot rewrites
+  # the SHA and bumps the comment when a new tag lands upstream.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"

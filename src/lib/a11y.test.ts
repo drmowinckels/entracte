@@ -34,13 +34,16 @@ describe("announceBreak", () => {
       "Entracte break reminder, Micro break started. 20 seconds remaining.",
     );
     expect(announceBreak("micro", 1)).toBe(
-      "Entracte break reminder, Micro break started. 1 seconds remaining.",
+      "Entracte break reminder, Micro break started. 1 second remaining.",
     );
   });
 
-  it("combines minutes and seconds when both are non-zero", () => {
+  it("combines minutes and seconds when both are non-zero with singular forms", () => {
     expect(announceBreak("long", 90)).toBe(
       "Entracte break reminder, Long break started. 1 minute 30 seconds remaining.",
+    );
+    expect(announceBreak("long", 61)).toBe(
+      "Entracte break reminder, Long break started. 1 minute 1 second remaining.",
     );
     expect(announceBreak("long", 615)).toBe(
       "Entracte break reminder, Long break started. 10 minutes 15 seconds remaining.",

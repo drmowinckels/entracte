@@ -36,6 +36,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Default to least-privilege. No job in this workflow needs write access
+# to the repo.
+permissions:
+  contents: read
+
 jobs:
   frontend:
     runs-on: ubuntu-22.04
@@ -56,7 +61,10 @@ jobs:
           slug: drmowinckels/entracte
           files: coverage/lcov.info
           flags: frontend
-          fail_ci_if_error: false
+          # Gate uploads strictly when we own the workflow context: push events
+          # to main always upload; PRs only upload (and gate on success) when
+          # they originate from this repo (forks can't access CODECOV_TOKEN).
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: npm run build
       - name: accessibility audit (axe, every tab × light & dark)
         run: node scripts/audit-a11y.mjs
@@ -98,7 +106,10 @@ jobs:
           slug: drmowinckels/entracte
           files: src-tauri/lcov.info
           flags: rust
-          fail_ci_if_error: false
+          # Gate uploads strictly when we own the workflow context: push events
+          # to main always upload; PRs only upload (and gate on success) when
+          # they originate from this repo (forks can't access CODECOV_TOKEN).
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - name: cargo test
         if: matrix.platform != 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib

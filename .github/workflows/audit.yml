@@ -18,6 +18,12 @@ concurrency:
   group: audit-${{ github.ref }}
   cancel-in-progress: true
 
+# Default to least-privilege. The `advisory` job opts in to
+# pull-requests: write for its sticky-comment step; nothing else
+# needs write access in this workflow.
+permissions:
+  contents: read
+
 jobs:
   # Hard-fail audits: enforce correctness on every PR.
   audit:
@@ -78,7 +84,9 @@ jobs:
       - name: lychee (broken links)
         id: lychee
         continue-on-error: true
-        uses: lycheeverse/lychee-action@v2
+        # SHA-pinned: this action runs against the repo workspace and has
+        # access to GITHUB_TOKEN for rate-limiting. Update via dependabot.
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
         with:
           args: --config .github/audit/lychee.toml --root-dir "${{ github.workspace }}/docs" --no-progress "**/*.md"
           output: audit-reports/lychee.md
@@ -145,7 +153,9 @@ jobs:
 
       - name: Post / update sticky PR comment
         if: always() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v3
+        # SHA-pinned: this action holds pull-requests:write — exactly the
+        # privilege an attacker would target. Update via dependabot.
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: advisory-audit
           path: advisory-comment.md
