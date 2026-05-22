@@ -88,7 +88,12 @@ export function ScheduleTab({
               <span>Schedule</span>
               <select
                 value={settings.micro_schedule_mode}
-                onChange={(e) => update("micro_schedule_mode", e.target.value)}
+                onChange={(e) =>
+                  update(
+                    "micro_schedule_mode",
+                    e.target.value as typeof settings.micro_schedule_mode,
+                  )
+                }
               >
                 <option value="interval">Interval</option>
                 <option value="fixed">Fixed times</option>
@@ -191,7 +196,12 @@ export function ScheduleTab({
               <span>Schedule</span>
               <select
                 value={settings.long_schedule_mode}
-                onChange={(e) => update("long_schedule_mode", e.target.value)}
+                onChange={(e) =>
+                  update(
+                    "long_schedule_mode",
+                    e.target.value as typeof settings.long_schedule_mode,
+                  )
+                }
               >
                 <option value="interval">Interval</option>
                 <option value="fixed">Fixed times</option>

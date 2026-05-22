@@ -211,9 +211,7 @@ pub fn fire_break<R: Runtime>(
         hint_rotate_seconds,
         health_intensity,
     };
-    if let Ok(mut slot) = current_break.lock() {
-        *slot = Some(payload.clone());
-    }
+    *super::lock_current_break(current_break) = Some(payload.clone());
 
     let monitors = select_overlay_monitors(app, placement);
     let count = monitors.len().max(1);

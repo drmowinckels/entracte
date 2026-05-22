@@ -1,11 +1,14 @@
-use std::fs;
 use std::io;
 use std::path::Path;
 
 use log::error;
 use serde::{Deserialize, Serialize};
 
-use crate::secure_io::write_user_only;
+use crate::secure_io::{read_capped, write_user_only};
+
+/// PauseSnapshot is two scalars. Anything bigger than 4 KiB on disk
+/// is either junk or attacker-controlled — refuse to even parse it.
+const MAX_PAUSE_BYTES: u64 = 4 * 1024;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -15,7 +18,7 @@ pub struct PauseSnapshot {
 }
 
 pub fn load(path: &Path) -> PauseSnapshot {
-    match fs::read_to_string(path) {
+    match read_capped(path, MAX_PAUSE_BYTES) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
             error!(
                 "pause_store: failed to parse {}: {e} — using defaults",
@@ -100,7 +103,7 @@ mod tests {
     #[test]
     fn load_corrupt_returns_default() {
         let (_dir, path) = temp_pause_file();
-        fs::write(&path, "{not valid json").unwrap();
+        std::fs::write(&path, "{not valid json").unwrap();
         let loaded = load(&path);
         assert!(!loaded.paused);
         assert!(loaded.until_epoch_secs.is_none());

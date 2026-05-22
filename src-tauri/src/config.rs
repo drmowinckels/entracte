@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -168,8 +169,14 @@ impl<'de> Deserialize<'de> for ProfilesFile {
     }
 }
 
+/// Refuse to load a settings file larger than 4 MiB. Real settings
+/// (hooks + custom CSS + 5 profiles) come in well under 100 KiB; the
+/// cap defends against a maliciously-grown JSON file causing the
+/// loader to allocate gigabytes.
+const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
+
 pub fn load(path: &Path) -> ProfilesFile {
-    match fs::read_to_string(path) {
+    match crate::secure_io::read_capped(path, MAX_CONFIG_BYTES) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
             warn!(
                 "config: failed to parse {}: {e} — using defaults",
@@ -296,6 +303,19 @@ mod tests {
     fn load_corrupt_returns_default() {
         let (_dir, path) = temp_file();
         fs::write(&path, "{not valid json").unwrap();
+        let loaded = load(&path);
+        assert_eq!(loaded.profiles.len(), 1);
+        assert_eq!(loaded.active, DEFAULT_PROFILE_NAME);
+    }
+
+    #[test]
+    fn load_too_large_file_returns_default() {
+        // Exceeds MAX_CONFIG_BYTES (4 MiB). `read_capped` returns
+        // ErrorKind::InvalidData, falling through to the
+        // not-NotFound arm in `load()`.
+        let (_dir, path) = temp_file();
+        let blob = "x".repeat(5 * 1024 * 1024);
+        fs::write(&path, &blob).unwrap();
         let loaded = load(&path);
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.active, DEFAULT_PROFILE_NAME);

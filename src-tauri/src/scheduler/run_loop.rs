@@ -186,7 +186,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             // tray reads `bedtime_active` directly and shows the moon icon.
             continue;
         }
-        sched.timers.lock().await.last_sleep = None;
+        // Note: `last_sleep` is intentionally *not* cleared here. Earlier
+        // versions zeroed it on every non-bedtime tick, which meant
+        // briefly exiting the bedtime window (clock skew, end-minute edit)
+        // and re-entering would re-fire immediately. The `decide_bedtime`
+        // interval check on the persisted `Instant` is the only re-fire
+        // gate; on the next day the elapsed time naturally exceeds any
+        // sane `bedtime_interval_secs`, so a fresh bedtime entry fires.
 
         // Live readings for the guard decision. Short-circuit each
         // call on the matching setting so `dnd::is_active()` and the
@@ -287,6 +293,11 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                         0.0
                     },
                 );
+                hooks::run_hooks(
+                    &s,
+                    HookEvent::BreakStart,
+                    HookContext::with_kind_duration(BreakKind::Long, s.long_duration_secs),
+                );
                 sched.logger.log(EventPayload::BreakStart {
                     kind: BreakKind::Long,
                     duration_secs: s.long_duration_secs,
@@ -326,6 +337,11 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                     } else {
                         0.0
                     },
+                );
+                hooks::run_hooks(
+                    &s,
+                    HookEvent::BreakStart,
+                    HookContext::with_kind_duration(BreakKind::Micro, s.micro_duration_secs),
                 );
                 sched.logger.log(EventPayload::BreakStart {
                     kind: BreakKind::Micro,

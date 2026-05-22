@@ -10,8 +10,32 @@
 //! are therefore intentionally Windows no-ops, not missing coverage.
 
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
+
+/// Read a file, refusing to load more than `max_bytes`. Unbounded
+/// `fs::read_to_string` on attacker-controlled JSON is a denial-of-
+/// service primitive (a 4 GiB file gets loaded into RAM); every JSON
+/// state file we own should route through this. Returns
+/// `ErrorKind::InvalidData` when the file is too large so callers can
+/// distinguish from missing/permission errors.
+pub fn read_capped(path: &Path, max_bytes: u64) -> io::Result<String> {
+    let metadata = std::fs::metadata(path)?;
+    let size = metadata.len();
+    if size > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{}: file is {size} bytes, exceeds cap of {max_bytes}",
+                path.display()
+            ),
+        ));
+    }
+    let file = std::fs::File::open(path)?;
+    let mut buf = String::with_capacity(size as usize);
+    file.take(max_bytes).read_to_string(&mut buf)?;
+    Ok(buf)
+}
 
 pub fn write_user_only(path: &Path, contents: &[u8]) -> io::Result<()> {
     let dir = path
@@ -142,6 +166,32 @@ pub fn spawn_periodic_dir_tighten(dir: std::path::PathBuf, interval: std::time::
 mod tests {
     use super::*;
     use crate::test_support::temp_dir;
+
+    #[test]
+    fn read_capped_under_cap_returns_contents() {
+        let dir = temp_dir();
+        let path = dir.path().join("ok");
+        std::fs::write(&path, b"hello").unwrap();
+        let got = read_capped(&path, 1024).unwrap();
+        assert_eq!(got, "hello");
+    }
+
+    #[test]
+    fn read_capped_over_cap_errors_with_invalid_data() {
+        let dir = temp_dir();
+        let path = dir.path().join("big");
+        std::fs::write(&path, vec![b'x'; 2048]).unwrap();
+        let err = read_capped(&path, 1024).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn read_capped_missing_returns_not_found() {
+        let dir = temp_dir();
+        let path = dir.path().join("nope");
+        let err = read_capped(&path, 1024).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
 
     #[cfg(unix)]
     #[test]

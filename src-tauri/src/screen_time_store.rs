@@ -1,11 +1,12 @@
-use std::fs;
 use std::io;
 use std::path::Path;
 
 use log::error;
 use serde::{Deserialize, Serialize};
 
-use crate::secure_io::write_user_only;
+use crate::secure_io::{read_capped, write_user_only};
+
+const MAX_SCREEN_TIME_BYTES: u64 = 4 * 1024;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -16,7 +17,7 @@ pub struct ScreenTimeSnapshot {
 }
 
 pub fn load(path: &Path) -> ScreenTimeSnapshot {
-    match fs::read_to_string(path) {
+    match read_capped(path, MAX_SCREEN_TIME_BYTES) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
             error!(
                 "screen_time_store: failed to parse {}: {e} — using defaults",
@@ -76,7 +77,7 @@ mod tests {
     #[test]
     fn load_corrupt_returns_default() {
         let (_dir, path) = temp_screen_time_file();
-        fs::write(&path, "{not valid json").unwrap();
+        std::fs::write(&path, "{not valid json").unwrap();
         let loaded = load(&path);
         assert!(loaded.date.is_empty());
         assert_eq!(loaded.seconds, 0);

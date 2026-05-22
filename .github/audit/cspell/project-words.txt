@@ -161,3 +161,4 @@ rgba
 Datatilsynet
 macapps
 winget
+unserialisable

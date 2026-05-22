@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay",
+  "description": "Minimal capability for break-overlay windows. Excludes dialog/notification/autostart — those belong to the settings window only.",
+  "windows": ["overlay-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "opener:default",
+    "log:default"
+  ]
+}

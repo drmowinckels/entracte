@@ -30,6 +30,9 @@ concurrency:
   group: docs-preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   preview:
     # Skip PRs from forks — they don't have access to the Netlify secrets
@@ -77,7 +80,8 @@ jobs:
           cp -r target/typedoc/. docs/.vitepress/dist/api/ts/
       - name: Deploy preview to Netlify
         id: netlify
-        uses: nwtgck/actions-netlify@v3
+        # SHA-pinned: this action sees NETLIFY_AUTH_TOKEN. Update via dependabot.
+        uses: nwtgck/actions-netlify@dbedb29b68382c3d884447aa3968acec7af4fe73 # v3.0.0
         with:
           publish-dir: docs/.vitepress/dist
           # Each PR gets its own alias so successive pushes overwrite
@@ -98,7 +102,8 @@ jobs:
 
       - name: Post / update preview comment on PR
         if: always() && steps.netlify.conclusion != 'cancelled'
-        uses: marocchino/sticky-pull-request-comment@v3
+        # SHA-pinned (writes to PRs). Update via dependabot.
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: docs-preview
           message: |
