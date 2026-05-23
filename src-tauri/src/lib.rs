@@ -141,6 +141,16 @@ pub fn run() {
             let events_path = data_dir.join("events.jsonl");
             let _ = secure_io::tighten_existing_file(&events_path);
             let screen_time_path = data_dir.join("screen_time.json");
+            // `stats::append_one` only sets mode at file creation, so
+            // a file recreated through migration / `cp` / restore
+            // would otherwise keep the process umask until next
+            // restart. Sweep the data dir at the same cadence as
+            // log_dir so events.jsonl, screen_time.json, and
+            // supporter.json converge back to 0o600 in-process.
+            secure_io::spawn_periodic_dir_tighten(
+                data_dir.clone(),
+                std::time::Duration::from_secs(60),
+            );
 
             let scheduler = Scheduler::new(config_path, pause_path, events_path, screen_time_path);
             scheduler.spawn(app.handle().clone());

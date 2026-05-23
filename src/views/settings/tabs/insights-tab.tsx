@@ -74,7 +74,16 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
   };
 
   const onClearLog = async () => {
-    if (!confirm("Clear all break history? This cannot be undone.")) return;
+    const confirmed = await askDialog(
+      "Clear all break history? This cannot be undone.",
+      {
+        title: "Clear history",
+        kind: "warning",
+        okLabel: "Clear",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
     try {
       await invoke("clear_event_log");
       await refreshDigest(range);
@@ -294,6 +303,11 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
                 Clear history
               </button>
             </div>
+            <p className="stat-card-sub">
+              Full-backup files contain your manual supporter token (if you have
+              one). Treat them like a password — keep them on a device you
+              control, don&apos;t post them in public bug reports.
+            </p>
             {backupStatus && (
               <p
                 className={
