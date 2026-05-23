@@ -36,6 +36,14 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
     loop {
         sleep(Duration::from_secs(1)).await;
 
+        // While a backup import is mid-flight, skip the entire tick.
+        // The flag is held for the duration of `apply_bundle_to_scheduler`
+        // so the run loop never observes a half-restored state (new
+        // events.jsonl on disk but stale in-memory settings).
+        if sched.import_in_progress.load(Ordering::Relaxed) {
+            continue;
+        }
+
         let now = Instant::now();
         let mut just_resumed = false;
         {

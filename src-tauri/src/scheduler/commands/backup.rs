@@ -1,9 +1,11 @@
-use std::fs;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 use crate::config::{self, ProfilesFile};
 use crate::pause_store::PauseSnapshot;
@@ -12,13 +14,24 @@ use crate::scheduler::screen_time::ScreenTimeState;
 use crate::scheduler::timers::{local_today_string, reset_timers_keep_sleep};
 use crate::scheduler::Scheduler;
 use crate::screen_time_store::ScreenTimeSnapshot;
-use crate::secure_io::write_user_only;
+use crate::secure_io::{read_capped, write_user_only};
 use crate::stats::LoggedEvent;
-use crate::supporter::{SupporterRecord, SupporterSource};
+use crate::supporter::{self, SupporterRecord, SupporterSource};
 use crate::SupporterAppState;
 
 const BACKUP_SCHEMA_VERSION: u32 = 1;
 const BUNDLE_APP_ID: &str = "io.drmowinckels.entracte";
+/// Hard cap on the on-disk size of a bundle file we'll deserialize.
+/// 256 MiB swallows years of `events.jsonl` with plenty of headroom
+/// (~5 KB per logged event × hundreds of events per day × decades),
+/// but stops an accidentally-picked 10 GiB blob from OOMing the
+/// process during `serde_json::from_str`.
+const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
+/// Only the settings window invokes backup IPC. Overlays never need
+/// it; gate at the command boundary so a future renderer bug that
+/// leaks the IPC handle to an overlay can't initiate a destructive
+/// import or exfiltrate state.
+const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupManifest {
@@ -52,19 +65,31 @@ struct BackupBundle {
 /// later, strip LemonSqueezy records on export and only carry the
 /// manual (Ed25519) source through, which verifies locally with no
 /// machine binding.
-fn exportable_supporter(raw: Option<String>) -> Option<String> {
-    let text = raw?;
-    match serde_json::from_str::<SupporterRecord>(&text) {
-        Ok(record) if matches!(record.source, SupporterSource::Manual) => Some(text),
-        Ok(_) => None,
-        Err(_) => None,
+///
+/// Routes the read through `supporter::load()` so a tampered or
+/// unsigned on-disk record (signature mismatch, oversized file) is
+/// dropped at the source — otherwise we'd carry a forged record into
+/// the bundle that `load()` would then reject on import, silently
+/// losing the user's supporter status.
+fn exportable_supporter(supporter_path: &Path) -> Option<String> {
+    let record = supporter::load(supporter_path)?;
+    if !matches!(record.source, SupporterSource::Manual) {
+        log::info!("backup: stripping LemonSqueezy supporter record from export (machine-bound)");
+        return None;
+    }
+    match fs::read_to_string(supporter_path) {
+        Ok(text) => Some(text),
+        Err(e) => {
+            log::warn!("backup: supporter.json verified but could not be re-read for export: {e}");
+            None
+        }
     }
 }
 
-fn read_optional_text(path: &Path) -> Result<Option<String>, String> {
-    match fs::read_to_string(path) {
+fn read_optional_text(path: &Path, max_bytes: u64) -> Result<Option<String>, String> {
+    match read_capped(path, max_bytes) {
         Ok(s) => Ok(Some(s)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("failed to read {}: {e}", path.display())),
     }
 }
@@ -127,19 +152,131 @@ fn validate_bundle(bundle: &BackupBundle) -> Result<(), String> {
     Ok(())
 }
 
-fn write_optional(path: &Path, content: &Option<String>) -> Result<(), String> {
-    match content {
-        Some(v) => write_user_only(path, v.as_bytes())
-            .map_err(|e| format!("failed to write {}: {e}", path.display())),
-        None => {
-            if path.exists() {
-                fs::remove_file(path)
-                    .map_err(|e| format!("failed to remove {}: {e}", path.display()))
-            } else {
-                Ok(())
-            }
-        }
+/// Per-file action staged for the commit phase. Writes land in
+/// `.<name>.import.tmp` alongside the final path so the rename is
+/// across a single directory entry (atomic on every filesystem we
+/// support). Removes have no temp — they're just deferred unlinks.
+#[derive(Debug)]
+enum StageAction {
+    Write(PathBuf),
+    Remove,
+}
+
+#[derive(Debug)]
+struct StagedFile {
+    final_path: PathBuf,
+    action: StageAction,
+}
+
+fn stage_path_for(target: &Path) -> Result<PathBuf, String> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| format!("stage path {} has no parent", target.display()))?;
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("stage path {} has no file name", target.display()))?;
+    Ok(dir.join(format!(".{name}.import.tmp")))
+}
+
+fn stage_write(target: &Path, contents: &[u8]) -> Result<StagedFile, String> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| format!("stage write {} has no parent", target.display()))?;
+    fs::create_dir_all(dir)
+        .map_err(|e| format!("failed to ensure parent dir for {}: {e}", target.display()))?;
+    let tmp = stage_path_for(target)?;
+    let _ = fs::remove_file(&tmp);
+
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
+    let mut file = opts
+        .open(&tmp)
+        .map_err(|e| format!("failed to stage {}: {e}", target.display()))?;
+    file.write_all(contents)
+        .map_err(|e| format!("failed to stage {}: {e}", target.display()))?;
+    file.sync_all()
+        .map_err(|e| format!("failed to stage {}: {e}", target.display()))?;
+    Ok(StagedFile {
+        final_path: target.to_owned(),
+        action: StageAction::Write(tmp),
+    })
+}
+
+fn stage_remove(target: &Path) -> StagedFile {
+    StagedFile {
+        final_path: target.to_owned(),
+        action: StageAction::Remove,
+    }
+}
+
+fn discard_stage(stage: &StagedFile) {
+    if let StageAction::Write(tmp) = &stage.action {
+        let _ = fs::remove_file(tmp);
+    }
+}
+
+fn discard_all(stages: &[StagedFile]) {
+    for s in stages {
+        discard_stage(s);
+    }
+}
+
+fn commit_stage(stage: &StagedFile) -> Result<(), String> {
+    match &stage.action {
+        StageAction::Write(tmp) => fs::rename(tmp, &stage.final_path).map_err(|e| {
+            format!(
+                "failed to commit {} (staged at {}): {e}",
+                stage.final_path.display(),
+                tmp.display(),
+            )
+        }),
+        StageAction::Remove => match fs::remove_file(&stage.final_path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!(
+                "failed to remove {}: {e}",
+                stage.final_path.display()
+            )),
+        },
+    }
+}
+
+fn stage_optional(target: &Path, content: &Option<String>) -> Result<StagedFile, String> {
+    match content {
+        Some(v) => stage_write(target, v.as_bytes()),
+        None => Ok(stage_remove(target)),
+    }
+}
+
+/// RAII guard that flips `Scheduler::import_in_progress` on construction
+/// and restores it on drop, including on panic. The run loop checks the
+/// flag once per tick and short-circuits while it's set.
+struct ImportGuard<'a>(&'a AtomicBool);
+
+impl<'a> ImportGuard<'a> {
+    fn new(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Relaxed);
+        Self(flag)
+    }
+}
+
+impl<'a> Drop for ImportGuard<'a> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
+fn ensure_main_window<R: Runtime>(webview: &WebviewWindow<R>) -> Result<(), String> {
+    if webview.label() != MAIN_WINDOW_LABEL {
+        return Err("backup commands are restricted to the main window".to_string());
+    }
+    Ok(())
 }
 
 async fn apply_bundle_to_scheduler<R: Runtime>(
@@ -150,24 +287,58 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
 ) -> Result<(), String> {
     validate_bundle(&bundle)?;
 
-    write_user_only(
-        &scheduler.config_path,
-        bundle.files.settings_json.as_bytes(),
-    )
-    .map_err(|e| format!("failed to write {}: {e}", scheduler.config_path.display()))?;
-    // The Logger thread opens `events_path` fresh for each append. Hold
-    // its `write_lock` across the temp+rename so an in-flight append
+    let _import_guard = ImportGuard::new(&scheduler.import_in_progress);
+
+    // Stage every write up front so any I/O error (out of space, perms,
+    // filesystem readonly) fails before we mutate the live state. Once
+    // every `.import.tmp` is on disk and synced, the commit phase is a
+    // tight loop of single-directory renames — as close to atomic as we
+    // can get without filesystem transactions.
+    let mut stages: Vec<StagedFile> = Vec::with_capacity(5);
+    let staging = (|| -> Result<(), String> {
+        stages.push(stage_write(
+            &scheduler.config_path,
+            bundle.files.settings_json.as_bytes(),
+        )?);
+        stages.push(stage_write(
+            &scheduler.events_path,
+            bundle.files.events_jsonl.as_bytes(),
+        )?);
+        stages.push(stage_optional(
+            &scheduler.pause_path,
+            &bundle.files.pause_json,
+        )?);
+        stages.push(stage_optional(
+            &scheduler.screen_time_path,
+            &bundle.files.screen_time_json,
+        )?);
+        stages.push(stage_optional(
+            supporter_path,
+            &bundle.files.supporter_json,
+        )?);
+        Ok(())
+    })();
+    if let Err(e) = staging {
+        discard_all(&stages);
+        return Err(e);
+    }
+
+    // The Logger thread opens `events_path` fresh for each append.
+    // Hold its `write_lock` across every rename so an in-flight append
     // can't land on the old inode (which we're about to unlink) and
     // disappear with it. Mirrors `stats::clear_log`'s coordination.
-    {
+    let commit = (|| -> Result<(), String> {
         let logger_lock = scheduler.logger.write_lock();
         let _guard = logger_lock.lock().unwrap_or_else(|p| p.into_inner());
-        write_user_only(&scheduler.events_path, bundle.files.events_jsonl.as_bytes())
-            .map_err(|e| format!("failed to write {}: {e}", scheduler.events_path.display()))?;
+        for stage in &stages {
+            commit_stage(stage)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = commit {
+        discard_all(&stages);
+        return Err(e);
     }
-    write_optional(&scheduler.pause_path, &bundle.files.pause_json)?;
-    write_optional(&scheduler.screen_time_path, &bundle.files.screen_time_json)?;
-    write_optional(supporter_path, &bundle.files.supporter_json)?;
 
     let profiles_file = config::load(&scheduler.config_path);
     {
@@ -213,17 +384,20 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn export_backup_to_path(
+pub async fn export_backup_to_path<R: Runtime>(
+    webview: WebviewWindow<R>,
     scheduler: tauri::State<'_, Scheduler>,
     supporter_state: tauri::State<'_, SupporterAppState>,
     path: String,
 ) -> Result<(), String> {
+    ensure_main_window(&webview)?;
     let settings_json = serde_json::to_string_pretty(&scheduler.snapshot_profiles_file().await)
         .map_err(|e| format!("failed to serialise settings: {e}"))?;
-    let events_jsonl = read_optional_text(&scheduler.events_path)?.unwrap_or_default();
-    let pause_json = read_optional_text(&scheduler.pause_path)?;
-    let screen_time_json = read_optional_text(&scheduler.screen_time_path)?;
-    let supporter_json = exportable_supporter(read_optional_text(&supporter_state.path)?);
+    let events_jsonl =
+        read_optional_text(&scheduler.events_path, MAX_BACKUP_BYTES)?.unwrap_or_default();
+    let pause_json = read_optional_text(&scheduler.pause_path, MAX_BACKUP_BYTES)?;
+    let screen_time_json = read_optional_text(&scheduler.screen_time_path, MAX_BACKUP_BYTES)?;
+    let supporter_json = exportable_supporter(&supporter_state.path);
 
     let bundle = BackupBundle {
         manifest: BackupManifest {
@@ -249,15 +423,22 @@ pub async fn export_backup_to_path(
 
 #[tauri::command]
 pub async fn import_backup_from_path<R: Runtime>(
-    app: AppHandle<R>,
+    webview: WebviewWindow<R>,
     scheduler: tauri::State<'_, Scheduler>,
     supporter_state: tauri::State<'_, SupporterAppState>,
     path: String,
 ) -> Result<(), String> {
-    let text = fs::read_to_string(Path::new(&path))
-        .map_err(|e| format!("failed to read backup file: {e}"))?;
+    ensure_main_window(&webview)?;
+    let text = read_capped(Path::new(&path), MAX_BACKUP_BYTES).map_err(|e| match e.kind() {
+        io::ErrorKind::InvalidData => format!(
+            "backup file exceeds the maximum allowed size of {} MiB",
+            MAX_BACKUP_BYTES / (1024 * 1024),
+        ),
+        _ => format!("failed to read backup file: {e}"),
+    })?;
     let bundle: BackupBundle =
         serde_json::from_str(&text).map_err(|e| format!("failed to parse backup file: {e}"))?;
+    let app = webview.app_handle().clone();
     apply_bundle_to_scheduler(&app, scheduler.inner(), &supporter_state.path, bundle).await
 }
 
@@ -427,40 +608,80 @@ mod tests {
         // (or similar non-NotFound kind), which exercises the error
         // mapping branch.
         let dir = temp_dir();
-        let err = read_optional_text(dir.path()).expect_err("reading a dir is not NotFound");
+        let err = read_optional_text(dir.path(), MAX_BACKUP_BYTES)
+            .expect_err("reading a dir is not NotFound");
+        assert!(err.contains("failed to read"));
+    }
+
+    #[test]
+    fn read_optional_text_rejects_oversized_files() {
+        // `read_capped` returns InvalidData when the file exceeds the
+        // cap; the wrapper folds that into the same "failed to read"
+        // error shape so import surfaces it consistently.
+        let dir = temp_dir();
+        let path = dir.path().join("huge.json");
+        fs::write(&path, vec![b'x'; 2048]).unwrap();
+        let err = read_optional_text(&path, 1024).expect_err("oversize is rejected");
         assert!(err.contains("failed to read"));
     }
 
     #[test]
     fn exportable_supporter_keeps_manual_records() {
-        let text = serde_json::to_string(&manual_supporter_record()).unwrap();
-        assert_eq!(exportable_supporter(Some(text.clone())), Some(text));
+        // `supporter::save` signs the record; `exportable_supporter`
+        // must verify and pass the on-disk text through verbatim.
+        let dir = temp_dir();
+        let path = dir.path().join("supporter.json");
+        supporter::save(&path, &manual_supporter_record()).unwrap();
+        let want = fs::read_to_string(&path).unwrap();
+        assert_eq!(exportable_supporter(&path).as_deref(), Some(want.as_str()));
     }
 
     #[test]
     fn exportable_supporter_drops_lemonsqueezy_records() {
-        let text = serde_json::to_string(&lemon_supporter_record()).unwrap();
+        let dir = temp_dir();
+        let path = dir.path().join("supporter.json");
+        supporter::save(&path, &lemon_supporter_record()).unwrap();
         assert!(
-            exportable_supporter(Some(text)).is_none(),
+            exportable_supporter(&path).is_none(),
             "LemonSqueezy records are machine-bound and shouldn't ride along in backups",
         );
     }
 
     #[test]
-    fn exportable_supporter_drops_unparseable_payload() {
-        assert!(exportable_supporter(Some("garbage".to_string())).is_none());
+    fn exportable_supporter_drops_tampered_records() {
+        // Hand-edited supporter file (signature no longer matches) must
+        // not be carried into the bundle — `supporter::load` rejects it.
+        let dir = temp_dir();
+        let path = dir.path().join("supporter.json");
+        supporter::save(&path, &manual_supporter_record()).unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        let tampered = raw.replace("manual-key", "FORGED-KEY");
+        fs::write(&path, tampered).unwrap();
+        assert!(exportable_supporter(&path).is_none());
     }
 
     #[test]
-    fn exportable_supporter_passes_none_through() {
-        assert!(exportable_supporter(None).is_none());
+    fn exportable_supporter_drops_unparseable_payload() {
+        let dir = temp_dir();
+        let path = dir.path().join("supporter.json");
+        fs::write(&path, "garbage").unwrap();
+        assert!(exportable_supporter(&path).is_none());
+    }
+
+    #[test]
+    fn exportable_supporter_returns_none_for_missing_file() {
+        let dir = temp_dir();
+        let missing = dir.path().join("never-existed.json");
+        assert!(exportable_supporter(&missing).is_none());
     }
 
     #[test]
     fn read_optional_text_returns_none_for_missing() {
         let dir = temp_dir();
         let path = dir.path().join("missing.json");
-        assert!(read_optional_text(&path).unwrap().is_none());
+        assert!(read_optional_text(&path, MAX_BACKUP_BYTES)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -468,55 +689,84 @@ mod tests {
         let dir = temp_dir();
         let path = dir.path().join("present.json");
         fs::write(&path, "hello").unwrap();
-        assert_eq!(read_optional_text(&path).unwrap().as_deref(), Some("hello"));
+        assert_eq!(
+            read_optional_text(&path, MAX_BACKUP_BYTES)
+                .unwrap()
+                .as_deref(),
+            Some("hello")
+        );
     }
 
     #[test]
-    fn write_optional_removes_file_for_none() {
+    fn stage_write_then_commit_replaces_target_atomically() {
         let dir = temp_dir();
-        let path = dir.path().join("x.json");
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "old").unwrap();
+        let staged = stage_write(&path, b"new").expect("stage succeeds");
+        // Before commit, the target still holds the old contents and
+        // the staged temp exists alongside it.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+        let tmp = stage_path_for(&path).unwrap();
+        assert!(tmp.exists());
+        commit_stage(&staged).expect("commit succeeds");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert!(!tmp.exists(), "tmp moved into place by rename");
+    }
+
+    #[test]
+    fn stage_optional_remove_path_unlinks_existing_target_on_commit() {
+        let dir = temp_dir();
+        let path = dir.path().join("supporter.json");
         fs::write(&path, "{}").unwrap();
-        write_optional(&path, &None).unwrap();
+        let staged = stage_optional(&path, &None).unwrap();
+        commit_stage(&staged).unwrap();
         assert!(!path.exists());
     }
 
     #[test]
-    fn write_optional_writes_content_for_some() {
-        let dir = temp_dir();
-        let path = dir.path().join("x.json");
-        write_optional(&path, &Some("payload".to_string())).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "payload");
-    }
-
-    #[test]
-    fn write_optional_for_none_when_path_absent_is_ok() {
+    fn stage_optional_remove_path_is_ok_when_target_absent() {
         let dir = temp_dir();
         let path = dir.path().join("never-existed.json");
-        write_optional(&path, &None).unwrap();
+        let staged = stage_optional(&path, &None).unwrap();
+        commit_stage(&staged).unwrap();
         assert!(!path.exists());
     }
 
     #[test]
-    fn write_optional_surfaces_write_error() {
-        // Pre-create a directory where the target file should land, so
-        // `write_user_only`'s temp+rename can't replace it — the rename
-        // fails and we get the error-mapping closure.
+    fn stage_write_fails_when_parent_is_a_file() {
+        // Park a regular file where the parent directory should be —
+        // `create_dir_all` returns AlreadyExists/NotADirectory and the
+        // stage call surfaces that as a typed error.
         let dir = temp_dir();
-        let path = dir.path().join("blocked.json");
-        fs::create_dir(&path).unwrap();
-        let err = write_optional(&path, &Some("payload".to_string()))
-            .expect_err("write to a directory path fails");
-        assert!(err.contains("failed to write"));
+        let blocking_file = dir.path().join("blocker");
+        fs::write(&blocking_file, "").unwrap();
+        let target = blocking_file.join("under-blocker.json");
+        let err = stage_write(&target, b"x").expect_err("blocked parent fails");
+        assert!(err.contains("failed to ensure parent dir") || err.contains("failed to stage"));
     }
 
     #[test]
-    fn write_optional_surfaces_remove_error() {
-        // `fs::remove_file` on a directory returns IsADirectory.
+    fn commit_stage_remove_target_dir_surfaces_error() {
+        // A directory at the final path can't be unlinked with
+        // `remove_file`; the staged-remove path must surface the IO
+        // error rather than silently no-op.
         let dir = temp_dir();
-        let path = dir.path().join("subdir");
+        let path = dir.path().join("squat-dir");
         fs::create_dir(&path).unwrap();
-        let err = write_optional(&path, &None).expect_err("remove of a dir fails");
+        let staged = stage_remove(&path);
+        let err = commit_stage(&staged).expect_err("removing a dir fails");
         assert!(err.contains("failed to remove"));
+    }
+
+    #[test]
+    fn discard_stage_clears_staged_tmp() {
+        let dir = temp_dir();
+        let path = dir.path().join("x.json");
+        let staged = stage_write(&path, b"draft").unwrap();
+        let tmp = stage_path_for(&path).unwrap();
+        assert!(tmp.exists());
+        discard_stage(&staged);
+        assert!(!tmp.exists());
     }
 }
 
@@ -554,12 +804,13 @@ mod rig_tests {
     async fn build_bundle_for(scheduler: &Scheduler, supporter_path: &Path) -> BackupBundle {
         let profiles_file = scheduler.snapshot_profiles_file().await;
         let settings_json = serde_json::to_string_pretty(&profiles_file).unwrap();
-        let events_jsonl = read_optional_text(&scheduler.events_path)
+        let events_jsonl = read_optional_text(&scheduler.events_path, MAX_BACKUP_BYTES)
             .unwrap()
             .unwrap_or_default();
-        let pause_json = read_optional_text(&scheduler.pause_path).unwrap();
-        let screen_time_json = read_optional_text(&scheduler.screen_time_path).unwrap();
-        let supporter_json = read_optional_text(supporter_path).unwrap();
+        let pause_json = read_optional_text(&scheduler.pause_path, MAX_BACKUP_BYTES).unwrap();
+        let screen_time_json =
+            read_optional_text(&scheduler.screen_time_path, MAX_BACKUP_BYTES).unwrap();
+        let supporter_json = read_optional_text(supporter_path, MAX_BACKUP_BYTES).unwrap();
         BackupBundle {
             manifest: BackupManifest {
                 schema_version: BACKUP_SCHEMA_VERSION,
@@ -578,6 +829,18 @@ mod rig_tests {
 
     fn supporter_path_in(dir: &Path) -> std::path::PathBuf {
         dir.join("supporter.json")
+    }
+
+    /// Build a `WebviewWindow` with the production "main" label so the
+    /// gate check in `export_backup_to_path` / `import_backup_from_path`
+    /// passes. Tests that exercise the gate-reject path build a webview
+    /// with a different label explicitly.
+    fn main_webview(
+        app: &tauri::App<tauri::test::MockRuntime>,
+    ) -> tauri::WebviewWindow<tauri::test::MockRuntime> {
+        tauri::WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, Default::default())
+            .build()
+            .expect("main webview builds")
     }
 
     #[tokio::test]
@@ -782,8 +1045,10 @@ mod rig_tests {
             path: supporter_path_in(src_dir.path()),
             client: reqwest::Client::new(),
         });
+        let src_webview = main_webview(&src_app);
 
         export_backup_to_path(
+            src_webview,
             src_app.state::<Scheduler>(),
             src_app.state::<crate::SupporterAppState>(),
             bundle_path.to_string_lossy().to_string(),
@@ -798,8 +1063,9 @@ mod rig_tests {
             path: supporter_path_in(dest_dir.path()),
             client: reqwest::Client::new(),
         });
+        let dest_webview = main_webview(&dest_app);
         import_backup_from_path(
-            dest_app.handle().clone(),
+            dest_webview,
             dest_app.state::<Scheduler>(),
             dest_app.state::<crate::SupporterAppState>(),
             bundle_path.to_string_lossy().to_string(),
@@ -864,10 +1130,10 @@ mod rig_tests {
     }
 
     #[tokio::test]
-    async fn apply_surfaces_events_write_failure() {
-        // config_path writes cleanly; events_path is blocked by a
-        // directory squatting on it. Exercises the logger-lock branch
-        // and its error mapping.
+    async fn apply_surfaces_events_stage_failure() {
+        // events_path is blocked by a directory squatting on it. The
+        // stage phase tries to open a sibling .import.tmp and fails
+        // because the parent isn't a directory.
         let (dest_dir, app, mut sched) = mock_app_with_scheduler(Settings::default());
         let blocked = dest_dir.path().join("events-blocked");
         fs::create_dir(&blocked).unwrap();
@@ -897,16 +1163,24 @@ mod rig_tests {
             bundle,
         )
         .await
-        .expect_err("events write failure surfaces");
-        assert!(err.contains("failed to write"));
+        .expect_err("events stage failure surfaces");
+        assert!(err.contains("failed to stage") || err.contains("failed to commit"));
+        // Stage failure must roll back: settings_path (which staged
+        // successfully) gets cleaned up rather than left as a dangling
+        // .import.tmp next to the real settings.
+        let settings_tmp = stage_path_for(&sched.config_path).unwrap();
+        assert!(
+            !settings_tmp.exists(),
+            "settings stage tmp must be cleaned up after rollback",
+        );
+        // And the import_in_progress flag is cleared on the way out.
+        assert!(!sched.import_in_progress.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
-    async fn apply_surfaces_config_write_failure() {
-        // Park a directory at `config_path` so `write_user_only`'s
-        // temp+rename fails on the very first write — proves the
-        // user-facing error is shaped right rather than leaking a raw
-        // io::Error.
+    async fn apply_surfaces_config_stage_failure() {
+        // Park a directory at `config_path` so the staged write can't
+        // open its `.import.tmp` sibling.
         let (dest_dir, app, mut sched) = mock_app_with_scheduler(Settings::default());
         let blocked = dest_dir.path().join("settings-blocked");
         fs::create_dir(&blocked).unwrap();
@@ -937,7 +1211,51 @@ mod rig_tests {
         )
         .await
         .expect_err("config write failure surfaces");
-        assert!(err.contains("failed to write"));
+        // Failure may happen at stage (open the .import.tmp) or commit
+        // (rename onto the squatting directory) depending on platform;
+        // either is an acceptable shape so long as the import aborts.
+        assert!(
+            err.contains("failed to stage")
+                || err.contains("failed to commit")
+                || err.contains("failed to ensure parent dir"),
+            "unexpected error: {err}",
+        );
+        assert!(!sched.import_in_progress.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn apply_sets_and_clears_import_in_progress_flag() {
+        // Happy-path application must leave the flag false after a
+        // successful import — proving the RAII guard ran its Drop.
+        let (dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        assert!(!dest_sched.import_in_progress.load(Ordering::Relaxed));
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: None,
+                screen_time_json: None,
+                supporter_json: None,
+            },
+        };
+        apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &dest_sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .expect("apply succeeds");
+        assert!(!dest_sched.import_in_progress.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
@@ -949,7 +1267,7 @@ mod rig_tests {
         });
         let bogus = dest_dir.path().join("nope.json");
         let err = import_backup_from_path(
-            dest_app.handle().clone(),
+            main_webview(&dest_app),
             dest_app.state::<Scheduler>(),
             dest_app.state::<crate::SupporterAppState>(),
             bogus.to_string_lossy().to_string(),
@@ -969,7 +1287,7 @@ mod rig_tests {
         let garbage = dest_dir.path().join("garbage.json");
         fs::write(&garbage, "not a backup bundle").unwrap();
         let err = import_backup_from_path(
-            dest_app.handle().clone(),
+            main_webview(&dest_app),
             dest_app.state::<Scheduler>(),
             dest_app.state::<crate::SupporterAppState>(),
             garbage.to_string_lossy().to_string(),
@@ -977,6 +1295,100 @@ mod rig_tests {
         .await
         .expect_err("malformed file is reported");
         assert!(err.contains("failed to parse backup file"));
+    }
+
+    #[tokio::test]
+    async fn import_command_errors_on_oversized_file() {
+        // Files past `MAX_BACKUP_BYTES` short-circuit before parse so a
+        // 10 GiB blob can't OOM the deserializer. The fixture writes
+        // a small file but uses a tiny test cap to exercise the branch.
+        let (dest_dir, dest_app, _dest_sched) = mock_app_with_scheduler(Settings::default());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let huge = dest_dir.path().join("huge.json");
+        fs::write(&huge, vec![b'x'; (MAX_BACKUP_BYTES as usize) + 1]).unwrap();
+        let err = import_backup_from_path(
+            main_webview(&dest_app),
+            dest_app.state::<Scheduler>(),
+            dest_app.state::<crate::SupporterAppState>(),
+            huge.to_string_lossy().to_string(),
+        )
+        .await
+        .expect_err("oversized file is reported");
+        assert!(err.contains("exceeds the maximum allowed size"));
+    }
+
+    #[tokio::test]
+    async fn export_command_rejects_non_main_window() {
+        // A webview with any label other than "main" hits the gate and
+        // gets refused before touching disk. Overlay windows in
+        // production carry labels like `overlay-0`.
+        let (dest_dir, dest_app, _) = mock_app_with_scheduler(Settings::default());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let overlay = tauri::WebviewWindowBuilder::new(&dest_app, "overlay-0", Default::default())
+            .build()
+            .unwrap();
+        let bundle_path = dest_dir.path().join("nope.json");
+        let err = export_backup_to_path(
+            overlay,
+            dest_app.state::<Scheduler>(),
+            dest_app.state::<crate::SupporterAppState>(),
+            bundle_path.to_string_lossy().to_string(),
+        )
+        .await
+        .expect_err("overlay window is refused");
+        assert!(err.contains("restricted to the main window"));
+        assert!(!bundle_path.exists(), "gate must refuse before any I/O");
+    }
+
+    #[tokio::test]
+    async fn import_command_rejects_non_main_window() {
+        let (dest_dir, dest_app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        dest_app.manage(crate::SupporterAppState {
+            path: supporter_path_in(dest_dir.path()),
+            client: reqwest::Client::new(),
+        });
+        let overlay = tauri::WebviewWindowBuilder::new(&dest_app, "overlay-0", Default::default())
+            .build()
+            .unwrap();
+        // Build a syntactically-valid bundle so the gate isn't preempted
+        // by a "missing file" error.
+        let bundle_path = dest_dir.path().join("bundle.json");
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: None,
+                screen_time_json: None,
+                supporter_json: None,
+            },
+        };
+        fs::write(&bundle_path, serde_json::to_string(&bundle).unwrap()).unwrap();
+        let err = import_backup_from_path(
+            overlay,
+            dest_app.state::<Scheduler>(),
+            dest_app.state::<crate::SupporterAppState>(),
+            bundle_path.to_string_lossy().to_string(),
+        )
+        .await
+        .expect_err("overlay window is refused");
+        assert!(err.contains("restricted to the main window"));
+        // And the scheduler is untouched — no profile change happened.
+        assert_eq!(dest_sched.profiles.lock().await.len(), 1);
     }
 
     #[tokio::test]
@@ -1004,6 +1416,7 @@ mod rig_tests {
         });
 
         export_backup_to_path(
+            main_webview(&src_app),
             src_app.state::<Scheduler>(),
             src_app.state::<crate::SupporterAppState>(),
             bundle_path.to_string_lossy().to_string(),
