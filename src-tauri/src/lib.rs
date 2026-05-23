@@ -77,6 +77,8 @@ pub fn run() {
             scheduler::set_hooks,
             scheduler::pause,
             scheduler::resume,
+            scheduler::export_backup_to_path,
+            scheduler::import_backup_from_path,
             scheduler::get_pause_info,
             scheduler::end_break,
             scheduler::trigger_test_break,

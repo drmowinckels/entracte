@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   deltaDirection,
   deltaPct,
@@ -45,6 +46,9 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
   // fire on every render and re-trigger `refreshDigest` indefinitely.
   const { stats: session, digest, digestLoading, reset, refreshDigest } = stats;
   const [range, setRange] = useState<StatsRange>("week");
+  const [backupStatus, setBackupStatus] = useState<
+    { kind: "ok" | "err"; message: string } | null
+  >(null);
 
   useEffect(() => {
     refreshDigest(range);
@@ -72,6 +76,47 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
       await refreshDigest(range);
     } catch (e) {
       console.error("clear failed", e);
+    }
+  };
+
+  const onExportBackup = async () => {
+    setBackupStatus(null);
+    try {
+      const path = await saveDialog({
+        defaultPath: `entracte-backup-${localDateString()}.json`,
+        filters: [{ name: "Entracte backup", extensions: ["json"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      await invoke("export_backup_to_path", { path });
+      setBackupStatus({ kind: "ok", message: `Backup written to ${path}` });
+    } catch (e) {
+      console.error("backup export failed", e);
+      setBackupStatus({ kind: "err", message: `Backup export failed: ${e}` });
+    }
+  };
+
+  const onImportBackup = async () => {
+    setBackupStatus(null);
+    try {
+      const path = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Entracte backup", extensions: ["json"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      if (
+        !confirm(
+          "Importing replaces your profiles, settings, break history, pause state, and supporter record on this machine. Continue?",
+        )
+      ) {
+        return;
+      }
+      await invoke("import_backup_from_path", { path });
+      await refreshDigest(range);
+      setBackupStatus({ kind: "ok", message: "Backup imported" });
+    } catch (e) {
+      console.error("backup import failed", e);
+      setBackupStatus({ kind: "err", message: `Backup import failed: ${e}` });
     }
   };
 
@@ -232,10 +277,26 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
           <section>
             <div className="actions inline">
               <button onClick={onExportCsv}>Export CSV</button>
+              <button className="secondary" onClick={onExportBackup}>
+                Export full backup
+              </button>
+              <button className="secondary" onClick={onImportBackup}>
+                Import full backup
+              </button>
               <button className="secondary" onClick={onClearLog}>
                 Clear history
               </button>
             </div>
+            {backupStatus && (
+              <p
+                className={
+                  backupStatus.kind === "err" ? "placeholder" : "stat-card-sub"
+                }
+                role={backupStatus.kind === "err" ? "alert" : "status"}
+              >
+                {backupStatus.message}
+              </p>
+            )}
           </section>
         </>
       )}

@@ -23,6 +23,8 @@ The App stores the following on your machine, and only on your machine:
 
 None of this data leaves your machine through normal use of the App. You can clear break history at any time from the Stats screen, and you can remove the Supporter Pack record at any time from **About → Supporter**.
 
+If you explicitly use **Export full backup**, the App writes a backup file to the location you choose. If that location is a cloud-synced folder (for example iCloud Drive, Google Drive, OneDrive, or Dropbox), the backup file may be uploaded by your cloud provider under that provider's own terms and privacy policy.
+
 Settings, break history, and logs are stored in the OS app-config directory:
 
 - **macOS** — `~/Library/Application Support/io.drmowinckels.entracte/`

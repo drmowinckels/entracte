@@ -28,6 +28,7 @@ pub use break_stats::BreakStats;
 // sibling wrapper (`__cmd__<name>`) that `tauri::generate_handler!` looks up
 // next to the function. Both have to be reachable at `scheduler::<name>` for
 // the handler invocation in lib.rs to resolve.
+pub use commands::backup::*;
 pub use commands::breaks::*;
 pub use commands::hooks::*;
 pub use commands::profiles::*;

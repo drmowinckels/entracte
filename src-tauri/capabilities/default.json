@@ -16,6 +16,7 @@
     "autostart:default",
     "log:default",
     "dialog:allow-message",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }
