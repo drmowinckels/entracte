@@ -86,13 +86,15 @@ Missing either → the `sign-windows` job fails and the draft release ends up wi
 | `TAURI_SIGNING_PRIVATE_KEY`          | base64 contents of the `.tauri-signing-key` private key |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | passphrase used when the key was generated              |
 
-Each macOS `.app.tar.gz` is signed with this key during the `build-unix` legs (tauri-action consumes `TAURI_SIGNING_PRIVATE_KEY` automatically when `bundle.createUpdaterArtifacts: true` is set in `tauri.conf.json`). The `publish-updater-manifest` job composes the signatures into a `latest.json` manifest that the [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater) client verifies against the bundled `plugins.updater.pubkey`. The key is the trust root for in-app updates; rotating it breaks every installed copy until it can refresh its bundled pubkey. Generate with `tauri signer generate -w ~/.tauri/entracte.key`; keep the private key out of the repo.
+Each macOS `.app.tar.gz` and Linux `.AppImage` is signed with this key during the `build-unix` legs (tauri-action consumes `TAURI_SIGNING_PRIVATE_KEY` automatically when `bundle.createUpdaterArtifacts: true` is set in `tauri.conf.json`). The `publish-updater-manifest` job composes the signatures into a `latest.json` manifest that the [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater) client verifies against the bundled `plugins.updater.pubkey`. Windows is deliberately not in `latest.json` until SignPath bring-up completes — see [In-app update check](#in-app-update-check). The key is the trust root for in-app updates; rotating it breaks every installed copy until it can refresh its bundled pubkey. Generate with `tauri signer generate -w ~/.tauri/entracte.key`; keep the private key out of the repo.
 
 ## In-app update check
 
 [`src-tauri/src/updater.rs`](https://github.com/drmowinckels/entracte/blob/main/src-tauri/src/updater.rs) exposes `check_for_update` as a Tauri command. It's a thin wrapper around `app.updater()?.check()` from `tauri-plugin-updater` — the plugin fetches the signed `latest.json` from `plugins.updater.endpoints` (currently `https://github.com/drmowinckels/entracte/releases/latest/download/latest.json`), verifies the manifest signature against the pinned pubkey, and compares the announced version against the running build with its default SemVer comparator. Pre-release tags (`v1.2.3-rc1`) sort before their stable counterpart, matching SemVer §11.
 
 The About tab calls the command and renders the result. There is no automatic check on app start and no auto-install yet — the `download_and_install` flow is available on the plugin but deferred until the release cadence justifies the support burden.
+
+`latest.json` carries `darwin-aarch64`, `darwin-x86_64`, and `linux-x86_64` entries. Windows is intentionally omitted: until SignPath approves the project the `.msi` is unsigned-via-Authenticode and a `download_and_install` flow would SmartScreen-warn the user every release. Windows users update by re-downloading the installer; `.deb` / `.rpm` users update through their system package manager.
 
 A draft release is invisible to the `releases/latest` redirect, which is why **publishing** (not just tagging) is what makes users see the update.
 

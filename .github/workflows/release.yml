@@ -144,31 +144,36 @@ jobs:
           if-no-files-found: error
 
   # Compose the signed `latest.json` manifest that `tauri-plugin-updater`
-  # fetches from the configured endpoint. `build-unix` already uploads the
-  # macOS `.app.tar.gz` + `.sig` artifacts to the draft release (signed by
-  # `TAURI_SIGNING_PRIVATE_KEY`); this job downloads the `.sig` files,
-  # composes `latest.json` with both macOS arches, and attaches it.
+  # fetches from the configured endpoint. `build-unix` uploads the macOS
+  # `.app.tar.gz` + `.sig` and the Linux `.AppImage` + `.sig` artifacts to
+  # the draft release (signed by `TAURI_SIGNING_PRIVATE_KEY`); this job
+  # downloads the `.sig` files, composes `latest.json` with macOS arches
+  # plus Linux x86_64, and attaches it.
   #
-  # TODO: add Windows + Linux platform entries once those legs ship signed
-  # updater artifacts (Windows blocked on SignPath bring-up; Linux pending
-  # signed-AppImage decision). Until then, non-macOS installs that hit the
-  # updater endpoint will see no available target and silently no-op.
+  # Windows is deliberately not in latest.json: until SignPath approves
+  # the project the `.msi` is unsigned-via-Authenticode, and launching an
+  # unsigned MSI through the updater would SmartScreen-warn the user on
+  # every release. Windows users update by re-downloading the installer.
+  # `.deb` / `.rpm` users update through their system package manager.
   publish-updater-manifest:
     needs: build-unix
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download macOS updater artifacts from draft release
+      - name: Download updater artifacts from draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           mkdir -p release-assets
-          # `gh release download` on a draft release requires --repo and the
-          # token has `contents:write` so it can see drafts.
+          # `gh release download` on a draft release needs the
+          # `contents:write` token above to see drafts. Patterns
+          # collect both macOS `.app.tar.gz[.sig]` and Linux
+          # `.AppImage[.sig]` pairs in one pass.
           gh release download "${{ github.ref_name }}" \
             --pattern '*.app.tar.gz*' \
+            --pattern '*.AppImage*' \
             --dir release-assets
           ls -la release-assets
 
@@ -179,13 +184,16 @@ jobs:
           VERSION="${TAG#v}"
           REPO_URL="https://github.com/${{ github.repository }}"
 
-          # File names follow tauri-action's convention:
-          #   <productName>_<version>_<arch>.app.tar.gz[.sig]
-          # productName is "Entracte" (capital E); arches are "aarch64" and "x64".
+          # tauri-action's bundle naming conventions, by target:
+          #   macOS  : <productName>_<version>_<arch>.app.tar.gz[.sig]
+          #            productName="Entracte", arches "aarch64" + "x64".
+          #   Linux  : <productNameLower>_<version>_<arch>.AppImage[.sig]
+          #            productName lowercases on Linux, arch is "amd64".
           AARCH64_FILE="Entracte_${VERSION}_aarch64.app.tar.gz"
           X64_FILE="Entracte_${VERSION}_x64.app.tar.gz"
+          APPIMAGE_FILE="entracte_${VERSION}_amd64.AppImage"
 
-          for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig"; do
+          for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig" "${APPIMAGE_FILE}.sig"; do
             if [ ! -f "release-assets/${f}" ]; then
               echo "::error::missing ${f} — TAURI_SIGNING_PRIVATE_KEY may be unset, or build-unix didn't produce updater artifacts"
               exit 1
@@ -193,6 +201,7 @@ jobs:
           done
           AARCH64_SIG=$(cat "release-assets/${AARCH64_FILE}.sig")
           X64_SIG=$(cat "release-assets/${X64_FILE}.sig")
+          APPIMAGE_SIG=$(cat "release-assets/${APPIMAGE_FILE}.sig")
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           jq -n \
@@ -203,13 +212,16 @@ jobs:
             --arg aarch64_sig "$AARCH64_SIG" \
             --arg x64_url "${REPO_URL}/releases/download/${TAG}/${X64_FILE}" \
             --arg x64_sig "$X64_SIG" \
+            --arg appimage_url "${REPO_URL}/releases/download/${TAG}/${APPIMAGE_FILE}" \
+            --arg appimage_sig "$APPIMAGE_SIG" \
             '{
               version: $version,
               notes: $notes,
               pub_date: $pub_date,
               platforms: {
-                "darwin-aarch64": { signature: $aarch64_sig, url: $aarch64_url },
-                "darwin-x86_64":  { signature: $x64_sig,     url: $x64_url     }
+                "darwin-aarch64": { signature: $aarch64_sig,  url: $aarch64_url  },
+                "darwin-x86_64":  { signature: $x64_sig,      url: $x64_url      },
+                "linux-x86_64":   { signature: $appimage_sig, url: $appimage_url }
               }
             }' > latest.json
 
