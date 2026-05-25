@@ -877,7 +877,10 @@ mod tests {
         let staged = stage_remove(&path);
         let committed = commit_stage(&staged).unwrap();
         assert!(!path.exists());
-        assert!(committed.backup_path.is_none(), "no bak when nothing to back up");
+        assert!(
+            committed.backup_path.is_none(),
+            "no bak when nothing to back up"
+        );
     }
 
     #[test]
@@ -1558,14 +1561,10 @@ mod rig_tests {
                 supporter_json: Some(manual_supporter_text()),
             },
         };
-        let err = apply_bundle_to_scheduler(
-            &app.handle().clone(),
-            &dest_sched,
-            &supporter_path,
-            bundle,
-        )
-        .await
-        .expect_err("supporter-as-dir aborts import");
+        let err =
+            apply_bundle_to_scheduler(&app.handle().clone(), &dest_sched, &supporter_path, bundle)
+                .await
+                .expect_err("supporter-as-dir aborts import");
         assert!(
             err.contains("refusing to commit over directory"),
             "unexpected error: {err}",
