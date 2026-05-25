@@ -11,7 +11,28 @@ permissions:
   contents: read
 
 jobs:
+  # Cheap pre-flight: refuse to start a release build if the updater
+  # pubkey was committed as the bring-up placeholder. Shipping a
+  # binary with the placeholder freezes every install onto a
+  # non-verifying updater forever — every later release would need
+  # to be installed manually because the bundled pubkey can't
+  # validate the new signed manifest. Better to fail fast.
+  verify-updater-pubkey:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Refuse placeholder pubkey
+        run: |
+          set -euo pipefail
+          pubkey=$(jq -r '.plugins.updater.pubkey' src-tauri/tauri.conf.json)
+          if [ -z "$pubkey" ] || [ "$pubkey" = "null" ] || \
+             echo "$pubkey" | grep -qi 'REPLACE_ME'; then
+            echo "::error::plugins.updater.pubkey is empty or a placeholder; aborting release"
+            exit 1
+          fi
+
   build-unix:
+    needs: verify-updater-pubkey
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +84,16 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Tauri updater signing key. `bundle.createUpdaterArtifacts:
+          # true` in tauri.conf.json makes tauri-action sign each
+          # macOS `.app.tar.gz` with this key and emit a `.sig`
+          # sibling. The matching public key is pinned in
+          # `plugins.updater.pubkey` — rotating this key without
+          # also rotating the pubkey on installed binaries breaks
+          # auto-update for every existing install, so keep them in
+          # lockstep.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
           tagName: ${{ github.ref_name }}
@@ -154,6 +185,12 @@ jobs:
           AARCH64_FILE="Entracte_${VERSION}_aarch64.app.tar.gz"
           X64_FILE="Entracte_${VERSION}_x64.app.tar.gz"
 
+          for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig"; do
+            if [ ! -f "release-assets/${f}" ]; then
+              echo "::error::missing ${f} — TAURI_SIGNING_PRIVATE_KEY may be unset, or build-unix didn't produce updater artifacts"
+              exit 1
+            fi
+          done
           AARCH64_SIG=$(cat "release-assets/${AARCH64_FILE}.sig")
           X64_SIG=$(cat "release-assets/${X64_FILE}.sig")
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -179,7 +216,11 @@ jobs:
           cat latest.json
 
       - name: Attach latest.json to draft release
-        uses: softprops/action-gh-release@v3
+        # SHA-pinned to match the sign-windows uploader below. A
+        # compromised tag could exfiltrate the GITHUB_TOKEN or
+        # replace artifacts on the draft release. Update via
+        # dependabot.yml.
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           draft: true
           tag_name: ${{ github.ref_name }}

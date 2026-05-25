@@ -166,13 +166,9 @@ Platform support matrix, scheduler internals, and OS-specific quirks are documen
 
 Updates ship via [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater) against GitHub Releases. The About tab calls `check_for_update`, which delegates to the plugin: it fetches the signed `latest.json` manifest at `releases/latest/download/latest.json`, verifies the bundled signature against the public key pinned in `tauri.conf.json`, and reports whether a newer version is announced. Today macOS bundles are signed (Apple Developer ID + Tauri updater key); Windows ships unsigned-via-SignPath later; Linux is not yet wired into `latest.json`.
 
-**Maintainer one-time setup for the updater key.** The signed manifest needs a keypair. Generate one and store it:
+**Updater signing key.** The pinned public key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) is the trust root every installed copy uses to verify the `latest.json` manifest. Its matching private key lives in two GitHub repo secrets — `TAURI_SIGNING_PRIVATE_KEY` (base64 contents of the key file) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (passphrase) — both wired into the `build-unix` job in [`.github/workflows/release.yml`](.github/workflows/release.yml). The release workflow signs each macOS `.app.tar.gz` with that key and composes the `latest.json` manifest from both arches in the `publish-updater-manifest` job; a pre-flight `verify-updater-pubkey` job refuses any tag whose pubkey is still the bring-up placeholder.
 
-```sh
-npm run tauri signer generate -- -w ~/.tauri/entracte.key
-```
-
-Paste the printed public key into [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) at `plugins.updater.pubkey` (replacing the `REPLACE_ME_WITH_TAURI_UPDATER_PUBKEY` placeholder). Store the private key contents as the `TAURI_SIGNING_PRIVATE_KEY` repo secret and the passphrase as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — both are already wired into [`.github/workflows/release.yml`](.github/workflows/release.yml). The release workflow signs each macOS `.app.tar.gz` with that key and composes the `latest.json` manifest from both arches in the `publish-updater-manifest` job.
+**Rotating the key** breaks auto-update for every installed copy on the old pubkey — they can't validate signatures from the new one and silently fall behind. Rotate only when you have a path to manual reinstall for affected users (e.g. a security incident). To rotate: `tauri signer generate -w ~/.tauri/entracte.key`, paste the new public key into `tauri.conf.json`, update both `TAURI_SIGNING_*` GitHub secrets, ship a release that users must install manually, then any later release will auto-update normally.
 
 ## Contributing
 

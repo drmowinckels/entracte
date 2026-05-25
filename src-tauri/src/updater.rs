@@ -2,21 +2,19 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;
 
-const RELEASES_LATEST_URL: &str = "https://github.com/drmowinckels/entracte/releases/latest";
-
 /// Result of checking the updater endpoint for a newer Entracte build.
 ///
 /// `has_update` is true when the signed `latest.json` manifest at the
 /// configured endpoint advertises a strictly greater version than the
 /// running build (the plugin's default SemVer comparator). `release_url`
-/// points at the GitHub release page for the announced version so the
-/// renderer can deep-link the user from the About tab.
+/// is populated only when an update is available; the renderer
+/// deep-links to the release page from the About tab in that case.
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateInfo {
     pub current: String,
     pub latest: String,
     pub has_update: bool,
-    pub release_url: String,
+    pub release_url: Option<String>,
 }
 
 /// Ask `tauri-plugin-updater` whether a newer build is available.
@@ -34,16 +32,16 @@ pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
     match updater.check().await.map_err(|e| e.to_string())? {
         Some(update) => Ok(UpdateInfo {
             has_update: true,
-            release_url: format!(
+            release_url: Some(format!(
                 "https://github.com/drmowinckels/entracte/releases/tag/v{}",
                 update.version
-            ),
+            )),
             current: update.current_version,
             latest: update.version,
         }),
         None => Ok(UpdateInfo {
             has_update: false,
-            release_url: RELEASES_LATEST_URL.to_string(),
+            release_url: None,
             current: current.clone(),
             latest: current,
         }),

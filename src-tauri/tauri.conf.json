@@ -53,7 +53,7 @@
       "endpoints": [
         "https://github.com/drmowinckels/entracte/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_ME_WITH_TAURI_UPDATER_PUBKEY"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3OUUzN0U0MEQ4NERCNDYKUldSRzI0UU41RGVlSjF1ak5Wd3FGanBKVDV3OUp3QTJQSGVQRGt6QUVlOWwzd0dLWlk4T3g2TjcK"
     }
   }
 }
