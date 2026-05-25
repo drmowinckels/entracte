@@ -382,6 +382,22 @@ fn ensure_main_window<R: Runtime>(webview: &WebviewWindow<R>) -> Result<(), Stri
     Ok(())
 }
 
+/// Single-line breadcrumb the import flow drops into the log file
+/// on success. Pulled out of the `log::info!` call so the format
+/// arguments are exercised by a unit test even when no logger is
+/// installed in the test binary (the `log` crate short-circuits
+/// argument evaluation when `log_enabled!(Info)` is false).
+fn import_audit_summary(bundle: &BackupBundle) -> String {
+    format!(
+        "backup: imported bundle (schema={}, events={} B, pause={}, screen_time={}, supporter={})",
+        bundle.manifest.schema_version,
+        bundle.files.events_jsonl.len(),
+        bundle.files.pause_json.is_some(),
+        bundle.files.screen_time_json.is_some(),
+        bundle.files.supporter_json.is_some(),
+    )
+}
+
 async fn apply_bundle_to_scheduler<R: Runtime>(
     app: &AppHandle<R>,
     scheduler: &Scheduler,
@@ -497,14 +513,7 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
         reset_timers_keep_sleep(&mut timers);
     }
 
-    log::info!(
-        "backup: imported bundle (schema={}, events={} B, pause={}, screen_time={}, supporter={})",
-        bundle.manifest.schema_version,
-        bundle.files.events_jsonl.len(),
-        bundle.files.pause_json.is_some(),
-        bundle.files.screen_time_json.is_some(),
-        bundle.files.supporter_json.is_some(),
-    );
+    log::info!("{}", import_audit_summary(&bundle));
 
     let _ = app.emit("profile:changed", profiles_file.active);
     let _ = app.emit("pause:changed", paused);
@@ -1000,6 +1009,30 @@ mod tests {
         assert!(tmp.exists());
         discard_stage(&staged);
         assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn import_audit_summary_reports_every_optional_field() {
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: String::new(),
+                events_jsonl: "abcdef".to_string(),
+                pause_json: Some("p".to_string()),
+                screen_time_json: None,
+                supporter_json: Some("s".to_string()),
+            },
+        };
+        let s = import_audit_summary(&bundle);
+        assert!(s.contains(&format!("schema={BACKUP_SCHEMA_VERSION}")));
+        assert!(s.contains("events=6 B"));
+        assert!(s.contains("pause=true"));
+        assert!(s.contains("screen_time=false"));
+        assert!(s.contains("supporter=true"));
     }
 }
 
