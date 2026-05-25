@@ -106,6 +106,7 @@ jobs:
           args: ${{ matrix.args }}
 
   build-windows-unsigned:
+    needs: verify-updater-pubkey
     runs-on: windows-latest
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
@@ -127,14 +128,27 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run tauri build
+      - name: Build (Tauri-signed updater artifacts)
+        env:
+          # `bundle.createUpdaterArtifacts: true` makes `tauri build`
+          # emit `<bundle>.sig` alongside each `.msi` / `.exe`, signed
+          # with this key. The Authenticode signature applied later by
+          # SignPath is independent — SmartScreen warns until SignPath
+          # is wired, but the in-app updater can still verify the
+          # Tauri signature against the bundled `plugins.updater.pubkey`.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
 
       - name: Collect bundles
         shell: bash
         run: |
           mkdir -p unsigned
-          cp src-tauri/target/release/bundle/msi/*.msi unsigned/
-          cp src-tauri/target/release/bundle/nsis/*.exe unsigned/
+          # `.msi*` / `.exe*` globs capture the `.sig` siblings too —
+          # the manifest job needs them to populate the windows-x86_64
+          # entry in latest.json.
+          cp src-tauri/target/release/bundle/msi/*.msi* unsigned/
+          cp src-tauri/target/release/bundle/nsis/*.exe* unsigned/
 
       - id: upload
         uses: actions/upload-artifact@v7
@@ -144,19 +158,20 @@ jobs:
           if-no-files-found: error
 
   # Compose the signed `latest.json` manifest that `tauri-plugin-updater`
-  # fetches from the configured endpoint. `build-unix` uploads the macOS
-  # `.app.tar.gz` + `.sig` and the Linux `.AppImage` + `.sig` artifacts to
-  # the draft release (signed by `TAURI_SIGNING_PRIVATE_KEY`); this job
-  # downloads the `.sig` files, composes `latest.json` with macOS arches
-  # plus Linux x86_64, and attaches it.
+  # fetches from the configured endpoint. macOS `.app.tar.gz`, Linux
+  # `.AppImage`, and Windows `.msi` all ship with Tauri-signed `.sig`
+  # siblings; this job downloads them from the draft release and
+  # composes one `latest.json` covering all three platforms.
   #
-  # Windows is deliberately not in latest.json: until SignPath approves
-  # the project the `.msi` is unsigned-via-Authenticode, and launching an
-  # unsigned MSI through the updater would SmartScreen-warn the user on
-  # every release. Windows users update by re-downloading the installer.
-  # `.deb` / `.rpm` users update through their system package manager.
+  # Windows note: `check_for_update` in-app only *checks* for updates
+  # and opens the release page in the browser — `download_and_install`
+  # is not wired today. So even though the Windows `.msi` is signed
+  # only with the Tauri updater key (the Authenticode signature from
+  # SignPath is independent and may or may not be present), the
+  # SmartScreen warning users see is the same one they'd see on a
+  # manual download. The About tab calls out the unsigned status.
   publish-updater-manifest:
-    needs: build-unix
+    needs: [build-unix, sign-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -169,11 +184,12 @@ jobs:
           mkdir -p release-assets
           # `gh release download` on a draft release needs the
           # `contents:write` token above to see drafts. Patterns
-          # collect both macOS `.app.tar.gz[.sig]` and Linux
-          # `.AppImage[.sig]` pairs in one pass.
+          # collect macOS `.app.tar.gz[.sig]`, Linux `.AppImage[.sig]`,
+          # and Windows `.msi[.sig]` pairs in one pass.
           gh release download "${{ github.ref_name }}" \
             --pattern '*.app.tar.gz*' \
             --pattern '*.AppImage*' \
+            --pattern '*.msi*' \
             --dir release-assets
           ls -la release-assets
 
@@ -185,23 +201,28 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
 
           # tauri-action's bundle naming conventions, by target:
-          #   macOS  : <productName>_<version>_<arch>.app.tar.gz[.sig]
-          #            productName="Entracte", arches "aarch64" + "x64".
-          #   Linux  : <productNameLower>_<version>_<arch>.AppImage[.sig]
-          #            productName lowercases on Linux, arch is "amd64".
+          #   macOS   : <productName>_<version>_<arch>.app.tar.gz[.sig]
+          #             productName="Entracte", arches "aarch64" + "x64".
+          #   Linux   : <productNameLower>_<version>_amd64.AppImage[.sig]
+          #             productName lowercases on Linux.
+          #   Windows : <productName>_<version>_x64_en-US.msi[.sig]
+          #             the locale suffix is what tauri-bundler emits;
+          #             update here if we ever switch the MSI locale.
           AARCH64_FILE="Entracte_${VERSION}_aarch64.app.tar.gz"
           X64_FILE="Entracte_${VERSION}_x64.app.tar.gz"
           APPIMAGE_FILE="entracte_${VERSION}_amd64.AppImage"
+          MSI_FILE="Entracte_${VERSION}_x64_en-US.msi"
 
-          for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig" "${APPIMAGE_FILE}.sig"; do
+          for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig" "${APPIMAGE_FILE}.sig" "${MSI_FILE}.sig"; do
             if [ ! -f "release-assets/${f}" ]; then
-              echo "::error::missing ${f} — TAURI_SIGNING_PRIVATE_KEY may be unset, or build-unix didn't produce updater artifacts"
+              echo "::error::missing ${f} — TAURI_SIGNING_PRIVATE_KEY may be unset, or the build job for this platform didn't produce updater artifacts"
               exit 1
             fi
           done
           AARCH64_SIG=$(cat "release-assets/${AARCH64_FILE}.sig")
           X64_SIG=$(cat "release-assets/${X64_FILE}.sig")
           APPIMAGE_SIG=$(cat "release-assets/${APPIMAGE_FILE}.sig")
+          MSI_SIG=$(cat "release-assets/${MSI_FILE}.sig")
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           jq -n \
@@ -214,6 +235,8 @@ jobs:
             --arg x64_sig "$X64_SIG" \
             --arg appimage_url "${REPO_URL}/releases/download/${TAG}/${APPIMAGE_FILE}" \
             --arg appimage_sig "$APPIMAGE_SIG" \
+            --arg msi_url "${REPO_URL}/releases/download/${TAG}/${MSI_FILE}" \
+            --arg msi_sig "$MSI_SIG" \
             '{
               version: $version,
               notes: $notes,
@@ -221,7 +244,8 @@ jobs:
               platforms: {
                 "darwin-aarch64": { signature: $aarch64_sig,  url: $aarch64_url  },
                 "darwin-x86_64":  { signature: $x64_sig,      url: $x64_url      },
-                "linux-x86_64":   { signature: $appimage_sig, url: $appimage_url }
+                "linux-x86_64":   { signature: $appimage_sig, url: $appimage_url },
+                "windows-x86_64": { signature: $msi_sig,      url: $msi_url      }
               }
             }' > latest.json
 
@@ -238,10 +262,19 @@ jobs:
           tag_name: ${{ github.ref_name }}
           files: latest.json
 
-  # SIGNPATH_ORGANIZATION_ID (repo variable) and SIGNPATH_API_TOKEN (repo secret)
-  # must be configured after SignPath Foundation approval. The project-slug and
-  # signing-policy-slug below are hardcoded; update them here if SignPath assigns
-  # different values. See SIGNPATH_SETUP.md for the full bring-up checklist.
+  # Authenticode-sign the Windows `.msi` / `.exe` via SignPath Foundation
+  # if their `SIGNPATH_API_TOKEN` secret is configured; otherwise pass the
+  # unsigned bundles (plus their Tauri `.sig` siblings) straight through
+  # to the draft release. Both paths upload the same set of *.msi* / *.exe*
+  # files — only the Authenticode signature on the binary differs.
+  #
+  # SIGNPATH_ORGANIZATION_ID (repo variable) and SIGNPATH_API_TOKEN (repo
+  # secret) get configured after SignPath Foundation approval. Until then,
+  # SmartScreen warns on install and stays warning on every release —
+  # which is why we *do* still ship Windows in `latest.json` (manual
+  # check-for-updates redirects users to the release page) but the
+  # About tab calls out the unsigned status. Project / policy slugs are
+  # hardcoded; see SIGNPATH_SETUP.md for the bring-up checklist.
   sign-windows:
     needs: build-windows-unsigned
     runs-on: ubuntu-latest
@@ -249,8 +282,22 @@ jobs:
       id-token: write
       contents: write
     steps:
+      - name: Probe SignPath availability
+        id: signpath
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -n "$SIGNPATH_API_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SIGNPATH_API_TOKEN unset — uploading unsigned Windows binaries. SmartScreen will warn on install."
+          fi
+
       # SHA-pinned: this action holds the SignPath OIDC token. Update via dependabot.
-      - uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
+      - name: SignPath signing
+        if: steps.signpath.outputs.available == 'true'
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -259,6 +306,16 @@ jobs:
           github-artifact-id: ${{ needs.build-windows-unsigned.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: signed
+
+      # Fallback: pull the unsigned artifact (with .sig siblings) so the
+      # upload step below has files to ship regardless of the SignPath path.
+      - name: Download unsigned artifact (no SignPath path)
+        if: steps.signpath.outputs.available != 'true'
+        # SHA-pinned. Update via dependabot.
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v4.1.7
+        with:
+          name: windows-unsigned
+          path: signed
 
       # SHA-pinned: uploads to the GitHub release. Update via dependabot.
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
