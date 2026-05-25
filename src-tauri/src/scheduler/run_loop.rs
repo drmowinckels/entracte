@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
@@ -23,6 +23,16 @@ use super::timers::{
 use super::types::{BreakDelivery, BreakKind, SuppressReason};
 use super::Scheduler;
 
+/// Cheap atomic-load check that the run loop reads at the top of
+/// every tick. Pulled out of `run_loop` so the early-out condition
+/// is unit-testable without driving the full 1Hz loop body, which
+/// is bound to the production `AppHandle<Wry>` runtime and a real
+/// `Scheduler` with its camera/video/logger side threads.
+#[inline]
+fn import_pending(flag: &AtomicBool) -> bool {
+    flag.load(Ordering::Relaxed)
+}
+
 pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
     let mut sysinfo_system: Option<System> = None;
     // `Instant - Duration` panics if the result would precede the
@@ -40,7 +50,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // The flag is held for the duration of `apply_bundle_to_scheduler`
         // so the run loop never observes a half-restored state (new
         // events.jsonl on disk but stale in-memory settings).
-        if sched.import_in_progress.load(Ordering::Relaxed) {
+        if import_pending(&sched.import_in_progress) {
             continue;
         }
 
@@ -894,6 +904,18 @@ fn process_match(running: &str, target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_pending_returns_false_when_flag_clear() {
+        let flag = AtomicBool::new(false);
+        assert!(!import_pending(&flag));
+    }
+
+    #[test]
+    fn import_pending_returns_true_when_flag_set() {
+        let flag = AtomicBool::new(true);
+        assert!(import_pending(&flag));
+    }
 
     #[test]
     fn process_match_matches_whole_token() {

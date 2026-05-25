@@ -77,13 +77,13 @@ fn exportable_supporter(supporter_path: &Path) -> Option<String> {
         log::info!("backup: stripping LemonSqueezy supporter record from export (machine-bound)");
         return None;
     }
-    match fs::read_to_string(supporter_path) {
-        Ok(text) => Some(text),
-        Err(e) => {
-            log::warn!("backup: supporter.json verified but could not be re-read for export: {e}");
-            None
-        }
-    }
+    // Re-serialize the verified record rather than re-reading the file:
+    // `supporter::load` has already done the disk read + signature
+    // check, so a second `fs::read_to_string` would only ever differ
+    // on a TOCTOU race (file removed between our two reads). Going
+    // through the same `serde_json::to_string_pretty` codepath
+    // `supporter::save` uses keeps the on-the-wire bytes identical.
+    serde_json::to_string_pretty(&record).ok()
 }
 
 fn read_optional_text(path: &Path, max_bytes: u64) -> Result<Option<String>, String> {
@@ -247,13 +247,6 @@ fn commit_stage(stage: &StagedFile) -> Result<(), String> {
     }
 }
 
-fn stage_optional(target: &Path, content: &Option<String>) -> Result<StagedFile, String> {
-    match content {
-        Some(v) => stage_write(target, v.as_bytes()),
-        None => Ok(stage_remove(target)),
-    }
-}
-
 /// RAII guard that flips `Scheduler::import_in_progress` on construction
 /// and restores it on drop, including on panic. The run loop checks the
 /// flag once per tick and short-circuits while it's set.
@@ -294,28 +287,34 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
     // every `.import.tmp` is on disk and synced, the commit phase is a
     // tight loop of single-directory renames — as close to atomic as we
     // can get without filesystem transactions.
-    let mut stages: Vec<StagedFile> = Vec::with_capacity(5);
-    let staging = (|| -> Result<(), String> {
-        stages.push(stage_write(
+    // Pair every target path with the bytes that should land at it
+    // (or `None` to mean "remove the existing file") so the staging
+    // loop has exactly one `?` exit point. Each tuple becomes one
+    // `.<name>.import.tmp` and, on commit, one `.pre-import.bak`.
+    let stage_plan: [(&Path, Option<&str>); 5] = [
+        (
             &scheduler.config_path,
-            bundle.files.settings_json.as_bytes(),
-        )?);
-        stages.push(stage_write(
+            Some(bundle.files.settings_json.as_str()),
+        ),
+        (
             &scheduler.events_path,
-            bundle.files.events_jsonl.as_bytes(),
-        )?);
-        stages.push(stage_optional(
-            &scheduler.pause_path,
-            &bundle.files.pause_json,
-        )?);
-        stages.push(stage_optional(
+            Some(bundle.files.events_jsonl.as_str()),
+        ),
+        (&scheduler.pause_path, bundle.files.pause_json.as_deref()),
+        (
             &scheduler.screen_time_path,
-            &bundle.files.screen_time_json,
-        )?);
-        stages.push(stage_optional(
-            supporter_path,
-            &bundle.files.supporter_json,
-        )?);
+            bundle.files.screen_time_json.as_deref(),
+        ),
+        (supporter_path, bundle.files.supporter_json.as_deref()),
+    ];
+    let mut stages: Vec<StagedFile> = Vec::with_capacity(stage_plan.len());
+    let staging = (|| -> Result<(), String> {
+        for (target, content) in stage_plan {
+            stages.push(match content {
+                Some(text) => stage_write(target, text.as_bytes())?,
+                None => stage_remove(target),
+            });
+        }
         Ok(())
     })();
     if let Err(e) = staging {
@@ -714,20 +713,20 @@ mod tests {
     }
 
     #[test]
-    fn stage_optional_remove_path_unlinks_existing_target_on_commit() {
+    fn stage_remove_then_commit_unlinks_existing_target() {
         let dir = temp_dir();
         let path = dir.path().join("supporter.json");
         fs::write(&path, "{}").unwrap();
-        let staged = stage_optional(&path, &None).unwrap();
+        let staged = stage_remove(&path);
         commit_stage(&staged).unwrap();
         assert!(!path.exists());
     }
 
     #[test]
-    fn stage_optional_remove_path_is_ok_when_target_absent() {
+    fn stage_remove_then_commit_is_ok_when_target_absent() {
         let dir = temp_dir();
         let path = dir.path().join("never-existed.json");
-        let staged = stage_optional(&path, &None).unwrap();
+        let staged = stage_remove(&path);
         commit_stage(&staged).unwrap();
         assert!(!path.exists());
     }
@@ -1221,6 +1220,71 @@ mod rig_tests {
             "unexpected error: {err}",
         );
         assert!(!sched.import_in_progress.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn apply_aborts_on_staging_failure() {
+        // Park a regular file where `screen_time_path`'s *parent dir*
+        // should be. `stage_write` calls `create_dir_all` on the
+        // parent and surfaces NotADirectory as a stage-time error,
+        // which exercises the staging closure's `?` early-return and
+        // the `discard_all` cleanup of the (config + events + pause)
+        // tmps that staged successfully before screen-time blew up.
+        let (dest_dir, app, mut dest_sched) = mock_app_with_scheduler(Settings::default());
+        let blocker = dest_dir.path().join("not-a-dir");
+        fs::write(&blocker, b"").unwrap();
+        dest_sched.screen_time_path = blocker.join("under-blocker.json");
+
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: None,
+                // `Some(_)` so the screen-time stage takes the Write
+                // branch and calls into create_dir_all — `None` would
+                // route through Remove and never touch the parent.
+                screen_time_json: Some(r#"{"date":"2026-01-01","seconds":0}"#.to_string()),
+                supporter_json: None,
+            },
+        };
+        let err = apply_bundle_to_scheduler(
+            &app.handle().clone(),
+            &dest_sched,
+            &supporter_path_in(dest_dir.path()),
+            bundle,
+        )
+        .await
+        .expect_err("staging failure aborts import");
+        assert!(
+            err.contains("failed to ensure parent dir") || err.contains("failed to stage"),
+            "unexpected error: {err}",
+        );
+
+        // The earlier-staged config/events/pause tmps must be cleaned
+        // up so a subsequent retry isn't blocked on Windows by stale
+        // `.import.tmp` siblings.
+        for p in [
+            &dest_sched.config_path,
+            &dest_sched.events_path,
+            &dest_sched.pause_path,
+        ] {
+            let tmp = stage_path_for(p).unwrap();
+            assert!(
+                !tmp.exists(),
+                ".import.tmp left behind at {}",
+                tmp.display(),
+            );
+        }
+        assert!(!dest_sched.import_in_progress.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
