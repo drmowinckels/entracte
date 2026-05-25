@@ -32,6 +32,13 @@ pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
     match updater.check().await.map_err(|e| e.to_string())? {
         Some(update) => Ok(UpdateInfo {
             has_update: true,
+            // Hardcoded `v` prefix matches the release tagging
+            // convention (`v0.0.1`, `v0.1.0`, …) documented in
+            // CONTRIBUTING.md. `update.version` is the bare semver
+            // string from the manifest (e.g. `0.0.2`), so we
+            // synthesize the tag here. Untag-prefixed releases would
+            // break the deep-link — change here and in the workflow
+            // together if the convention ever shifts.
             release_url: Some(format!(
                 "https://github.com/drmowinckels/entracte/releases/tag/v{}",
                 update.version

@@ -17,6 +17,14 @@ jobs:
   # non-verifying updater forever — every later release would need
   # to be installed manually because the bundled pubkey can't
   # validate the new signed manifest. Better to fail fast.
+  #
+  # Three checks, each on its own to keep the failure message
+  # specific: (1) field present and non-null, (2) base64 contents
+  # and at least ~80 chars (real minisign pubkeys are ~152), (3)
+  # the decoded blob starts with the minisign "untrusted comment:
+  # minisign public key" header. (3) is what actually catches
+  # arbitrary placeholder strings — (1) and (2) just give cleaner
+  # error messages for the easy mistakes.
   verify-updater-pubkey:
     runs-on: ubuntu-latest
     steps:
@@ -25,9 +33,17 @@ jobs:
         run: |
           set -euo pipefail
           pubkey=$(jq -r '.plugins.updater.pubkey' src-tauri/tauri.conf.json)
-          if [ -z "$pubkey" ] || [ "$pubkey" = "null" ] || \
-             echo "$pubkey" | grep -qi 'REPLACE_ME'; then
-            echo "::error::plugins.updater.pubkey is empty or a placeholder; aborting release"
+          if [ -z "$pubkey" ] || [ "$pubkey" = "null" ]; then
+            echo "::error::plugins.updater.pubkey is empty or missing; aborting release"
+            exit 1
+          fi
+          if [ "${#pubkey}" -lt 80 ] || ! [[ "$pubkey" =~ ^[A-Za-z0-9+/=]+$ ]]; then
+            echo "::error::plugins.updater.pubkey is too short or not base64; aborting release"
+            exit 1
+          fi
+          if ! echo "$pubkey" | base64 -d 2>/dev/null | head -1 | \
+               grep -q '^untrusted comment: minisign public key'; then
+            echo "::error::plugins.updater.pubkey doesn't decode to a minisign public key blob; aborting release"
             exit 1
           fi
 
@@ -150,8 +166,12 @@ jobs:
           cp src-tauri/target/release/bundle/msi/*.msi* unsigned/
           cp src-tauri/target/release/bundle/nsis/*.exe* unsigned/
 
+      # SHA-pinned: this action stages the unsigned Windows bundles
+      # for `sign-windows` to consume. A compromised upstream tag
+      # could swap in artifacts that SignPath then signs and ships.
+      # Update via dependabot.yml.
       - id: upload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-unsigned
           path: unsigned/
@@ -264,9 +284,10 @@ jobs:
 
   # Authenticode-sign the Windows `.msi` / `.exe` via SignPath Foundation
   # if their `SIGNPATH_API_TOKEN` secret is configured; otherwise pass the
-  # unsigned bundles (plus their Tauri `.sig` siblings) straight through
-  # to the draft release. Both paths upload the same set of *.msi* / *.exe*
-  # files — only the Authenticode signature on the binary differs.
+  # unsigned bundles straight through to the draft release. The Tauri
+  # `.sig` sidecars always come from the unsigned artifact — SignPath
+  # only emits signed binaries, so if we relied on whatever it returned
+  # the manifest job would lose the sidecars.
   #
   # SIGNPATH_ORGANIZATION_ID (repo variable) and SIGNPATH_API_TOKEN (repo
   # secret) get configured after SignPath Foundation approval. Until then,
@@ -307,15 +328,30 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed
 
-      # Fallback: pull the unsigned artifact (with .sig siblings) so the
-      # upload step below has files to ship regardless of the SignPath path.
-      - name: Download unsigned artifact (no SignPath path)
-        if: steps.signpath.outputs.available != 'true'
-        # SHA-pinned. Update via dependabot.
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v4.1.7
+      # Always pull the unsigned artifact so the Tauri `.sig` sidecars
+      # are available regardless of which signing path ran. SignPath's
+      # action emits *only* the signed binaries — sidecar files are
+      # not part of its contract — so the manifest job would otherwise
+      # lose the `.sig` pair the moment SignPath is wired.
+      # SHA-pinned. Update via dependabot.
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: windows-unsigned
-          path: signed
+          path: unsigned
+
+      - name: Assemble release bundle (binaries + Tauri .sig sidecars)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p signed
+          # `.sig` files always come from the unsigned artifact; on the
+          # SignPath path `signed/` already contains the signed binaries
+          # but not the sidecars, on the no-SignPath path it's empty.
+          cp unsigned/*.sig signed/
+          if [ "${{ steps.signpath.outputs.available }}" != "true" ]; then
+            cp unsigned/*.msi unsigned/*.exe signed/
+          fi
+          ls -la signed
 
       # SHA-pinned: uploads to the GitHub release. Update via dependabot.
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
