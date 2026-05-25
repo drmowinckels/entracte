@@ -45,6 +45,7 @@ Entracte lives in your menu bar / tray and nudges you to take breaks. It tries h
 - **Daily screen-time budget** — opt-in wind-down nudge when you cross a daily active-time budget (default 8 hours), with a configurable snooze interval.
 - **Tray countdown** — optional `MM:SS` countdown next to the menu-bar icon, configurable to track the next short, long, or soonest break (macOS and Linux).
 - **Notification-only mode** — per break kind, swap the overlay for a gentle system notification when you'd rather not be interrupted by a full-screen dim. Note that engagement metrics (completion, skip, postpone) aren't recorded for break types in notification mode, since there's no overlay to act on.
+- **Move with you** — export a full local backup (settings, profiles, break history, screen-time, pause state, manual supporter token if you have one) to JSON and import it on another machine. Atomic stage-then-commit on import; partial-failure rollback restores your previous state.
 
 ## Themes
 
@@ -99,7 +100,7 @@ Full command reference, IPC details, and tips in [docs/guide/cli.md](docs/guide/
 
 Entracte is free, cross-platform, and open source under Apache 2.0. Every scheduling, suppression, profile, hooks, stats, accessibility, and CLI feature is available to everyone.
 
-A **Supporter pack** is in the works as a way to back development — personalisation extras like custom overlay colour, theme rotation, editable break hints, and custom sounds will unlock through a one-off purchase once the infrastructure is in place. The unlock check lives in plain source: it's an honour-system thank-you, not a DRM scheme. See [docs/guide/supporter.md](docs/guide/supporter.md).
+A **[Supporter pack](docs/guide/supporter.md)** is available as a way to back development. It unlocks personalisation extras — custom overlay colour, theme rotation, editable break hints, custom CSS, and custom sounds — through a one-off purchase. The unlock check lives in plain source: it's an honour-system thank-you, not a DRM scheme. Nothing in the scheduling, suppression, profile, hooks, stats, accessibility, or CLI surface is gated.
 
 ## Stack
 
@@ -128,9 +129,9 @@ flowchart LR
     end
 
     subgraph Stores["On-disk state"]
-        Config[("config.json<br/>profiles + settings")]
-        Stats[("stats.json<br/>break history")]
-        Pause[("pause state")]
+        Config[("settings.json<br/>profiles + settings")]
+        Stats[("events.jsonl<br/>break history")]
+        Pause[("pause.json")]
     end
 
     CLI -->|subcommands| IPC

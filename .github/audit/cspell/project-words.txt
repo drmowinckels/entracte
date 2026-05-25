@@ -45,6 +45,7 @@ notarization
 codesigned
 SignPath
 signpath
+Authenticode
 NSIS
 TEAMID
 Bootswatch

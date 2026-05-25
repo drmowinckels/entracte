@@ -68,7 +68,10 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Entracte ${{ github.ref_name }}"
           releaseDraft: true
-          prerelease: false
+          # 0.0.X tags are betas; 0.1.X and later are stable. Flip the
+          # github_release `prerelease` flag based on the tag prefix
+          # so beta releases don't accidentally surface as "latest".
+          prerelease: ${{ startsWith(github.ref_name, 'v0.0.') }}
           args: ${{ matrix.args }}
 
   build-windows-unsigned:
