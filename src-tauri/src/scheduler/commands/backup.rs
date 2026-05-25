@@ -1012,6 +1012,81 @@ mod tests {
     }
 
     #[test]
+    fn commit_stage_restores_backup_when_final_rename_fails() {
+        // Build a `StagedFile` whose tmp path doesn't exist on disk.
+        // `commit_stage` passes the metadata check, succeeds at the
+        // bak rename (so the original is now parked aside), then
+        // FAILS at rename(tmp → final) because tmp is missing.
+        // The self-rollback branch must rename the bak back into
+        // place so the caller sees an untouched final_path.
+        let dir = temp_dir();
+        let final_path = dir.path().join("file.json");
+        fs::write(&final_path, "original").unwrap();
+        let bogus_tmp = dir.path().join("does-not-exist.tmp");
+        let staged = StagedFile {
+            final_path: final_path.clone(),
+            action: StageAction::Write(bogus_tmp),
+        };
+        let err = commit_stage(&staged).expect_err("missing tmp fails commit");
+        assert!(err.contains("failed to commit"), "got: {err}");
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "original",
+            "self-rollback restored the bak into final_path",
+        );
+        assert!(
+            !bak_path_for(&final_path).unwrap().exists(),
+            "bak was renamed back, no leftover",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_stage_surfaces_metadata_error() {
+        // chmod the parent directory to 0o000 so `symlink_metadata`
+        // on a child returns PermissionDenied (not NotFound). The
+        // catch-all `Err(e)` arm in `commit_stage` must surface that
+        // rather than treat it like "target absent".
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir();
+        let parent = dir.path().join("opaque");
+        fs::create_dir(&parent).unwrap();
+        let target = parent.join("file.json");
+        fs::write(&target, b"").unwrap();
+        let original_mode = fs::metadata(&parent).unwrap().permissions().mode();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
+        let staged = StagedFile {
+            final_path: target.clone(),
+            action: StageAction::Remove,
+        };
+        let result = commit_stage(&staged);
+        // Restore perms BEFORE asserting so TempDir cleanup works
+        // even on assertion failure.
+        fs::set_permissions(&parent, fs::Permissions::from_mode(original_mode)).unwrap();
+        let err = result.expect_err("opaque parent fails metadata read");
+        assert!(err.contains("failed to inspect"), "got: {err}");
+    }
+
+    #[test]
+    fn commit_stage_surfaces_bak_rename_failure() {
+        // A `.pre-import.bak` that is a directory blocks the bak
+        // rename: our `let _ = fs::remove_file(bak)` silently no-ops
+        // on a dir, and `fs::rename(file, dir)` returns an error.
+        // The function must surface that as "failed to back up …"
+        // rather than letting it slip past unmapped.
+        let dir = temp_dir();
+        let final_path = dir.path().join("settings.json");
+        fs::write(&final_path, "original").unwrap();
+        let bak = bak_path_for(&final_path).unwrap();
+        fs::create_dir(&bak).unwrap();
+        let staged = stage_write(&final_path, b"new").unwrap();
+        let err = commit_stage(&staged).expect_err("bak-as-dir aborts commit");
+        assert!(err.contains("failed to back up"), "got: {err}");
+        // Final path untouched; the new bytes never reached it.
+        assert_eq!(fs::read_to_string(&final_path).unwrap(), "original");
+    }
+
+    #[test]
     fn import_audit_summary_reports_every_optional_field() {
         let bundle = BackupBundle {
             manifest: BackupManifest {
