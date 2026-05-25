@@ -145,12 +145,6 @@ fn append_one(path: &Path, event: &LoggedEvent) -> std::io::Result<()> {
         opts.mode(0o600);
     }
     let mut file = opts.open(path)?;
-    // `mode(0o600)` only applies at creation time. If the file was
-    // created at 0o644 by an older app version, every subsequent
-    // append leaves it world-readable. Tighten on every open so
-    // existing files converge to 0o600 without waiting for the
-    // periodic sweep.
-    let _ = crate::secure_io::tighten_existing_file(path);
     let mut line = serde_json::to_string(event).map_err(std::io::Error::other)?;
     line.push('\n');
     file.write_all(line.as_bytes())?;

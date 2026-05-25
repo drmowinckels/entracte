@@ -87,82 +87,11 @@ fn redact_log_tail(tail: &str) -> String {
             if line.contains("hooks:") {
                 "<redacted: hooks log line — share separately if needed>".to_string()
             } else {
-                redact_license_shapes(line)
+                crate::license_redact::redact_license_shapes(line)
             }
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Strip LemonSqueezy-shaped licence keys and `ENT1-…` manual tokens
-/// from a single log line. Even though the supporter module does not
-/// log keys directly today, defense-in-depth: a future log call that
-/// includes a `SupporterRecord` in `Debug` format would otherwise dump
-/// the key verbatim into the diagnostics tail.
-fn redact_license_shapes(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if i + 5 <= bytes.len() && &bytes[i..i + 5] == b"ENT1-" {
-            let mut j = i + 5;
-            while j < bytes.len()
-                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-' || bytes[j] == b'_')
-            {
-                j += 1;
-            }
-            if j - i >= 12 {
-                out.push_str("[REDACTED-MANUAL-TOKEN]");
-                i = j;
-                continue;
-            }
-        }
-        if looks_like_ls_key_at(bytes, i) {
-            out.push_str("[REDACTED-LS-KEY]");
-            i = ls_key_end(bytes, i);
-            continue;
-        }
-        out.push(bytes[i] as char);
-        i += 1;
-    }
-    out
-}
-
-fn looks_like_ls_key_at(bytes: &[u8], start: usize) -> bool {
-    if start + 19 > bytes.len() {
-        return false;
-    }
-    if !bytes[start..start + 4]
-        .iter()
-        .all(|b| b.is_ascii_alphanumeric())
-    {
-        return false;
-    }
-    let mut groups = 1;
-    let mut i = start + 4;
-    while groups < 4 && i + 5 <= bytes.len() && bytes[i] == b'-' {
-        if !bytes[i + 1..i + 5]
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric())
-        {
-            return false;
-        }
-        i += 5;
-        groups += 1;
-    }
-    groups >= 4
-}
-
-fn ls_key_end(bytes: &[u8], start: usize) -> usize {
-    let mut i = start + 4;
-    while i + 5 <= bytes.len() && bytes[i] == b'-' && {
-        bytes[i + 1..i + 5]
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric())
-    } {
-        i += 5;
-    }
-    i
 }
 
 fn redact_sensitive(mut value: serde_json::Value) -> serde_json::Value {

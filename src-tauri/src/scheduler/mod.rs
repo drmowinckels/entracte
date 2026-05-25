@@ -142,6 +142,11 @@ pub struct Scheduler {
     pub profiles: Arc<Mutex<Vec<Profile>>>,
     pub active_profile_name: Arc<Mutex<String>>,
     pub hook_dialog_busy: Arc<AtomicBool>,
+    /// Set by the backup-import flow while it's mid-restore. The run
+    /// loop short-circuits each tick while this is true so it can't
+    /// fire a break with mid-write state (e.g. new events.jsonl on
+    /// disk but old settings still in memory).
+    pub import_in_progress: Arc<AtomicBool>,
 }
 
 impl Scheduler {
@@ -187,6 +192,7 @@ impl Scheduler {
             profiles: Arc::new(Mutex::new(profiles_file.profiles)),
             active_profile_name: Arc::new(Mutex::new(active_name)),
             hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+            import_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -238,6 +244,7 @@ impl Scheduler {
             profiles: Arc::new(Mutex::new(profiles)),
             active_profile_name: Arc::new(Mutex::new(active.to_string())),
             hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+            import_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 

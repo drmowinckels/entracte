@@ -5,6 +5,7 @@ mod diagnostics;
 mod dnd;
 mod hooks;
 mod ipc;
+mod license_redact;
 mod pause_store;
 mod platform;
 mod renderer_log;

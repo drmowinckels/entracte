@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import {
+  ask as askDialog,
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 import {
   deltaDirection,
   deltaPct,
@@ -104,13 +108,16 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
         filters: [{ name: "Entracte backup", extensions: ["json"] }],
       });
       if (typeof path !== "string" || !path) return;
-      if (
-        !confirm(
-          "Importing replaces your profiles, settings, break history, pause state, and supporter record on this machine. Continue?",
-        )
-      ) {
-        return;
-      }
+      const confirmed = await askDialog(
+        "Importing replaces your profiles, settings, break history, pause state, and supporter record on this machine.\n\nContinue?",
+        {
+          title: "Import backup",
+          kind: "warning",
+          okLabel: "Replace",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!confirmed) return;
       await invoke("import_backup_from_path", { path });
       await refreshDigest(range);
       setBackupStatus({ kind: "ok", message: "Backup imported" });
