@@ -25,6 +25,11 @@ exclude = [
   # merge-blocking, so excluding them avoids spurious failures —
   # broken in-repo links surface as 404s in the rendered docs anyway.
   '^https?://github\.com/drmowinckels/entracte/(blob|tree|issues|pull|commit)/',
+  # CHANGELOG cross-reference links to release tags and compare URLs only
+  # resolve after the release is cut and pushed — on the PR that introduces
+  # a new `## [vX.Y.Z]` section those links 404 by design. Excluding them
+  # lets changelog prep land before the tag itself.
+  '^https?://github\.com/drmowinckels/entracte/(compare|releases/tag)/',
   # VitePress mounts `docs/public/` at the site root, so `/audio/...`
   # and similar public-mounted assets don't exist under `docs/` — they
   # live under `docs/public/`. The `--root-dir docs` invocation handles
