@@ -22,11 +22,13 @@ use crate::SupporterAppState;
 const BACKUP_SCHEMA_VERSION: u32 = 1;
 const BUNDLE_APP_ID: &str = "io.drmowinckels.entracte";
 /// Hard cap on the on-disk size of a bundle file we'll deserialize.
-/// 256 MiB swallows years of `events.jsonl` with plenty of headroom
-/// (~5 KB per logged event × hundreds of events per day × decades),
-/// but stops an accidentally-picked 10 GiB blob from OOMing the
-/// process during `serde_json::from_str`.
-const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
+/// Realistic worst case: ~300 B per logged event × ~50 events/day ×
+/// a decade ≈ 55 MB. 64 MiB gives a generous multiple of that while
+/// keeping the peak allocation (read into `String`, then parse) low
+/// enough not to stress a 4 GB tray-app footprint. Larger files
+/// short-circuit before parse so an accidentally-picked 10 GiB blob
+/// can't OOM the deserializer.
+const MAX_BACKUP_BYTES: u64 = 64 * 1024 * 1024;
 /// Only the settings window invokes backup IPC. Overlays never need
 /// it; gate at the command boundary so a future renderer bug that
 /// leaks the IPC handle to an overlay can't initiate a destructive
@@ -179,6 +181,20 @@ fn stage_path_for(target: &Path) -> Result<PathBuf, String> {
     Ok(dir.join(format!(".{name}.import.tmp")))
 }
 
+/// Sibling path where the existing target is parked for the duration
+/// of the commit. If a later stage's commit fails we rename this back
+/// into place; if every stage succeeds we delete it during finalize.
+fn bak_path_for(target: &Path) -> Result<PathBuf, String> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| format!("backup path {} has no parent", target.display()))?;
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("backup path {} has no file name", target.display()))?;
+    Ok(dir.join(format!(".{name}.pre-import.bak")))
+}
+
 fn stage_write(target: &Path, contents: &[u8]) -> Result<StagedFile, String> {
     let dir = target
         .parent()
@@ -227,23 +243,117 @@ fn discard_all(stages: &[StagedFile]) {
     }
 }
 
-fn commit_stage(stage: &StagedFile) -> Result<(), String> {
-    match &stage.action {
-        StageAction::Write(tmp) => fs::rename(tmp, &stage.final_path).map_err(|e| {
-            format!(
-                "failed to commit {} (staged at {}): {e}",
+/// Result of committing one staged action. Carries the path of the
+/// `.pre-import.bak` we parked the previous target at (if any) so we
+/// can either roll it back on a later failure or unlink it on
+/// finalize.
+#[derive(Debug)]
+struct CommittedStage {
+    final_path: PathBuf,
+    backup_path: Option<PathBuf>,
+    /// True for `Write` actions (we placed bytes at `final_path`),
+    /// false for `Remove` (target was moved aside, nothing replaced
+    /// it). Rollback only needs to unlink the new file for writes.
+    placed_new_content: bool,
+}
+
+/// Apply one staged action, parking the existing target at
+/// `.pre-import.bak` first so a later commit failure can be rolled
+/// back. A pre-existing `.bak` (residue from a previously-failed
+/// import) is unlinked first so the parking rename succeeds on
+/// Windows, which doesn't overwrite a present destination.
+fn commit_stage(stage: &StagedFile) -> Result<CommittedStage, String> {
+    let existing_kind = match fs::symlink_metadata(&stage.final_path) {
+        Ok(m) => Some(m),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!(
+                "failed to inspect {} before commit: {e}",
                 stage.final_path.display(),
-                tmp.display(),
+            ))
+        }
+    };
+    if let Some(m) = &existing_kind {
+        if m.is_dir() {
+            return Err(format!(
+                "refusing to commit over directory at {}",
+                stage.final_path.display(),
+            ));
+        }
+    }
+
+    let backup_path = if existing_kind.is_some() {
+        let bak = bak_path_for(&stage.final_path)?;
+        let _ = fs::remove_file(&bak);
+        fs::rename(&stage.final_path, &bak).map_err(|e| {
+            format!(
+                "failed to back up {} before commit: {e}",
+                stage.final_path.display(),
             )
-        }),
-        StageAction::Remove => match fs::remove_file(&stage.final_path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!(
-                "failed to remove {}: {e}",
-                stage.final_path.display()
-            )),
-        },
+        })?;
+        Some(bak)
+    } else {
+        None
+    };
+
+    match &stage.action {
+        StageAction::Write(tmp) => {
+            if let Err(e) = fs::rename(tmp, &stage.final_path) {
+                // Restore this single stage's backup before bubbling
+                // up so the caller-level rollback sees a clean prior
+                // state for the failing path.
+                if let Some(bak) = &backup_path {
+                    let _ = fs::rename(bak, &stage.final_path);
+                }
+                return Err(format!(
+                    "failed to commit {} (staged at {}): {e}",
+                    stage.final_path.display(),
+                    tmp.display(),
+                ));
+            }
+            Ok(CommittedStage {
+                final_path: stage.final_path.clone(),
+                backup_path,
+                placed_new_content: true,
+            })
+        }
+        StageAction::Remove => {
+            // The rename-aside above already removed the target from
+            // its final path; nothing else to do.
+            Ok(CommittedStage {
+                final_path: stage.final_path.clone(),
+                backup_path,
+                placed_new_content: false,
+            })
+        }
+    }
+}
+
+/// Reverse-restore every committed stage from its `.pre-import.bak`.
+/// Best-effort: each step swallows errors because a) we're already in
+/// a failure path and b) a failed individual rollback shouldn't
+/// abort the rest. Stale `.bak` files left by a catastrophic rollback
+/// failure are picked up by the next import's `commit_stage` (it
+/// unlinks the stale `.bak` before parking).
+fn rollback_committed(committed: &[CommittedStage]) {
+    for c in committed.iter().rev() {
+        if c.placed_new_content {
+            let _ = fs::remove_file(&c.final_path);
+        }
+        if let Some(bak) = &c.backup_path {
+            let _ = fs::rename(bak, &c.final_path);
+        }
+    }
+}
+
+/// Happy-path cleanup after every stage committed successfully.
+/// Unlinks the `.pre-import.bak` files we parked during commit so
+/// they don't linger as confusing sibling files.
+fn finalize_committed(committed: &[CommittedStage]) {
+    for c in committed {
+        if let Some(bak) = &c.backup_path {
+            let _ = fs::remove_file(bak);
+        }
     }
 }
 
@@ -270,6 +380,22 @@ fn ensure_main_window<R: Runtime>(webview: &WebviewWindow<R>) -> Result<(), Stri
         return Err("backup commands are restricted to the main window".to_string());
     }
     Ok(())
+}
+
+/// Single-line breadcrumb the import flow drops into the log file
+/// on success. Pulled out of the `log::info!` call so the format
+/// arguments are exercised by a unit test even when no logger is
+/// installed in the test binary (the `log` crate short-circuits
+/// argument evaluation when `log_enabled!(Info)` is false).
+fn import_audit_summary(bundle: &BackupBundle) -> String {
+    format!(
+        "backup: imported bundle (schema={}, events={} B, pause={}, screen_time={}, supporter={})",
+        bundle.manifest.schema_version,
+        bundle.files.events_jsonl.len(),
+        bundle.files.pause_json.is_some(),
+        bundle.files.screen_time_json.is_some(),
+        bundle.files.supporter_json.is_some(),
+    )
 }
 
 async fn apply_bundle_to_scheduler<R: Runtime>(
@@ -326,18 +452,29 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
     // Hold its `write_lock` across every rename so an in-flight append
     // can't land on the old inode (which we're about to unlink) and
     // disappear with it. Mirrors `stats::clear_log`'s coordination.
-    let commit = (|| -> Result<(), String> {
+    //
+    // Each `commit_stage` parks the existing target at a sibling
+    // `.pre-import.bak` before renaming the new contents into place.
+    // If any stage fails mid-loop we reverse-iterate over the
+    // committed stages and rename the backups back, leaving the
+    // tree as if no commit had happened. Without this, a 4th-of-5
+    // commit failure would leave 3 files at their new contents and
+    // 2 at their old — a state no version of the app ever produces.
+    let mut committed: Vec<CommittedStage> = Vec::with_capacity(stages.len());
+    let commit_result = (|| -> Result<(), String> {
         let logger_lock = scheduler.logger.write_lock();
         let _guard = logger_lock.lock().unwrap_or_else(|p| p.into_inner());
         for stage in &stages {
-            commit_stage(stage)?;
+            committed.push(commit_stage(stage)?);
         }
         Ok(())
     })();
-    if let Err(e) = commit {
+    if let Err(e) = commit_result {
+        rollback_committed(&committed);
         discard_all(&stages);
         return Err(e);
     }
+    finalize_committed(&committed);
 
     let profiles_file = config::load(&scheduler.config_path);
     {
@@ -376,9 +513,16 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
         reset_timers_keep_sleep(&mut timers);
     }
 
+    log::info!("{}", import_audit_summary(&bundle));
+
     let _ = app.emit("profile:changed", profiles_file.active);
     let _ = app.emit("pause:changed", paused);
-    let _ = app.emit("stats:cleared", ());
+    // Import replaces the events log rather than clearing it, so a
+    // separate event name keeps the distinction available to any
+    // future listener. The renderer already calls `refreshDigest`
+    // directly after `import_backup_from_path` resolves, so today
+    // this is purely informational.
+    let _ = app.emit("stats:replaced", ());
     Ok(())
 }
 
@@ -707,9 +851,16 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "old");
         let tmp = stage_path_for(&path).unwrap();
         assert!(tmp.exists());
-        commit_stage(&staged).expect("commit succeeds");
+        let committed = commit_stage(&staged).expect("commit succeeds");
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert!(!tmp.exists(), "tmp moved into place by rename");
+        // The previous target is parked at .pre-import.bak until
+        // finalize. Verify, then run finalize and verify the bak
+        // is cleaned up.
+        let bak = committed.backup_path.as_ref().expect("write had a backup");
+        assert_eq!(fs::read_to_string(bak).unwrap(), "old");
+        finalize_committed(std::slice::from_ref(&committed));
+        assert!(!bak.exists(), "finalize cleans up .pre-import.bak");
     }
 
     #[test]
@@ -718,8 +869,14 @@ mod tests {
         let path = dir.path().join("supporter.json");
         fs::write(&path, "{}").unwrap();
         let staged = stage_remove(&path);
-        commit_stage(&staged).unwrap();
+        let committed = commit_stage(&staged).unwrap();
         assert!(!path.exists());
+        // Remove parks the target at .pre-import.bak so rollback can
+        // restore it. Finalize then unlinks the bak.
+        let bak = committed.backup_path.as_ref().expect("remove had a backup");
+        assert!(bak.exists(), "remove parked target at .pre-import.bak");
+        finalize_committed(std::slice::from_ref(&committed));
+        assert!(!bak.exists());
     }
 
     #[test]
@@ -727,8 +884,12 @@ mod tests {
         let dir = temp_dir();
         let path = dir.path().join("never-existed.json");
         let staged = stage_remove(&path);
-        commit_stage(&staged).unwrap();
+        let committed = commit_stage(&staged).unwrap();
         assert!(!path.exists());
+        assert!(
+            committed.backup_path.is_none(),
+            "no bak when nothing to back up"
+        );
     }
 
     #[test]
@@ -745,16 +906,98 @@ mod tests {
     }
 
     #[test]
-    fn commit_stage_remove_target_dir_surfaces_error() {
-        // A directory at the final path can't be unlinked with
-        // `remove_file`; the staged-remove path must surface the IO
-        // error rather than silently no-op.
+    fn commit_stage_refuses_to_overwrite_directory() {
+        // A directory squatting at the final path is a weird state
+        // (no version of the app produces it); refusing keeps the
+        // commit phase deterministic and gives the rollback flow a
+        // single, well-named injection point for tests.
         let dir = temp_dir();
         let path = dir.path().join("squat-dir");
         fs::create_dir(&path).unwrap();
+        let remove_staged = stage_remove(&path);
+        let err = commit_stage(&remove_staged).expect_err("dir at remove target fails");
+        assert!(err.contains("refusing to commit over directory"));
+        let write_staged = stage_write(&path, b"x").expect("stage to sibling tmp ok");
+        let err = commit_stage(&write_staged).expect_err("dir at write target fails");
+        assert!(err.contains("refusing to commit over directory"));
+    }
+
+    #[test]
+    fn commit_stage_unlinks_stale_bak_before_parking() {
+        // A `.pre-import.bak` left over from a previously crashed
+        // rollback would otherwise make Windows's non-overwriting
+        // rename fail. The commit path unlinks it first.
+        let dir = temp_dir();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "current").unwrap();
+        let stale_bak = bak_path_for(&path).unwrap();
+        fs::write(&stale_bak, "stale").unwrap();
+        let staged = stage_write(&path, b"new").unwrap();
+        let committed = commit_stage(&staged).expect("commit succeeds despite stale bak");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        let bak = committed.backup_path.as_ref().unwrap();
+        assert_eq!(
+            fs::read_to_string(bak).unwrap(),
+            "current",
+            "stale bak was replaced by the current target's contents",
+        );
+        finalize_committed(std::slice::from_ref(&committed));
+    }
+
+    #[test]
+    fn rollback_committed_restores_writes_in_reverse() {
+        let dir = temp_dir();
+        let a = dir.path().join("a.json");
+        let b = dir.path().join("b.json");
+        fs::write(&a, "orig-a").unwrap();
+        fs::write(&b, "orig-b").unwrap();
+        let stage_a = stage_write(&a, b"new-a").unwrap();
+        let stage_b = stage_write(&b, b"new-b").unwrap();
+        let committed = vec![
+            commit_stage(&stage_a).unwrap(),
+            commit_stage(&stage_b).unwrap(),
+        ];
+        assert_eq!(fs::read_to_string(&a).unwrap(), "new-a");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "new-b");
+        rollback_committed(&committed);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "orig-a");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "orig-b");
+        assert!(!bak_path_for(&a).unwrap().exists());
+        assert!(!bak_path_for(&b).unwrap().exists());
+    }
+
+    #[test]
+    fn rollback_committed_restores_removed_target() {
+        let dir = temp_dir();
+        let path = dir.path().join("pause.json");
+        fs::write(&path, "original-pause").unwrap();
         let staged = stage_remove(&path);
-        let err = commit_stage(&staged).expect_err("removing a dir fails");
-        assert!(err.contains("failed to remove"));
+        let committed = commit_stage(&staged).unwrap();
+        assert!(!path.exists(), "target moved aside by commit");
+        rollback_committed(&[committed]);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "original-pause",
+            "rollback restored the removed file from .pre-import.bak",
+        );
+    }
+
+    #[test]
+    fn finalize_committed_removes_all_baks() {
+        let dir = temp_dir();
+        let a = dir.path().join("a.json");
+        let b = dir.path().join("b.json");
+        fs::write(&a, "orig-a").unwrap();
+        fs::write(&b, "orig-b").unwrap();
+        let committed = vec![
+            commit_stage(&stage_write(&a, b"new-a").unwrap()).unwrap(),
+            commit_stage(&stage_write(&b, b"new-b").unwrap()).unwrap(),
+        ];
+        assert!(bak_path_for(&a).unwrap().exists());
+        assert!(bak_path_for(&b).unwrap().exists());
+        finalize_committed(&committed);
+        assert!(!bak_path_for(&a).unwrap().exists());
+        assert!(!bak_path_for(&b).unwrap().exists());
     }
 
     #[test]
@@ -766,6 +1009,105 @@ mod tests {
         assert!(tmp.exists());
         discard_stage(&staged);
         assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn commit_stage_restores_backup_when_final_rename_fails() {
+        // Build a `StagedFile` whose tmp path doesn't exist on disk.
+        // `commit_stage` passes the metadata check, succeeds at the
+        // bak rename (so the original is now parked aside), then
+        // FAILS at rename(tmp → final) because tmp is missing.
+        // The self-rollback branch must rename the bak back into
+        // place so the caller sees an untouched final_path.
+        let dir = temp_dir();
+        let final_path = dir.path().join("file.json");
+        fs::write(&final_path, "original").unwrap();
+        let bogus_tmp = dir.path().join("does-not-exist.tmp");
+        let staged = StagedFile {
+            final_path: final_path.clone(),
+            action: StageAction::Write(bogus_tmp),
+        };
+        let err = commit_stage(&staged).expect_err("missing tmp fails commit");
+        assert!(err.contains("failed to commit"), "got: {err}");
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "original",
+            "self-rollback restored the bak into final_path",
+        );
+        assert!(
+            !bak_path_for(&final_path).unwrap().exists(),
+            "bak was renamed back, no leftover",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_stage_surfaces_metadata_error() {
+        // chmod the parent directory to 0o000 so `symlink_metadata`
+        // on a child returns PermissionDenied (not NotFound). The
+        // catch-all `Err(e)` arm in `commit_stage` must surface that
+        // rather than treat it like "target absent".
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir();
+        let parent = dir.path().join("opaque");
+        fs::create_dir(&parent).unwrap();
+        let target = parent.join("file.json");
+        fs::write(&target, b"").unwrap();
+        let original_mode = fs::metadata(&parent).unwrap().permissions().mode();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
+        let staged = StagedFile {
+            final_path: target.clone(),
+            action: StageAction::Remove,
+        };
+        let result = commit_stage(&staged);
+        // Restore perms BEFORE asserting so TempDir cleanup works
+        // even on assertion failure.
+        fs::set_permissions(&parent, fs::Permissions::from_mode(original_mode)).unwrap();
+        let err = result.expect_err("opaque parent fails metadata read");
+        assert!(err.contains("failed to inspect"), "got: {err}");
+    }
+
+    #[test]
+    fn commit_stage_surfaces_bak_rename_failure() {
+        // A `.pre-import.bak` that is a directory blocks the bak
+        // rename: our `let _ = fs::remove_file(bak)` silently no-ops
+        // on a dir, and `fs::rename(file, dir)` returns an error.
+        // The function must surface that as "failed to back up …"
+        // rather than letting it slip past unmapped.
+        let dir = temp_dir();
+        let final_path = dir.path().join("settings.json");
+        fs::write(&final_path, "original").unwrap();
+        let bak = bak_path_for(&final_path).unwrap();
+        fs::create_dir(&bak).unwrap();
+        let staged = stage_write(&final_path, b"new").unwrap();
+        let err = commit_stage(&staged).expect_err("bak-as-dir aborts commit");
+        assert!(err.contains("failed to back up"), "got: {err}");
+        // Final path untouched; the new bytes never reached it.
+        assert_eq!(fs::read_to_string(&final_path).unwrap(), "original");
+    }
+
+    #[test]
+    fn import_audit_summary_reports_every_optional_field() {
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: String::new(),
+                events_jsonl: "abcdef".to_string(),
+                pause_json: Some("p".to_string()),
+                screen_time_json: None,
+                supporter_json: Some("s".to_string()),
+            },
+        };
+        let s = import_audit_summary(&bundle);
+        assert!(s.contains(&format!("schema={BACKUP_SCHEMA_VERSION}")));
+        assert!(s.contains("events=6 B"));
+        assert!(s.contains("pause=true"));
+        assert!(s.contains("screen_time=false"));
+        assert!(s.contains("supporter=true"));
     }
 }
 
@@ -880,7 +1222,7 @@ mod rig_tests {
             let s = stats_emitted.clone();
             app.listen("profile:changed", move |_| p.store(true, Ordering::SeqCst));
             app.listen("pause:changed", move |_| pa.store(true, Ordering::SeqCst));
-            app.listen("stats:cleared", move |_| s.store(true, Ordering::SeqCst));
+            app.listen("stats:replaced", move |_| s.store(true, Ordering::SeqCst));
         }
 
         apply_bundle_to_scheduler(&app.handle().clone(), &dest_sched, &dest_supporter, bundle)
@@ -1129,10 +1471,10 @@ mod rig_tests {
     }
 
     #[tokio::test]
-    async fn apply_surfaces_events_stage_failure() {
-        // events_path is blocked by a directory squatting on it. The
-        // stage phase tries to open a sibling .import.tmp and fails
-        // because the parent isn't a directory.
+    async fn apply_surfaces_events_blocked_failure() {
+        // events_path is blocked by a directory squatting on it.
+        // `commit_stage` refuses to commit over a directory, so the
+        // import aborts and rolls back any earlier staged content.
         let (dest_dir, app, mut sched) = mock_app_with_scheduler(Settings::default());
         let blocked = dest_dir.path().join("events-blocked");
         fs::create_dir(&blocked).unwrap();
@@ -1163,7 +1505,12 @@ mod rig_tests {
         )
         .await
         .expect_err("events stage failure surfaces");
-        assert!(err.contains("failed to stage") || err.contains("failed to commit"));
+        assert!(
+            err.contains("failed to stage")
+                || err.contains("failed to commit")
+                || err.contains("refusing to commit over directory"),
+            "unexpected error: {err}",
+        );
         // Stage failure must roll back: settings_path (which staged
         // successfully) gets cleaned up rather than left as a dangling
         // .import.tmp next to the real settings.
@@ -1177,9 +1524,12 @@ mod rig_tests {
     }
 
     #[tokio::test]
-    async fn apply_surfaces_config_stage_failure() {
-        // Park a directory at `config_path` so the staged write can't
-        // open its `.import.tmp` sibling.
+    async fn apply_surfaces_config_blocked_failure() {
+        // A directory at `config_path` either fails the stage write
+        // (parent-of-target check) or the commit's
+        // refusing-to-overwrite-directory guard, depending on how the
+        // path resolves; either shape is acceptable so long as the
+        // import aborts cleanly.
         let (dest_dir, app, mut sched) = mock_app_with_scheduler(Settings::default());
         let blocked = dest_dir.path().join("settings-blocked");
         fs::create_dir(&blocked).unwrap();
@@ -1210,16 +1560,103 @@ mod rig_tests {
         )
         .await
         .expect_err("config write failure surfaces");
-        // Failure may happen at stage (open the .import.tmp) or commit
-        // (rename onto the squatting directory) depending on platform;
-        // either is an acceptable shape so long as the import aborts.
         assert!(
             err.contains("failed to stage")
                 || err.contains("failed to commit")
-                || err.contains("failed to ensure parent dir"),
+                || err.contains("failed to ensure parent dir")
+                || err.contains("refusing to commit over directory"),
             "unexpected error: {err}",
         );
         assert!(!sched.import_in_progress.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn apply_rolls_back_partial_commit_failure() {
+        // Drive a real mid-commit failure: stages 1-4 commit, stage 5
+        // (supporter) hits a directory at the final path and refuses.
+        // The rollback must restore every earlier target to its
+        // pre-import contents and clean up every `.pre-import.bak`.
+        let (dest_dir, app, dest_sched) = mock_app_with_scheduler(Settings::default());
+        fs::write(&dest_sched.config_path, "orig-config").unwrap();
+        fs::write(&dest_sched.events_path, "orig-events\n").unwrap();
+        fs::write(&dest_sched.pause_path, "orig-pause").unwrap();
+        fs::write(&dest_sched.screen_time_path, "orig-screen").unwrap();
+
+        let supporter_path = supporter_path_in(dest_dir.path());
+        fs::create_dir(&supporter_path).unwrap();
+
+        let bundle = BackupBundle {
+            manifest: BackupManifest {
+                schema_version: BACKUP_SCHEMA_VERSION,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                app: BUNDLE_APP_ID.to_string(),
+            },
+            files: BackupFiles {
+                settings_json: serde_json::to_string(&ProfilesFile::single(
+                    "Default".to_string(),
+                    Settings::default(),
+                ))
+                .unwrap(),
+                events_jsonl: String::new(),
+                pause_json: Some(r#"{"paused":false,"until_epoch_secs":null}"#.to_string()),
+                screen_time_json: Some(r#"{"date":"2026-01-01","seconds":0}"#.to_string()),
+                supporter_json: Some(manual_supporter_text()),
+            },
+        };
+        let err =
+            apply_bundle_to_scheduler(&app.handle().clone(), &dest_sched, &supporter_path, bundle)
+                .await
+                .expect_err("supporter-as-dir aborts import");
+        assert!(
+            err.contains("refusing to commit over directory"),
+            "unexpected error: {err}",
+        );
+
+        assert_eq!(
+            fs::read_to_string(&dest_sched.config_path).unwrap(),
+            "orig-config",
+            "settings restored",
+        );
+        assert_eq!(
+            fs::read_to_string(&dest_sched.events_path).unwrap(),
+            "orig-events\n",
+            "events restored",
+        );
+        assert_eq!(
+            fs::read_to_string(&dest_sched.pause_path).unwrap(),
+            "orig-pause",
+            "pause restored",
+        );
+        assert_eq!(
+            fs::read_to_string(&dest_sched.screen_time_path).unwrap(),
+            "orig-screen",
+            "screen-time restored",
+        );
+
+        for p in [
+            &dest_sched.config_path,
+            &dest_sched.events_path,
+            &dest_sched.pause_path,
+            &dest_sched.screen_time_path,
+        ] {
+            let bak = bak_path_for(p).unwrap();
+            assert!(
+                !bak.exists(),
+                ".pre-import.bak left behind at {}",
+                bak.display(),
+            );
+            let tmp = stage_path_for(p).unwrap();
+            assert!(
+                !tmp.exists(),
+                ".import.tmp left behind at {}",
+                tmp.display(),
+            );
+        }
+
+        // In-memory state is untouched too — the import never
+        // reached the lock-and-replace phase.
+        assert_eq!(dest_sched.profiles.lock().await.len(), 1);
+        assert!(!dest_sched.import_in_progress.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
@@ -1284,6 +1721,8 @@ mod rig_tests {
                 tmp.display(),
             );
         }
+        // Original targets untouched (no commit phase ran).
+        assert!(!bak_path_for(&dest_sched.config_path).unwrap().exists());
         assert!(!dest_sched.import_in_progress.load(Ordering::Relaxed));
     }
 

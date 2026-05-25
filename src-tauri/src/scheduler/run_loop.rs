@@ -46,10 +46,17 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
     loop {
         sleep(Duration::from_secs(1)).await;
 
-        // While a backup import is mid-flight, skip the entire tick.
-        // The flag is held for the duration of `apply_bundle_to_scheduler`
-        // so the run loop never observes a half-restored state (new
-        // events.jsonl on disk but stale in-memory settings).
+        // Early-out while an import is mid-flight. This is an
+        // optimisation, not the actual safety mechanism — the
+        // half-restored state we want to avoid observing is guarded
+        // by the in-memory tokio mutexes that `apply_bundle_to_scheduler`
+        // holds while updating settings/profiles/pause/etc., so a
+        // tick that misses the flag still acquires those mutexes
+        // before reading. `import_pending` does a `Relaxed` load,
+        // which is correct because the mutexes provide the necessary
+        // acquire/release for the data; the flag is just here to
+        // skip cheaply during the seconds the import is doing disk
+        // I/O.
         if import_pending(&sched.import_in_progress) {
             continue;
         }
