@@ -221,15 +221,19 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
 
           # tauri-action's bundle naming conventions, by target:
-          #   macOS   : <productName>_<version>_<arch>.app.tar.gz[.sig]
+          #   macOS   : <productName>_<arch>.app.tar.gz[.sig]
           #             productName="Entracte", arches "aarch64" + "x64".
+          #             NOTE: tauri-action's matrix uploader drops the
+          #             version from `.app.tar.gz` artifact names (since
+          #             the matrix produces two files that would otherwise
+          #             collide). Linux + Windows keep the version.
           #   Linux   : <productNameLower>_<version>_amd64.AppImage[.sig]
           #             productName lowercases on Linux.
           #   Windows : <productName>_<version>_x64_en-US.msi[.sig]
           #             the locale suffix is what tauri-bundler emits;
           #             update here if we ever switch the MSI locale.
-          AARCH64_FILE="Entracte_${VERSION}_aarch64.app.tar.gz"
-          X64_FILE="Entracte_${VERSION}_x64.app.tar.gz"
+          AARCH64_FILE="Entracte_aarch64.app.tar.gz"
+          X64_FILE="Entracte_x64.app.tar.gz"
           APPIMAGE_FILE="entracte_${VERSION}_amd64.AppImage"
           MSI_FILE="Entracte_${VERSION}_x64_en-US.msi"
 
