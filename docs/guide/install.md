@@ -1,21 +1,30 @@
 # Install
 
-::: tip Pre-release
-Entracte does not yet have official binary releases. The release pipeline is in place — signed bundles will land here as soon as the first `v*` tag is cut. Until then, [build from source](#build-from-source).
+::: tip Public beta
+Entracte is in its public beta line (`0.0.X`). Bundles ship from the same release pipeline as the eventual stable line; macOS is signed and notarised, Linux ships unsigned by convention, Windows is unsigned until SignPath approves the project. See the [Releases page](https://github.com/drmowinckels/entracte/releases) for every published version. Stable (`0.1.X`) is some way ahead.
 :::
 
 ## Download official builds
 
-Tagged releases appear on the [Releases page](https://github.com/drmowinckels/entracte/releases) with signed installers for every supported platform. Pick the artefact that matches your OS and architecture.
+Tagged releases appear on the [Releases page](https://github.com/drmowinckels/entracte/releases) with signed installers for every supported platform. Pick the artefact that matches your OS and architecture. Beta releases (`0.0.X`) are flagged as pre-releases on GitHub, so `releases/latest` won't surface them — open the Releases page directly until the stable line begins.
 
 ### macOS
 
 - `Entracte_<version>_aarch64.dmg` — Apple Silicon (M-series)
 - `Entracte_<version>_x64.dmg` — Intel
 
-Both `.dmg` builds are code-signed and notarised with an Apple Developer ID certificate, so macOS Gatekeeper opens them without the "unidentified developer" warning. Mount the disk image, drag **Entracte** into Applications, eject.
+Both `.dmg` builds are code-signed; the inner `.app` is notarised with an Apple Developer ID certificate and the ticket is stapled, so macOS Gatekeeper opens the installed app without the "unidentified developer" warning. Mount the disk image, drag **Entracte** into Applications, eject.
 
-A [Homebrew Cask](https://brew.sh/) is also planned — once submitted and accepted by `homebrew-cask`, you'll be able to install via `brew install --cask entracte` and let Homebrew handle upgrades.
+### Homebrew
+
+The project ships its own [Homebrew Cask](https://brew.sh/) hosted in this repo. Until we submit to `homebrew-cask` upstream (planned after `0.1.0` stable lands), install via the custom tap:
+
+```sh
+brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte
+brew install --cask drmowinckels/entracte/entracte
+```
+
+`brew upgrade --cask entracte` handles updates once Homebrew refreshes the tap. The Cask currently tracks the latest published release (including the `0.0.X` beta line) — once `0.1.0` ships, the next bump snaps everyone to the stable line automatically.
 
 ### Windows
 
@@ -25,7 +34,7 @@ A [Homebrew Cask](https://brew.sh/) is also planned — once submitted and accep
 ::: warning Currently unsigned
 Windows installers are **not code-signed yet**. When you run the installer, Windows SmartScreen will show a blue "Windows protected your PC" dialog naming an "unknown publisher". To continue: click **More info**, then **Run anyway**.
 
-This is a verification gap, not a security issue — the installer is the same `.msi` / `.exe` built and published by GitHub Actions from this repository, and you can verify the SHA-256 checksums against the [release assets](https://github.com/drmowinckels/entracte/releases/latest).
+This is a verification gap, not a security issue — the installer is the same `.msi` / `.exe` built and published by GitHub Actions from this repository, and you can verify the SHA-256 checksums against the [release assets](https://github.com/drmowinckels/entracte/releases) (open the specific release tag — pre-releases don't appear under `releases/latest`).
 
 We applied to the [SignPath Foundation](https://signpath.org/) free OSS code-signing programme and were turned down on the first attempt — they look for projects that have already built up public visibility (stars, forks, contributors, third-party write-ups), and Entracte is too new to clear that bar yet. We can reapply once the project has more external traction. **[Here's how you can help →](#help-us-get-windows-signed)**
 :::

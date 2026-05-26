@@ -77,7 +77,7 @@ brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte
 brew install --cask drmowinckels/entracte/entracte
 ```
 
-**Linux / Windows** — download the `.deb`, `.rpm`, `.AppImage`, `.msi`, or `.exe` from the [latest release](https://github.com/drmowinckels/entracte/releases/latest).
+**Linux / Windows** — download the `.deb`, `.rpm`, `.AppImage`, `.msi`, or `.exe` from the [Releases page](https://github.com/drmowinckels/entracte/releases) (pick the latest tag; pre-releases — the `0.0.X` beta line — don't surface under `releases/latest`).
 
 > **Windows users:** the `.msi` / `.exe` aren't code-signed yet — SignPath Foundation turned down our first application on visibility grounds (the project is too new). SmartScreen will warn you when you run the installer; click **More info → Run anyway** to proceed. See [the install guide](https://entracte.drmowinckels.io/guide/install#windows) for how you can [help us get there](https://entracte.drmowinckels.io/guide/install#help-us-get-windows-signed) — stars, forks, mentions, and contributions all count.
 
@@ -165,6 +165,8 @@ Platform support matrix, scheduler internals, and OS-specific quirks are documen
 ## Updates
 
 Updates ship via [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater) against GitHub Releases. The About tab calls `check_for_update`, which delegates to the plugin: it fetches the signed `latest.json` manifest at `releases/latest/download/latest.json`, verifies the bundled signature against the public key pinned in `tauri.conf.json`, and reports whether a newer version is announced. macOS (Apple-signed + Tauri-signed), Linux AppImages (Tauri-signed), and Windows `.msi` (Tauri-signed) are all in `latest.json`. The check is manual — clicking **Check for updates** opens the release page in your browser; no automatic check on app start, no silent download_and_install. `.deb` / `.rpm` users update through their system package manager and are deliberately outside the updater flow.
+
+> **Beta caveat.** `releases/latest` only resolves to stable releases. While we're on the `0.0.X` beta line (no stable yet), the in-app **Check for updates** returns _no update available_ even when a newer beta has shipped. Beta-to-beta upgrades are manual — watch the [Releases page](https://github.com/drmowinckels/entracte/releases) or `brew upgrade --cask entracte` if you installed via the tap. Once `0.1.0` ships and is published as a non-prerelease, the in-app check starts working for everyone.
 
 Windows specifically: until [SignPath Foundation](https://signpath.org) approves the project, the `.msi` is unsigned-via-Authenticode and SmartScreen warns every install. The About tab calls this out next to the "Open release page" link so users know to click **More info → Run anyway**.
 
