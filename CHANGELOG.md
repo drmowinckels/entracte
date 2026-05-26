@@ -80,7 +80,7 @@ A one-off purchase that unlocks personalisation extras — custom overlay colour
 
 ### Caveats
 
-- **No auto-updater yet** ([#2](https://github.com/drmowinckels/entracte/issues/2)). Update by downloading the new installer or running `brew upgrade --cask drmowinckels/entracte/entracte` on macOS.
+- **No silent auto-install yet** ([#2](https://github.com/drmowinckels/entracte/issues/2)). The About tab's **Check for updates** button opens the release page so you can grab the new installer; on macOS, `brew upgrade --cask entracte` handles upgrades after the initial `brew tap` install. While the project is on the `0.0.X` beta line, `releases/latest` doesn't resolve to a pre-release, so the in-app check returns _no update available_ even when a newer beta has shipped — watch the [Releases page](https://github.com/drmowinckels/entracte/releases) for beta-to-beta upgrades. The check starts working for everyone once `0.1.0` stable lands.
 - **Windows installer isn't code-signed yet** — SignPath Foundation declined our first application on visibility grounds. SmartScreen will warn you; click **More info → Run anyway** to proceed. See the [Windows install guide](https://entracte.drmowinckels.io/guide/install#windows) for how you can help us get there.
 - **Linux**: Do Not Disturb detection isn't wired yet (no portable signal); Wayland-only desktops have slightly degraded idle detection. Both are tracked under [AGENTS.md → Known gaps](.github/AGENTS.md#known-gaps--next-moves).
 
