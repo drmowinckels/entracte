@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import { useUpdateCheck } from "../hooks/use-update-check";
 import type { UseSupporter } from "../hooks/use-supporter";
+import { usePlatform } from "../../../lib/platform";
 import { writeToClipboard } from "../utils";
 
 const TOAST_MS = 3000;
@@ -15,6 +16,7 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [licenseInput, setLicenseInput] = useState("");
   const update = useUpdateCheck();
+  const platform = usePlatform();
 
   const onVerify = async () => {
     const trimmed = licenseInput.trim();
@@ -64,17 +66,26 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
         <p className="about-meta">Version {version || "—"}</p>
         <p className="about-meta">Cross-platform break reminder.</p>
         <p className="about-meta">Apache 2.0 licensed.</p>
-        {update.info && update.info.has_update && (
-          <p className="about-meta">
-            Update available: <strong>{update.info.latest}</strong> (you have{" "}
-            {update.info.current}).{" "}
-            <button
-              className="link"
-              onClick={() => openUrl(update.info!.release_url)}
-            >
-              Open release page
-            </button>
-          </p>
+        {update.info && update.info.has_update && update.info.release_url && (
+          <>
+            <p className="about-meta">
+              Update available: <strong>{update.info.latest}</strong> (you
+              have {update.info.current}).{" "}
+              <button
+                className="link"
+                onClick={() => openUrl(update.info!.release_url!)}
+              >
+                Open release page
+              </button>
+            </p>
+            {platform === "windows" && (
+              <p className="about-meta">
+                The Windows installer isn't Authenticode-signed yet, so
+                SmartScreen will warn — click{" "}
+                <em>More info → Run anyway</em> to proceed.
+              </p>
+            )}
+          </>
         )}
         {update.info && !update.info.has_update && (
           <p className="about-meta">

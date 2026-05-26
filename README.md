@@ -162,6 +162,16 @@ The a11y audit ([scripts/audit-a11y.mjs](scripts/audit-a11y.mjs)) builds `dist/`
 
 Platform support matrix, scheduler internals, and OS-specific quirks are documented in [.github/AGENTS.md](.github/AGENTS.md).
 
+## Updates
+
+Updates ship via [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater) against GitHub Releases. The About tab calls `check_for_update`, which delegates to the plugin: it fetches the signed `latest.json` manifest at `releases/latest/download/latest.json`, verifies the bundled signature against the public key pinned in `tauri.conf.json`, and reports whether a newer version is announced. macOS (Apple-signed + Tauri-signed), Linux AppImages (Tauri-signed), and Windows `.msi` (Tauri-signed) are all in `latest.json`. The check is manual — clicking **Check for updates** opens the release page in your browser; no automatic check on app start, no silent download_and_install. `.deb` / `.rpm` users update through their system package manager and are deliberately outside the updater flow.
+
+Windows specifically: until [SignPath Foundation](https://signpath.org) approves the project, the `.msi` is unsigned-via-Authenticode and SmartScreen warns every install. The About tab calls this out next to the "Open release page" link so users know to click **More info → Run anyway**.
+
+**Updater signing key.** The pinned public key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) is the trust root every installed copy uses to verify the `latest.json` manifest. Its matching private key lives in two GitHub repo secrets — `TAURI_SIGNING_PRIVATE_KEY` (base64 contents of the key file) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (passphrase) — both wired into the `build-unix` job in [`.github/workflows/release.yml`](.github/workflows/release.yml). The release workflow signs each macOS `.app.tar.gz` with that key and composes the `latest.json` manifest from both arches in the `publish-updater-manifest` job; a pre-flight `verify-updater-pubkey` job refuses any tag whose pubkey is still the bring-up placeholder.
+
+**Rotating the key** breaks auto-update for every installed copy on the old pubkey — they can't validate signatures from the new one and silently fall behind. Rotate only when you have a path to manual reinstall for affected users (e.g. a security incident). To rotate: `tauri signer generate -w ~/.tauri/entracte.key`, paste the new public key into `tauri.conf.json`, update both `TAURI_SIGNING_*` GitHub secrets, ship a release that users must install manually, then any later release will auto-update normally.
+
 ## Contributing
 
 Bug reports, ideas, and patches are all welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, test, and PR workflow. Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md), which — among the usual things — requires a real human reviewer in the loop on every contribution.

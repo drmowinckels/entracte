@@ -7,7 +7,7 @@ const updateInfoSchema = z.object({
   current: z.string(),
   latest: z.string(),
   has_update: z.boolean(),
-  release_url: z.string(),
+  release_url: z.string().nullable(),
 }) satisfies z.ZodType<UpdateInfo>;
 
 /** Latest update-check result + status flags for the About tab. */

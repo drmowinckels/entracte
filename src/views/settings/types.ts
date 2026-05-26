@@ -128,7 +128,7 @@ export type UpdateInfo = {
   current: string;
   latest: string;
   has_update: boolean;
-  release_url: string;
+  release_url: string | null;
 };
 
 export type SupporterStatus = {
