@@ -43,7 +43,7 @@ All bundled tracks are safe for commercial distribution. Non-commercial (CC-BY-N
 ## Music / meditation
 
 - **Relaxation music #69** — [ZHRØ](https://freesound.org/people/ZHR%C3%98/) — [source](https://freesound.org/people/ZHR%C3%98/sounds/808969/) — CC-BY 4.0
-- **Calm Ambient Piano Loop** — [rotlily](https://freesound.org/people/rotlily/) — [source](https://freesound.org/people/rotlily/sounds/832628/) — CC0
+- **Calm Ambient Piano Loop** — rotlily (freesound.org account since deleted) — CC0
 
 ---
 

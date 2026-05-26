@@ -25,7 +25,13 @@ concurrency:
 
 jobs:
   bump-cask:
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    # We deliberately accept prereleases too: there's only one Cask, and
+    # the project is in the 0.0.X beta window. Letting beta releases bump
+    # the Cask means `brew tap … && brew install --cask` actually works
+    # while we're pre-1.0. The moment v0.1.0 stable ships, the next bump
+    # snaps everyone back to the stable line — beta users who stayed on
+    # `brew upgrade` get the stable upgrade at the same time. Add an
+    # `entracte-beta` Cask if we ever need parallel lines.
     runs-on: ubuntu-latest
     steps:
       - name: Resolve tag and version
