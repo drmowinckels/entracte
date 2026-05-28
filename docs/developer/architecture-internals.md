@@ -225,7 +225,7 @@ Keyboard:
 - **Tab** — leaves the tablist and lands on the panel (`tabindex={0}` makes that work even when the panel contains no focusable children).
 - **Click / Enter / Space** — activate.
 
-Focus styling lives in [`src/views/settings/settings.css`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/settings.css) under `.settings .tabs button:focus-visible` and `.settings .tab-content:focus-visible`. Keep these in sync with the `--accent` token so dark and light modes both get a contrast-AA outline.
+Focus styling lives in [`src/views/settings/settings.css`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/settings.css) and uses the `--focus-ring` / `--focus-ring-width` / `--focus-ring-offset` tokens at `:root` so every interactive control gets a consistent outline. The baseline covers `.settings button`, the form controls (`input`, `select`, `.textarea`, `.hook-command`), the skip link, the tab buttons and the tabpanel. Add `:focus-visible` (never `:focus` alone) so mouse clicks don't pick up the heavy ring. The break overlay's `.overlay-button` has its own white-on-translucent ring; the high-contrast yellow ring keeps overriding it inside `.overlay-root.high-contrast`.
 
 ### Break overlay
 

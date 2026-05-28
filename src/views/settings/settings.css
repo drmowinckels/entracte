@@ -13,6 +13,17 @@
   --pop: var(--accent-color);
   --pop-soft: var(--secondary-color);
   --on-accent: #ffffff;
+  /* Focus ring tokens. --focus-ring resolves to --light-primary-color
+   * (#81989d) in dark mode and --primary-color (#2e545d) in light mode.
+   * Verified contrast vs page bg (--bg): dark 4.6:1, light 7.4:1 —
+   * both clear WCAG 2.4.11's 3:1 non-text minimum. Tab buttons sit on
+   * a transparent background so they inherit the page bg behind the
+   * outline; .settings button uses outline-offset so the ring lands
+   * on the page bg rather than the filled button. Re-verify if you
+   * retune --light-primary-color or --primary-color. */
+  --focus-ring: var(--accent);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
   color-scheme: light dark;
 }
 
@@ -61,8 +72,8 @@ body,
 
 .skip-link:focus-visible {
   transform: translateY(0);
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .settings {
@@ -127,8 +138,8 @@ body,
 }
 
 .settings .tabs button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
   border-radius: 4px;
   color: var(--fg);
 }
@@ -148,7 +159,7 @@ body,
 }
 
 .settings .tab-content:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: 4px;
   border-radius: 4px;
 }
@@ -325,6 +336,29 @@ body,
 
 .settings button:hover {
   background: var(--accent-hover);
+}
+
+.settings button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings input[type="time"]:focus-visible,
+.settings input[type="number"]:focus-visible,
+.settings input[type="text"]:focus-visible,
+.settings input.time-input:focus-visible,
+.settings select:focus-visible,
+.settings .textarea:focus-visible,
+.settings .hook-command:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings input[type="checkbox"]:focus-visible,
+.settings input[type="range"]:focus-visible,
+.settings input[type="color"]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .settings button.secondary {

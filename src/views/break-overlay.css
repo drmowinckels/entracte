@@ -142,6 +142,11 @@
   background: rgba(244, 246, 251, 0.16);
 }
 
+.overlay-button:focus-visible {
+  outline: 2px solid #f4f6fb;
+  outline-offset: 2px;
+}
+
 .overlay-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
