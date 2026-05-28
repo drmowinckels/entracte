@@ -4,6 +4,7 @@ import { TABS } from "./constants";
 import { useHooks } from "./hooks/use-hooks";
 import { usePause } from "./hooks/use-pause";
 import { useProfiles } from "./hooks/use-profiles";
+import { useRovingTabList } from "./hooks/use-roving-tab-list";
 import { useSettings } from "./hooks/use-settings";
 import { useStats } from "./hooks/use-stats";
 import { useSupporter } from "./hooks/use-supporter";
@@ -16,6 +17,10 @@ import { ScheduleTab } from "./tabs/schedule-tab";
 import { SystemTab } from "./tabs/system-tab";
 import type { Tab } from "./types";
 import "./settings.css";
+
+const TAB_IDS = TABS.map((t) => t.id);
+const tabButtonId = (id: Tab) => `settings-tab-${id}`;
+const tabPanelId = (id: Tab) => `settings-tabpanel-${id}`;
 
 /** Top-level Settings window. Wires per-tab components together with
  * the cross-cutting hooks (`useSettings`, `useProfiles`, `useStats`,
@@ -31,16 +36,27 @@ export default function Settings() {
   const hooks = useHooks(settings, reloadFromActive);
   const supporter = useSupporter();
   useCustomStylesheet(settings?.custom_css ?? "");
+  const { tablistProps, tabProps } = useRovingTabList<Tab>({
+    ids: TAB_IDS,
+    active: tab,
+    onChange: setTab,
+  });
 
   return (
     <main className="settings">
       <header className="settings-header">
-        <nav className="tabs">
+        <nav
+          className="tabs"
+          aria-label="Settings sections"
+          {...tablistProps}
+        >
           {TABS.map((t) => (
             <button
               key={t.id}
+              id={tabButtonId(t.id)}
+              aria-controls={tabPanelId(t.id)}
               className={tab === t.id ? "active" : ""}
-              onClick={() => setTab(t.id)}
+              {...tabProps(t.id)}
             >
               {t.label}
             </button>
@@ -51,7 +67,13 @@ export default function Settings() {
       {!settings ? (
         <p className="loading">Loading…</p>
       ) : (
-        <div className="tab-content">
+        <div
+          className="tab-content"
+          role="tabpanel"
+          id={tabPanelId(tab)}
+          aria-labelledby={tabButtonId(tab)}
+          tabIndex={0}
+        >
           {tab === "schedule" && (
             <ScheduleTab
               settings={settings}

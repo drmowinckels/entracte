@@ -196,6 +196,39 @@ The backend → renderer / tray surface is just Tauri events. The renderer subsc
 - The dialog can only have one active call at a time (`hook_dialog_busy` `AtomicBool`).
 - Local IPC explicitly denylists `hooks` and `hooks_enabled` keys for `settings set`.
 
+## Accessibility contract
+
+The renderer has two windows and each has a documented assistive-technology surface. Keep these contracts intact when touching the relevant files — they're tested at the unit level and gated by [`scripts/audit-a11y.mjs`](https://github.com/drmowinckels/entracte/blob/main/scripts/audit-a11y.mjs) at the structural level.
+
+### Settings window
+
+The Settings window follows the W3C [Tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/) with automatic activation. The shell lives in [`src/views/settings/index.tsx`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/index.tsx) and the keyboard controller in [`src/views/settings/hooks/use-roving-tab-list.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/hooks/use-roving-tab-list.ts).
+
+| Element        | Role       | Required attrs                                                                                        |
+| -------------- | ---------- | ----------------------------------------------------------------------------------------------------- |
+| `<nav>`        | `tablist`  | `aria-label="Settings sections"`, `aria-orientation="horizontal"`                                     |
+| Tab `<button>` | `tab`      | `aria-selected`, `aria-controls={panel-id}`, `id={tab-id}`, roving `tabindex` (0 active, -1 inactive) |
+| `<div>` panel  | `tabpanel` | `aria-labelledby={tab-id}`, `id={panel-id}`, `tabindex={0}` so the panel is reachable when empty      |
+
+Keyboard:
+
+- **Left / Right arrow** — move focus across tabs, wrap at the ends, activate on focus.
+- **Home / End** — first / last tab.
+- **Tab** — leaves the tablist and lands on the panel (`tabindex={0}` makes that work even when the panel contains no focusable children).
+- **Click / Enter / Space** — activate.
+
+Focus styling lives in [`src/views/settings/settings.css`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/settings.css) under `.settings .tabs button:focus-visible` and `.settings .tab-content:focus-visible`. Keep these in sync with the `--accent` token so dark and light modes both get a contrast-AA outline.
+
+### Break overlay
+
+`role="dialog" aria-modal="true"` outside strict mode, with an `aria-live="polite"` announcement at mount via [`src/lib/a11y.ts`](https://github.com/drmowinckels/entracte/blob/main/src/lib/a11y.ts). Focus is trapped via [`use-focus-trap.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/break-overlay/hooks/use-focus-trap.ts) and restored on dismiss by [`use-mount-focus.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/break-overlay/hooks/use-mount-focus.ts). The countdown ring is `aria-hidden`; the numeric time gets a spoken `aria-label`.
+
+Strict mode swaps the dialog for an `aria-live="assertive"` `role="alert"` region instead — the user has opted into being interrupted.
+
+### Audit infrastructure
+
+`npm run audit:a11y` boots a Vite preview, drives Chromium with puppeteer, and runs axe-core against every tab × light/dark scheme. The same script also fails on any unexpected `console.error` in the renderer. Add new violations to the explicit allowlist only when you've ruled out a real bug — the default is to fix.
+
 ## Testing layout
 
 | Where                                          | Coverage                                                      |
