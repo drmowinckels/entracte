@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { SchedulerSettings } from "./types";
 
 let mockSettings: SchedulerSettings | null = null;
@@ -51,30 +52,40 @@ vi.mock("../../lib/use-custom-stylesheet", () => ({
 }));
 
 vi.mock("./tabs/schedule-tab", () => ({
-  ScheduleTab: () => <div data-testid="content">schedule-content</div>,
+  ScheduleTab: () => <div data-testid="content-schedule">schedule-content</div>,
 }));
 vi.mock("./tabs/breaks-tab", () => ({
-  BreaksTab: () => <div data-testid="content">breaks-content</div>,
+  BreaksTab: () => <div data-testid="content-breaks">breaks-content</div>,
 }));
 vi.mock("./tabs/quiet-tab", () => ({
-  QuietTab: () => <div data-testid="content">quiet-content</div>,
+  QuietTab: () => <div data-testid="content-quiet">quiet-content</div>,
 }));
 vi.mock("./tabs/system-tab", () => ({
-  SystemTab: () => <div data-testid="content">system-content</div>,
+  SystemTab: () => <div data-testid="content-system">system-content</div>,
 }));
 vi.mock("./tabs/insights-tab", () => ({
-  InsightsTab: () => <div data-testid="content">insights-content</div>,
+  InsightsTab: () => <div data-testid="content-insights">insights-content</div>,
 }));
 vi.mock("./tabs/profiles-tab", () => ({
-  ProfilesTab: () => <div data-testid="content">profiles-content</div>,
+  ProfilesTab: () => <div data-testid="content-profiles">profiles-content</div>,
 }));
 vi.mock("./tabs/about-tab", () => ({
-  AboutTab: () => <div data-testid="content">about-content</div>,
+  AboutTab: () => <div data-testid="content-about">about-content</div>,
 }));
 
 const { default: Settings } = await import("./index");
 
 const hydratedSettings = {} as SchedulerSettings;
+
+const TAB_IDS = [
+  "schedule",
+  "breaks",
+  "quiet",
+  "system",
+  "insights",
+  "profiles",
+  "about",
+] as const;
 
 describe("Settings shell ARIA + keyboard", () => {
   it("exposes the tabs nav with role=tablist and a label", () => {
@@ -98,83 +109,117 @@ describe("Settings shell ARIA + keyboard", () => {
     }
   });
 
-  it("shows a Loading… message instead of a tabpanel while settings are unresolved", () => {
+  it("every tab's aria-controls points at a real tabpanel that aria-labels back", () => {
+    mockSettings = hydratedSettings;
+    const { container } = render(<Settings />);
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs).toHaveLength(7);
+    for (const tab of tabs) {
+      const controlledId = tab.getAttribute("aria-controls");
+      expect(controlledId).toBeTruthy();
+      const panel = container.querySelector(`#${controlledId}`);
+      expect(panel).not.toBeNull();
+      expect(panel?.getAttribute("role")).toBe("tabpanel");
+      expect(panel?.getAttribute("aria-labelledby")).toBe(tab.id);
+    }
+  });
+
+  it("renders all seven tabpanels and hides the inactive ones via the hidden attribute", () => {
+    mockSettings = hydratedSettings;
+    const { container } = render(<Settings />);
+    const panels = container.querySelectorAll<HTMLElement>('[role="tabpanel"]');
+    expect(panels).toHaveLength(7);
+    const visible = Array.from(panels).filter((p) => !p.hasAttribute("hidden"));
+    expect(visible).toHaveLength(1);
+    expect(visible[0].id).toBe("settings-tabpanel-schedule");
+  });
+
+  it("shows a Loading… message instead of any tabpanel while settings are unresolved", () => {
     mockSettings = null;
     render(<Settings />);
     expect(screen.queryByRole("tabpanel")).toBeNull();
     expect(screen.getByText("Loading…")).toBeTruthy();
   });
 
-  it("renders a tabpanel labelled by the active tab once settings load", () => {
+  it("ArrowRight activates the next tab, moves DOM focus, and reveals the matching panel", async () => {
+    const user = userEvent.setup();
     mockSettings = hydratedSettings;
-    render(<Settings />);
-    const panel = screen.getByRole("tabpanel");
-    expect(panel.id).toBe("settings-tabpanel-schedule");
-    expect(panel.getAttribute("aria-labelledby")).toBe("settings-tab-schedule");
-    expect(panel.getAttribute("tabindex")).toBe("0");
-    expect(screen.getByTestId("content").textContent).toBe("schedule-content");
-  });
-
-  it("ArrowRight activates the next tab and moves DOM focus to it", () => {
-    mockSettings = hydratedSettings;
-    render(<Settings />);
-    const tablist = screen.getByRole("tablist");
-    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    const { container } = render(<Settings />);
     const tabs = screen.getAllByRole("tab");
+    tabs[0].focus();
+    await user.keyboard("{ArrowRight}");
     expect(tabs[1].getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tabs[1]);
-    expect(screen.getByRole("tabpanel").id).toBe("settings-tabpanel-breaks");
-    expect(screen.getByTestId("content").textContent).toBe("breaks-content");
+    const breaks = container.querySelector("#settings-tabpanel-breaks");
+    expect(breaks?.hasAttribute("hidden")).toBe(false);
+    const schedule = container.querySelector("#settings-tabpanel-schedule");
+    expect(schedule?.hasAttribute("hidden")).toBe(true);
   });
 
-  it("ArrowLeft from the first tab wraps to the last", () => {
+  it("ArrowLeft from the first tab wraps to the last", async () => {
+    const user = userEvent.setup();
     mockSettings = null;
     render(<Settings />);
-    const tablist = screen.getByRole("tablist");
-    fireEvent.keyDown(tablist, { key: "ArrowLeft" });
     const tabs = screen.getAllByRole("tab");
+    tabs[0].focus();
+    await user.keyboard("{ArrowLeft}");
     expect(tabs[tabs.length - 1].getAttribute("aria-selected")).toBe("true");
   });
 
-  it("Home / End jump to the first / last tab", () => {
+  it("Home / End jump to the first / last tab", async () => {
+    const user = userEvent.setup();
     mockSettings = null;
     render(<Settings />);
-    const tablist = screen.getByRole("tablist");
-    fireEvent.keyDown(tablist, { key: "End" });
-    let tabs = screen.getAllByRole("tab");
+    const tabs = screen.getAllByRole("tab");
+    tabs[0].focus();
+    await user.keyboard("{End}");
     expect(tabs[tabs.length - 1].getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(tablist, { key: "Home" });
-    tabs = screen.getAllByRole("tab");
+    await user.keyboard("{Home}");
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
   });
 
-  it("clicking a tab activates it and updates the active class for legacy CSS", () => {
+  it("clicking a tab activates it and updates the active class for legacy CSS", async () => {
+    const user = userEvent.setup();
     mockSettings = hydratedSettings;
     render(<Settings />);
     const tabs = screen.getAllByRole("tab");
-    fireEvent.click(tabs[2]);
+    await user.click(tabs[2]);
     expect(tabs[2].getAttribute("aria-selected")).toBe("true");
     expect(tabs[2].classList.contains("active")).toBe(true);
-    expect(screen.getByRole("tabpanel").id).toBe("settings-tabpanel-quiet");
   });
 
-  it.each([
-    ["schedule", "schedule-content"],
-    ["breaks", "breaks-content"],
-    ["quiet", "quiet-content"],
-    ["system", "system-content"],
-    ["insights", "insights-content"],
-    ["profiles", "profiles-content"],
-    ["about", "about-content"],
-  ])("renders the %s tab's content inside the tabpanel", (id, expected) => {
+  it.each(TAB_IDS.map((id) => [id, `${id}-content`] as const))(
+    "renders the %s tab's content inside its tabpanel",
+    async (id, expected) => {
+      const user = userEvent.setup();
+      mockSettings = hydratedSettings;
+      const { container } = render(<Settings />);
+      const tab = screen
+        .getAllByRole("tab")
+        .find((el) => el.id === `settings-tab-${id}`);
+      if (!tab) throw new Error(`tab ${id} not found`);
+      await user.click(tab);
+      const panel = container.querySelector<HTMLElement>(
+        `#settings-tabpanel-${id}`,
+      );
+      expect(panel?.hasAttribute("hidden")).toBe(false);
+      expect(panel?.textContent).toBe(expected);
+    },
+  );
+
+  // Held-arrow-key regression — fireEvent because userEvent always
+  // waits for React to flush between events.
+  it("holding ArrowRight walks the tablist without skipping or stalling", () => {
     mockSettings = hydratedSettings;
     render(<Settings />);
-    const tab = screen
-      .getAllByRole("tab")
-      .find((el) => el.id === `settings-tab-${id}`);
-    if (!tab) throw new Error(`tab ${id} not found`);
-    fireEvent.click(tab);
-    expect(screen.getByRole("tabpanel").id).toBe(`settings-tabpanel-${id}`);
-    expect(screen.getByTestId("content").textContent).toBe(expected);
+    const tabs = screen.getAllByRole("tab");
+    tabs[0].focus();
+    const tablist = screen.getByRole("tablist");
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    const refreshed = screen.getAllByRole("tab");
+    expect(refreshed[3].getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(refreshed[3]);
   });
 });

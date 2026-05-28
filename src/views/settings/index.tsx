@@ -45,11 +45,7 @@ export default function Settings() {
   return (
     <main className="settings">
       <header className="settings-header">
-        <nav
-          className="tabs"
-          aria-label="Settings sections"
-          {...tablistProps}
-        >
+        <div className="tabs" aria-label="Settings sections" {...tablistProps}>
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -61,53 +57,102 @@ export default function Settings() {
               {t.label}
             </button>
           ))}
-        </nav>
+        </div>
       </header>
 
       {!settings ? (
         <p className="loading">Loading…</p>
       ) : (
-        <div
-          className="tab-content"
-          role="tabpanel"
-          id={tabPanelId(tab)}
-          aria-labelledby={tabButtonId(tab)}
-          tabIndex={0}
-        >
-          {tab === "schedule" && (
+        <>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("schedule")}
+            aria-labelledby={tabButtonId("schedule")}
+            tabIndex={0}
+            hidden={tab !== "schedule"}
+          >
             <ScheduleTab
               settings={settings}
               update={update}
               updateMany={updateMany}
               supporter={supporter.status}
             />
-          )}
-          {tab === "breaks" && (
+          </div>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("breaks")}
+            aria-labelledby={tabButtonId("breaks")}
+            tabIndex={0}
+            hidden={tab !== "breaks"}
+          >
             <BreaksTab
               settings={settings}
               update={update}
               supporter={supporter.status}
             />
-          )}
-          {tab === "quiet" && (
+          </div>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("quiet")}
+            aria-labelledby={tabButtonId("quiet")}
+            tabIndex={0}
+            hidden={tab !== "quiet"}
+          >
             <QuietTab
               settings={settings}
               update={update}
               pauseInfo={pauseInfo}
             />
-          )}
-          {tab === "system" && (
+          </div>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("system")}
+            aria-labelledby={tabButtonId("system")}
+            tabIndex={0}
+            hidden={tab !== "system"}
+          >
             <SystemTab
               settings={settings}
               update={update}
               setAutostart={setAutostart}
               hooks={hooks}
             />
-          )}
-          {tab === "insights" && <InsightsTab stats={stats} />}
-          {tab === "profiles" && <ProfilesTab profiles={profiles} />}
-          {tab === "about" && <AboutTab supporter={supporter} />}
-        </div>
+          </div>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("insights")}
+            aria-labelledby={tabButtonId("insights")}
+            tabIndex={0}
+            hidden={tab !== "insights"}
+          >
+            <InsightsTab stats={stats} />
+          </div>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("profiles")}
+            aria-labelledby={tabButtonId("profiles")}
+            tabIndex={0}
+            hidden={tab !== "profiles"}
+          >
+            <ProfilesTab profiles={profiles} />
+          </div>
+          <div
+            className="tab-content"
+            role="tabpanel"
+            id={tabPanelId("about")}
+            aria-labelledby={tabButtonId("about")}
+            tabIndex={0}
+            hidden={tab !== "about"}
+          >
+            <AboutTab supporter={supporter} />
+          </div>
+        </>
       )}
     </main>
   );
