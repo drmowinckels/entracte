@@ -200,9 +200,15 @@ The backend → renderer / tray surface is just Tauri events. The renderer subsc
 
 The renderer has two windows and each has a documented assistive-technology surface. Keep these contracts intact when touching the relevant files — they're tested at the unit level and gated by [`scripts/audit-a11y.mjs`](https://github.com/drmowinckels/entracte/blob/main/scripts/audit-a11y.mjs) at the structural level.
 
+### Document titles
+
+The [`window-kind`](https://github.com/drmowinckels/entracte/blob/main/src/lib/window-kind.ts) helper resolves `?window=` once per webview and exposes a `titleForWindow` mapping. [`App.tsx`](https://github.com/drmowinckels/entracte/blob/main/src/App.tsx) sets `document.title` from it on mount so VoiceOver announces the window's purpose when focus enters it. The HTML `<title>` in [`index.html`](https://github.com/drmowinckels/entracte/blob/main/index.html) is just `"Entracte"` — the React layer overrides it with the kind-specific title.
+
 ### Settings window
 
 The Settings window follows the W3C [Tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/) with automatic activation. The shell lives in [`src/views/settings/index.tsx`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/index.tsx) and the keyboard controller in [`src/views/settings/hooks/use-roving-tab-list.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/hooks/use-roving-tab-list.ts).
+
+A `Skip to settings content` link is the first focusable element of the shell. It is visually hidden via `transform: translateY(-200%)` until `:focus`, then jumps to the stable `#settings-main` container (`tabindex={-1}`) that wraps the tabpanel. Keep the link visible on focus and keep the `#settings-main` id stable — the panel's own id changes per active tab.
 
 | Element        | Role       | Required attrs                                                                                        |
 | -------------- | ---------- | ----------------------------------------------------------------------------------------------------- |

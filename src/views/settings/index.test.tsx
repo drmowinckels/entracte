@@ -88,6 +88,31 @@ const TAB_IDS = [
 ] as const;
 
 describe("Settings shell ARIA + keyboard", () => {
+  it("renders a Skip to settings content link as the first focusable element", () => {
+    mockSettings = null;
+    const { container } = render(<Settings />);
+    const skip = screen.getByRole("link", { name: "Skip to settings content" });
+    const focusables = container.querySelectorAll<HTMLElement>(
+      'a[href], area[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), details, summary, [tabindex]:not([tabindex="-1"])',
+    );
+    expect(focusables[0]).toBe(skip);
+  });
+
+  it("skip link href tracks the active tabpanel so focus lands directly on content", async () => {
+    const user = userEvent.setup();
+    mockSettings = hydratedSettings;
+    render(<Settings />);
+    expect(
+      screen.getByRole("link", { name: "Skip to settings content" }).getAttribute("href"),
+    ).toBe("#settings-tabpanel-schedule");
+    const breaksTab = screen.getAllByRole("tab").find((t) => t.id === "settings-tab-breaks");
+    if (!breaksTab) throw new Error("breaks tab not found");
+    await user.click(breaksTab);
+    expect(
+      screen.getByRole("link", { name: "Skip to settings content" }).getAttribute("href"),
+    ).toBe("#settings-tabpanel-breaks");
+  });
+
   it("exposes the tabs nav with role=tablist and a label", () => {
     mockSettings = null;
     render(<Settings />);
