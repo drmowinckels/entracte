@@ -1,9 +1,8 @@
+import { useEffect } from "react";
 import Settings from "./views/settings";
 import BreakOverlay from "./views/break-overlay";
 import { ErrorBoundary } from "./error-boundary";
-
-const params = new URLSearchParams(window.location.search);
-const windowKind = params.get("window") ?? "main";
+import { titleForWindow, windowKind } from "./lib/window-kind";
 
 if (windowKind === "overlay") {
   document.documentElement.classList.add("overlay-window");
@@ -13,6 +12,10 @@ if (windowKind === "overlay") {
 }
 
 function App() {
+  useEffect(() => {
+    document.title = titleForWindow(windowKind);
+  }, []);
+
   if (windowKind === "overlay") {
     return (
       <ErrorBoundary area="Break overlay">
