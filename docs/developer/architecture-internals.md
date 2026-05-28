@@ -208,13 +208,15 @@ The [`window-kind`](https://github.com/drmowinckels/entracte/blob/main/src/lib/w
 
 The Settings window follows the W3C [Tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/) with automatic activation. The shell lives in [`src/views/settings/index.tsx`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/index.tsx) and the keyboard controller in [`src/views/settings/hooks/use-roving-tab-list.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/hooks/use-roving-tab-list.ts).
 
-A `Skip to settings content` link is the first focusable element of the shell. It is visually hidden via `transform: translateY(-200%)` until `:focus`, then jumps to the stable `#settings-main` container (`tabindex={-1}`) that wraps the tabpanel. Keep the link visible on focus and keep the `#settings-main` id stable — the panel's own id changes per active tab.
+A `Skip to settings content` link is the first focusable element of the shell. It is visually hidden via `transform: translateY(-200%)` until `:focus-visible`, then jumps to the **active tabpanel's id** so focus lands directly on content (no intermediate wrapper). Its `href` tracks the active tab via `tabPanelId(tab)`.
+
+All seven tabpanels render at all times with the inactive ones `hidden` — this keeps every tab's `aria-controls` pointing at an element that exists in the DOM, as required by the W3C APG Tabs pattern.
 
 | Element        | Role       | Required attrs                                                                                        |
 | -------------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| `<nav>`        | `tablist`  | `aria-label="Settings sections"`, `aria-orientation="horizontal"`                                     |
+| `<div>` tabs   | `tablist`  | `aria-label="Settings sections"`, `aria-orientation="horizontal"`                                     |
 | Tab `<button>` | `tab`      | `aria-selected`, `aria-controls={panel-id}`, `id={tab-id}`, roving `tabindex` (0 active, -1 inactive) |
-| `<div>` panel  | `tabpanel` | `aria-labelledby={tab-id}`, `id={panel-id}`, `tabindex={0}` so the panel is reachable when empty      |
+| `<div>` panel  | `tabpanel` | `aria-labelledby={tab-id}`, `id={panel-id}`, `tabindex={0}`, `hidden` on inactive panels              |
 
 Keyboard:
 

@@ -12,13 +12,11 @@ vi.mock("./error-boundary", () => ({
   ),
 }));
 
-const originalSearch = window.location.search;
-
-function setSearch(value: string) {
-  Object.defineProperty(window.location, "search", {
-    configurable: true,
-    value,
-  });
+function stubLocation(search: string) {
+  // URL gives us a real Location-like object with .search, .href, .origin,
+  // etc. — anything the code under test touches via window.location.
+  // vi.unstubAllGlobals in afterEach restores the original window.location.
+  vi.stubGlobal("location", new URL(`http://localhost/${search}`));
 }
 
 beforeEach(() => {
@@ -31,12 +29,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  setSearch(originalSearch);
+  vi.unstubAllGlobals();
 });
 
 describe("App routing + title", () => {
   it("renders Settings and titles the document when window=main", async () => {
-    setSearch("");
+    stubLocation("");
     const { default: App } = await import("./App");
     const { render, screen } = await import("@testing-library/react");
     render(<App />);
@@ -48,7 +46,7 @@ describe("App routing + title", () => {
   });
 
   it("survives a missing #root element on the overlay window", async () => {
-    setSearch("?window=overlay");
+    stubLocation("?window=overlay");
     // Deliberately do not create a #root element; happy-dom's
     // document.getElementById will return null, so the module-load
     // root.classList.add call must short-circuit.
@@ -60,7 +58,7 @@ describe("App routing + title", () => {
   });
 
   it("renders the BreakOverlay and titles the document when window=overlay", async () => {
-    setSearch("?window=overlay");
+    stubLocation("?window=overlay");
     const root = document.createElement("div");
     root.id = "root";
     document.body.appendChild(root);

@@ -12,6 +12,7 @@
   --accent-hover: var(--primary-color-hover);
   --pop: var(--accent-color);
   --pop-soft: var(--secondary-color);
+  --on-accent: #ffffff;
   color-scheme: light dark;
 }
 
@@ -48,7 +49,7 @@ body,
   left: 0.5rem;
   padding: 0.5rem 0.9rem;
   background: var(--accent-strong, var(--accent));
-  color: white;
+  color: var(--on-accent);
   border-radius: 6px;
   font-size: 0.9rem;
   font-weight: 500;
@@ -58,15 +59,10 @@ body,
   transition: transform 120ms ease-out;
 }
 
-.skip-link:focus,
 .skip-link:focus-visible {
   transform: translateY(0);
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-#settings-main:focus {
-  outline: none;
 }
 
 .settings {
