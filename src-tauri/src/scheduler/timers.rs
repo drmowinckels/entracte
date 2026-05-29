@@ -216,6 +216,17 @@ pub enum BedtimeAction {
 ///
 /// `last_sleep == None` always fires on the first tick of the window —
 /// the cap only kicks in for re-prompts.
+///
+/// `resumed_from_suspend` is `true` on the single tick that follows a
+/// wake from sleep (detected via a wall-clock jump in the run loop). The
+/// monotonic `last_sleep` anchor can show an arbitrarily large elapsed
+/// interval across a suspend, which would otherwise fire a stale catch-up
+/// prompt the instant the lid opens. When we've *already* prompted this
+/// window (`last_sleep` is `Some`), we demote that catch-up to
+/// `ResetTimersOnly` so opening the laptop mid-window stays quiet. A
+/// first entry into the window (`last_sleep` is `None`, e.g. the laptop
+/// was closed before bedtime and opened inside it) still fires normally.
+#[allow(clippy::too_many_arguments)]
 pub fn decide_bedtime(
     enabled: bool,
     now_min: u32,
@@ -224,6 +235,7 @@ pub fn decide_bedtime(
     interval_secs: u64,
     last_sleep_fire: Option<Instant>,
     now: Instant,
+    resumed_from_suspend: bool,
 ) -> BedtimeAction {
     if !enabled || !in_window(now_min, start_min, end_min) {
         return BedtimeAction::NotInWindow;
@@ -233,6 +245,9 @@ pub fn decide_bedtime(
         Some(t) => now.saturating_duration_since(t) >= Duration::from_secs(interval_secs),
     };
     if should_fire {
+        if resumed_from_suspend && last_sleep_fire.is_some() {
+            return BedtimeAction::ResetTimersOnly;
+        }
         BedtimeAction::Fire
     } else {
         BedtimeAction::ResetTimersOnly
@@ -683,7 +698,7 @@ mod tests {
         let now = Instant::now();
         // 12:00, window 22:00–06:00
         assert_eq!(
-            decide_bedtime(true, 12 * 60, 22 * 60, 6 * 60, 1800, None, now),
+            decide_bedtime(true, 12 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
             BedtimeAction::NotInWindow
         );
     }
@@ -692,7 +707,7 @@ mod tests {
     fn bedtime_disabled_returns_not_in_window_even_in_range() {
         let now = Instant::now();
         assert_eq!(
-            decide_bedtime(false, 23 * 60, 22 * 60, 6 * 60, 1800, None, now),
+            decide_bedtime(false, 23 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
             BedtimeAction::NotInWindow
         );
     }
@@ -701,7 +716,7 @@ mod tests {
     fn bedtime_first_tick_of_window_fires() {
         let now = Instant::now();
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, None, now),
+            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
             BedtimeAction::Fire
         );
     }
@@ -711,7 +726,7 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(1800);
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(last), now),
+            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(last), now, false),
             BedtimeAction::Fire
         );
     }
@@ -722,7 +737,7 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(900);
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(last), now),
+            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(last), now, false),
             BedtimeAction::ResetTimersOnly
         );
     }
@@ -732,7 +747,7 @@ mod tests {
         let now = Instant::now();
         // 02:00 should still be in window 22:00–06:00
         assert_eq!(
-            decide_bedtime(true, 2 * 60, 22 * 60, 6 * 60, 1800, None, now),
+            decide_bedtime(true, 2 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
             BedtimeAction::Fire
         );
     }
@@ -744,8 +759,59 @@ mod tests {
         let now = Instant::now();
         let future = now + Duration::from_secs(60);
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(future), now),
+            decide_bedtime(
+                true,
+                23 * 60,
+                22 * 60,
+                6 * 60,
+                1800,
+                Some(future),
+                now,
+                false
+            ),
             BedtimeAction::ResetTimersOnly
+        );
+    }
+
+    #[test]
+    fn bedtime_resume_from_suspend_does_not_refire_after_prior_prompt() {
+        // Issue #61: prompt fired in the evening (last_sleep = Some), the
+        // laptop slept for hours, and the user opens it still inside the
+        // overnight window. The monotonic elapsed dwarfs the interval, so
+        // the plain rule would fire — but the wake tick must stay quiet.
+        let last = Instant::now();
+        let now = last + Duration::from_secs(8 * 3600);
+        assert_eq!(
+            decide_bedtime(true, 8 * 60, 22 * 60, 9 * 60, 300, Some(last), now, true),
+            BedtimeAction::ResetTimersOnly
+        );
+        // Without the resume flag the same inputs would (wrongly, for the
+        // user) re-fire — proving the flag is what suppresses it.
+        assert_eq!(
+            decide_bedtime(true, 8 * 60, 22 * 60, 9 * 60, 300, Some(last), now, false),
+            BedtimeAction::Fire
+        );
+    }
+
+    #[test]
+    fn bedtime_resume_into_first_entry_still_fires() {
+        // Laptop closed before bedtime, opened inside the window: no prompt
+        // has fired this window (last_sleep = None), so even a wake tick
+        // should fire the first reminder.
+        let now = Instant::now();
+        assert_eq!(
+            decide_bedtime(true, 23 * 60, 22 * 60, 9 * 60, 300, None, now, true),
+            BedtimeAction::Fire
+        );
+    }
+
+    #[test]
+    fn bedtime_resume_outside_window_is_noop() {
+        // A wake well outside the window is still just NotInWindow.
+        let now = Instant::now();
+        assert_eq!(
+            decide_bedtime(true, 12 * 60, 22 * 60, 9 * 60, 300, Some(now), now, true),
+            BedtimeAction::NotInWindow
         );
     }
 }

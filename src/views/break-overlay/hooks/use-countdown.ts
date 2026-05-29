@@ -12,6 +12,13 @@ import {
 } from "../../../lib/sounds";
 import { CUSTOM_SOUND_ID } from "../../../lib/break-sound";
 
+/** How long the "Done" state stays on screen after the countdown ends
+ * before the overlay dismisses. Long enough to register the end of the
+ * break and let the chime ring, short enough that the break still ends
+ * close to its set duration — previously the overlay lingered for the
+ * full chime (up to several seconds), which made every break feel long. */
+export const DONE_LINGER_MS = 800;
+
 export type CountdownDeps = {
   invoke?: typeof invoke;
   playSound?: typeof defaultPlaySound;
@@ -68,13 +75,19 @@ export function useCountdown(
 
   const endingRef = useRef(false);
 
-  const playEndChime = (): Promise<void> => {
+  const playEndChime = (): void => {
     const snap = endChimeRef.current;
-    if (!snap.sound) return Promise.resolve();
+    if (!snap.sound) return;
     if (snap.sound.sound_id === CUSTOM_SOUND_ID) {
-      return playCustomSoundFn(snap.sound.custom_path ?? "", snap.volume);
+      void playCustomSoundFn(snap.sound.custom_path ?? "", snap.volume);
+      return;
     }
-    return playSoundFn(snap.sound.sound_id, snap.volume);
+    void playSoundFn(snap.sound.sound_id, snap.volume);
+  };
+
+  const dismiss = () => {
+    invokeFn("end_break", { reason: "completed" });
+    clearBreak();
   };
 
   useEffect(() => {
@@ -87,11 +100,12 @@ export function useCountdown(
       endingRef.current = true;
       setFinished(true);
       if (active.manual_finish) return;
-      playEndChime().finally(() => {
-        invokeFn("end_break", { reason: "completed" });
-        clearBreak();
-      });
-      return;
+      // Fire the chime but don't gate the dismissal on it finishing —
+      // hold "Done" for a short fixed beat instead so the break ends
+      // close to its set length regardless of the chime's length.
+      playEndChime();
+      const t = setTimeout(dismiss, DONE_LINGER_MS);
+      return () => clearTimeout(t);
     }
     if (paused) return;
     const t = setTimeout(() => setRemaining((r) => r - 1), 1000);
@@ -102,10 +116,8 @@ export function useCountdown(
   const triggerFinish = () => {
     if (!active) return;
     setFinished(true);
-    playEndChime().finally(() => {
-      invokeFn("end_break", { reason: "completed" });
-      clearBreak();
-    });
+    playEndChime();
+    setTimeout(dismiss, DONE_LINGER_MS);
   };
 
   return { triggerFinish };

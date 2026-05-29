@@ -83,28 +83,56 @@ function clampVolume(volume: number): number {
 const livePlaybacks = new Set<HTMLAudioElement>();
 const PLAYBACK_TIMEOUT_MS = 2500;
 
+function teardownPlayback(audio: HTMLAudioElement): void {
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.src = "";
+  } catch {
+    // ignore — element may already be torn down
+  }
+}
+
 async function playUrlOnce(url: string, volume: number): Promise<void> {
   const audio = new Audio(url);
   audio.volume = clampVolume(volume);
   livePlaybacks.add(audio);
   return new Promise<void>((resolve) => {
     let settled = false;
-    const finish = () => {
+    // `stop` is true when we're giving up on a playback that never
+    // finished cleanly (safety timeout, or `play()` rejected). A break
+    // overlay can suspend its webview's media when it hides; an
+    // untorn-down element with a deferred `play()` then resumes and the
+    // chime bleeds into the *start* of the next break. Tearing it down
+    // here makes a missed chime stay missed instead of mistimed.
+    const finish = (stop: boolean) => {
       if (settled) return;
       settled = true;
+      if (stop) teardownPlayback(audio);
       livePlaybacks.delete(audio);
       resolve();
     };
-    audio.addEventListener("ended", finish, { once: true });
-    audio.addEventListener("error", finish, { once: true });
-    const timeoutId = setTimeout(finish, PLAYBACK_TIMEOUT_MS);
+    audio.addEventListener("ended", () => finish(false), { once: true });
+    audio.addEventListener("error", () => finish(false), { once: true });
+    const timeoutId = setTimeout(() => finish(true), PLAYBACK_TIMEOUT_MS);
     audio.addEventListener(
       "ended",
       () => clearTimeout(timeoutId),
       { once: true },
     );
-    audio.play().catch(() => finish());
+    audio.play().catch(() => finish(true));
   });
+}
+
+/** Immediately stop and discard any one-shot playbacks still in flight.
+ * Called when a new break overlay opens so a chime that's still playing
+ * (or was deferred by the previous overlay hiding) can't bleed into the
+ * new break. Ambient loops manage their own lifecycle and are untouched. */
+export function stopAllSounds(): void {
+  for (const audio of livePlaybacks) {
+    teardownPlayback(audio);
+  }
+  livePlaybacks.clear();
 }
 
 /** Play a sound once. Resolves when the audio ends, errors, or the

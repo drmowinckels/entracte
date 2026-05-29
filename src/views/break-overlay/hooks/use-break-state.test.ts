@@ -77,6 +77,30 @@ describe("useBreakState", () => {
     expect(result.current.finished).toBe(false);
   });
 
+  it("flushes any lingering chime when a new break starts", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "get_current_break") return null;
+      if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
+      if (cmd === "get_postpone_state") return { count: 0, max: 3, remaining: 3 };
+      return null;
+    });
+    const stopAllSounds = vi.fn();
+    const { listen, emit } = makeListener();
+    const { result } = renderHook(() =>
+      useBreakState({
+        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen: listen as unknown as typeof import("@tauri-apps/api/event").listen,
+        stopAllSounds,
+      }),
+    );
+    await waitFor(() => expect(listen).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      emit("break:start", sampleBreak);
+    });
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    expect(stopAllSounds).toHaveBeenCalled();
+  });
+
   it("clears active state when a break:end event arrives", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
