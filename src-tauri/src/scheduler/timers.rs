@@ -759,7 +759,16 @@ mod tests {
         let now = Instant::now();
         let future = now + Duration::from_secs(60);
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(future), now, false),
+            decide_bedtime(
+                true,
+                23 * 60,
+                22 * 60,
+                6 * 60,
+                1800,
+                Some(future),
+                now,
+                false
+            ),
             BedtimeAction::ResetTimersOnly
         );
     }

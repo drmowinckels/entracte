@@ -71,7 +71,8 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         sleep(Duration::from_secs(1)).await;
 
         let now_wall = SystemTime::now();
-        let resumed_from_suspend = resumed_after_gap(last_tick_wall, now_wall, SUSPEND_GAP_THRESHOLD);
+        let resumed_from_suspend =
+            resumed_after_gap(last_tick_wall, now_wall, SUSPEND_GAP_THRESHOLD);
         last_tick_wall = now_wall;
 
         // Early-out while an import is mid-flight. This is an
