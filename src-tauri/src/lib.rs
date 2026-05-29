@@ -169,6 +169,8 @@ pub fn run() {
             if let Err(e) = ipc::start_server(app.handle().clone(), data_dir.clone()) {
                 log::warn!("ipc: failed to start server: {e}");
             }
+
+            diagnostics::log_startup_banner(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

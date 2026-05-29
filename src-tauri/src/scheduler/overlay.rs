@@ -100,7 +100,10 @@ fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::W
     .focused(false)
     .build()
     {
-        Ok(w) => Some(w),
+        Ok(w) => {
+            log::debug!("overlay: created break window '{label}'");
+            Some(w)
+        }
         // Don't swallow this silently: a failed build means the break is
         // completely invisible (no overlay, no preview, no test break) with
         // no other symptom. On some Linux setups the windowing system
@@ -227,6 +230,7 @@ pub fn fire_break<R: Runtime>(
 
     let monitors = select_overlay_monitors(app, placement);
     let count = monitors.len().max(1);
+    let mut shown = 0usize;
 
     for (idx, monitor) in monitors.iter().enumerate() {
         if let Some(window) = ensure_overlay(app, idx) {
@@ -247,7 +251,20 @@ pub fn fire_break<R: Runtime>(
             let _ = window.set_fullscreen(false);
             let _ = window.show();
             let _ = window.set_focus();
+            shown += 1;
         }
+    }
+
+    // Logged to the rotating log file (not just the stats event log) so a
+    // diagnostics report's log tail shows the break actually firing — and
+    // flags the Linux case where no overlay could be built (shown == 0).
+    if shown == 0 {
+        log::error!(
+            "scheduler: break kind={kind:?} fired but NO overlay window could be shown \
+             ({count} monitor(s) targeted) — the break is invisible"
+        );
+    } else {
+        log::info!("scheduler: break kind={kind:?} shown on {shown}/{count} monitor(s)");
     }
 
     // Close (not just hide) any overlays for monitors that disconnected since
