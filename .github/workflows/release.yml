@@ -227,14 +227,20 @@ jobs:
           #             version from `.app.tar.gz` artifact names (since
           #             the matrix produces two files that would otherwise
           #             collide). Linux + Windows keep the version.
-          #   Linux   : <productNameLower>_<version>_amd64.AppImage[.sig]
-          #             productName lowercases on Linux.
+          #   Linux   : <productName?>_<version>_amd64.AppImage[.sig]
+          #             The AppImage basename's casing has drifted across
+          #             tauri-bundler versions (`entracte_…` through v0.0.1,
+          #             `Entracte_…` from v0.0.2), so resolve it from the
+          #             actual artifact rather than hardcoding the casing.
           #   Windows : <productName>_<version>_x64_en-US.msi[.sig]
           #             the locale suffix is what tauri-bundler emits;
           #             update here if we ever switch the MSI locale.
           AARCH64_FILE="Entracte_aarch64.app.tar.gz"
           X64_FILE="Entracte_x64.app.tar.gz"
-          APPIMAGE_FILE="entracte_${VERSION}_amd64.AppImage"
+          APPIMAGE_FILE=""
+          for cand in release-assets/*_amd64.AppImage; do
+            [ -e "$cand" ] && APPIMAGE_FILE="$(basename "$cand")" && break
+          done
           MSI_FILE="Entracte_${VERSION}_x64_en-US.msi"
 
           for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig" "${APPIMAGE_FILE}.sig" "${MSI_FILE}.sig"; do
