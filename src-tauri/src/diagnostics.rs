@@ -318,16 +318,24 @@ fn gather_monitors<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
         .collect()
 }
 
-/// Build the Runtime section from the live scheduler state plus the two
-/// values the caller fetches from plugins (`build_diagnostics_report`
-/// passes them in). Kept free of `AppHandle` so it's testable with a bare
-/// scheduler — `MockRuntime` + the notification/autostart plugins abort on
-/// headless Linux, which is the only platform CI runs tests on.
-async fn runtime_snapshot_section(
-    scheduler: &Scheduler,
-    notification_permission: String,
-    autostart_registered: Option<bool>,
-) -> String {
+/// Volatile readings gathered by the command from the OS / plugins:
+/// the idle probe, DND state, screen-lock, notification permission, and
+/// OS-level autostart. Bundled and passed into `runtime_snapshot_section`
+/// so that function touches only in-memory scheduler state — these probes
+/// go through X11 / dbus / plugin FFI that segfaults on the headless CI
+/// runner, so they must stay out of the testable path.
+pub struct LiveReadings {
+    pub idle_probe: Result<u64, String>,
+    pub dnd_active: bool,
+    pub screen_locked: Option<bool>,
+    pub notification_permission: String,
+    pub autostart_registered: Option<bool>,
+}
+
+/// Build the Runtime section from in-memory scheduler state plus the
+/// already-gathered `LiveReadings`. No OS / plugin / `AppHandle` access,
+/// so it's testable with a bare scheduler.
+async fn runtime_snapshot_section(scheduler: &Scheduler, live: LiveReadings) -> String {
     use std::sync::atomic::Ordering;
     use std::time::Instant;
 
@@ -349,11 +357,6 @@ async fn runtime_snapshot_section(
         scheduler.auto_suppress_reason.load(Ordering::Relaxed),
     )
     .map(|r| r.human());
-
-    let idle_probe = match user_idle::UserIdle::get_time() {
-        Ok(i) => Ok(i.as_seconds()),
-        Err(e) => Err(format!("{e}")),
-    };
 
     let (active_break, micro, long, micro_postpones, long_postpones) = {
         let t = scheduler.timers.lock().await;
@@ -379,19 +382,19 @@ async fn runtime_snapshot_section(
         paused,
         pause_remaining_secs,
         auto_suppress,
-        dnd_active: crate::dnd::is_active(),
+        dnd_active: live.dnd_active,
         camera_active: scheduler.camera_active.load(Ordering::Relaxed),
         video_active: scheduler.video_active.load(Ordering::Relaxed),
-        screen_locked: crate::scheduler::session_lock::screen_locked(),
-        idle_probe,
+        screen_locked: live.screen_locked,
+        idle_probe: live.idle_probe,
         active_break,
         micro,
         long,
         micro_postpones,
         long_postpones,
-        notification_permission,
+        notification_permission: live.notification_permission,
         autostart_setting: s.autostart_enabled,
-        autostart_registered,
+        autostart_registered: live.autostart_registered,
     };
     format_runtime_snapshot(&snapshot)
 }
@@ -475,12 +478,17 @@ pub async fn build_diagnostics_report<R: Runtime>(
         use tauri_plugin_autostart::ManagerExt;
         app.autolaunch().is_enabled().ok()
     };
-    let runtime = runtime_snapshot_section(
-        scheduler.inner(),
+    let live = LiveReadings {
+        idle_probe: match user_idle::UserIdle::get_time() {
+            Ok(i) => Ok(i.as_seconds()),
+            Err(e) => Err(format!("{e}")),
+        },
+        dnd_active: crate::dnd::is_active(),
+        screen_locked: crate::scheduler::session_lock::screen_locked(),
         notification_permission,
         autostart_registered,
-    )
-    .await;
+    };
+    let runtime = runtime_snapshot_section(scheduler.inner(), live).await;
     let settings = scheduler.settings.lock().await.clone();
     let stats = scheduler.stats.lock().await.clone();
     let settings_value = serde_json::to_value(&settings).unwrap_or(serde_json::Value::Null);
@@ -890,7 +898,14 @@ mod tests {
             dir.path(),
         );
 
-        let section = runtime_snapshot_section(&sched, "granted".to_string(), Some(true)).await;
+        let live = LiveReadings {
+            idle_probe: Ok(7),
+            dnd_active: false,
+            screen_locked: Some(false),
+            notification_permission: "granted".to_string(),
+            autostart_registered: Some(true),
+        };
+        let section = runtime_snapshot_section(&sched, live).await;
 
         // A fresh scheduler is running, not suppressed, no active break.
         assert!(section.contains("Pause: running"));
