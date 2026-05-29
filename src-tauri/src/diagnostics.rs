@@ -442,9 +442,7 @@ fn format_environment(
     utc_offset: &str,
     build_profile: &str,
 ) -> String {
-    let mut lines = vec![
-        format!("- Display server: `{}`", display_server(os, env)),
-    ];
+    let mut lines = vec![format!("- Display server: `{}`", display_server(os, env))];
     if os != "macos" && os != "windows" {
         let desktop = env.desktop.as_deref().unwrap_or("?");
         let session = env.desktop_session.as_deref().unwrap_or("?");
@@ -452,7 +450,9 @@ fn format_environment(
     }
     lines.push(format!("- Webview: `{webview}`"));
     lines.push(format!("- Build: `{build_profile}`"));
-    lines.push(format!("- Local time: `{local_now}` (UTC offset `{utc_offset}`)"));
+    lines.push(format!(
+        "- Local time: `{local_now}` (UTC offset `{utc_offset}`)"
+    ));
     format!(
         "{lines}\n\n**Monitors**\n\n{monitors}",
         lines = lines.join("\n"),
@@ -639,7 +639,10 @@ mod tests {
 
     #[test]
     fn display_server_is_native_on_desktop_oses() {
-        assert_eq!(display_server("macos", &EnvFacts::default()), "Cocoa (native)");
+        assert_eq!(
+            display_server("macos", &EnvFacts::default()),
+            "Cocoa (native)"
+        );
         assert_eq!(
             display_server("windows", &EnvFacts::default()),
             "Win32 / WebView2 (native)"
