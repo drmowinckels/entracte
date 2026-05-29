@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { useCountdown } from "./use-countdown";
+import { DONE_LINGER_MS, useCountdown } from "./use-countdown";
 import { DEFAULT_OVERLAY_SETTINGS, type BreakEvent, type OverlaySettings } from "../types";
 
 function makeBreak(overrides: Partial<BreakEvent> = {}): BreakEvent {
@@ -70,7 +70,7 @@ describe("useCountdown", () => {
     expect(setRemaining).not.toHaveBeenCalled();
   });
 
-  it("fires end-chime and end_break when remaining hits 0 on non-manual breaks", async () => {
+  it("fires the end-chime immediately but defers end_break to the Done-linger beat", () => {
     const invoke = vi.fn(async () => null);
     const playSound = vi.fn(() => Promise.resolve());
     const setFinished = vi.fn();
@@ -95,12 +95,19 @@ describe("useCountdown", () => {
         },
       ),
     );
+    // Done shows and the chime fires right away — but the overlay must
+    // not dismiss until the short linger elapses (issue: breaks felt long
+    // because dismissal waited for the whole chime).
     expect(setFinished).toHaveBeenCalledWith(true);
-    await vi.waitFor(() => {
-      expect(playSound).toHaveBeenCalledWith("chime-1", 0.5);
-      expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
-      expect(clearBreak).toHaveBeenCalled();
+    expect(playSound).toHaveBeenCalledWith("chime-1", 0.5);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(clearBreak).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(DONE_LINGER_MS);
     });
+    expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
+    expect(clearBreak).toHaveBeenCalled();
   });
 
   it("does not auto-end on manual_finish breaks", () => {
@@ -159,9 +166,7 @@ describe("useCountdown", () => {
     act(() => {
       result.current.triggerFinish();
     });
-    await vi.waitFor(() => {
-      expect(playSound).toHaveBeenCalledWith("chime-new", 0.8);
-    });
+    expect(playSound).toHaveBeenCalledWith("chime-new", 0.8);
   });
 
   it("routes to playCustomSound when end-chime sound_id is the custom sentinel", async () => {
@@ -193,9 +198,7 @@ describe("useCountdown", () => {
         },
       ),
     );
-    await vi.waitFor(() => {
-      expect(playCustomSound).toHaveBeenCalledWith("/Users/me/chime.mp3", 0.7);
-    });
+    expect(playCustomSound).toHaveBeenCalledWith("/Users/me/chime.mp3", 0.7);
     expect(playSound).not.toHaveBeenCalled();
   });
 
@@ -228,12 +231,42 @@ describe("useCountdown", () => {
         },
       ),
     );
-    await vi.waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
-      expect(clearBreak).toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(DONE_LINGER_MS);
     });
+    expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
+    expect(clearBreak).toHaveBeenCalled();
     expect(playSound).not.toHaveBeenCalled();
     expect(playCustomSound).not.toHaveBeenCalled();
+  });
+
+  it("triggerFinish dismisses after the Done-linger beat, not immediately", () => {
+    const invoke = vi.fn(async () => null);
+    const clearBreak = vi.fn();
+    const { result } = renderHook(() =>
+      useCountdown(
+        makeBreak({ manual_finish: true }),
+        0,
+        false,
+        DEFAULT_OVERLAY_SETTINGS,
+        vi.fn(),
+        vi.fn(),
+        clearBreak,
+        {
+          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          playSound: vi.fn(() => Promise.resolve()),
+        },
+      ),
+    );
+    act(() => {
+      result.current.triggerFinish();
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(DONE_LINGER_MS);
+    });
+    expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
+    expect(clearBreak).toHaveBeenCalled();
   });
 
   it("triggerFinish is a no-op when no break is active", () => {
