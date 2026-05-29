@@ -2,64 +2,76 @@ import { describe, expect, it } from "vitest";
 
 import {
   announceBreak,
+  breakDescription,
   dialogLabel,
+  durationPhrase,
   milestoneFor,
   milestoneMessage,
   remainingAriaLabel,
 } from "./a11y";
 
 describe("dialogLabel", () => {
-  it("prefixes break kinds with 'Entracte break reminder'", () => {
-    expect(dialogLabel("micro")).toBe("Entracte break reminder, Micro break");
-    expect(dialogLabel("long")).toBe("Entracte break reminder, Long break");
+  it("names break kinds with the app prefix and no 'reminder' nag", () => {
+    expect(dialogLabel("micro")).toBe("Entracte, micro break");
+    expect(dialogLabel("long")).toBe("Entracte, long break");
   });
 
-  it("uses 'Entracte bedtime reminder' for sleep", () => {
-    expect(dialogLabel("sleep")).toBe("Entracte bedtime reminder");
+  it("uses 'Entracte, bedtime' for sleep", () => {
+    expect(dialogLabel("sleep")).toBe("Entracte, bedtime");
+  });
+});
+
+describe("durationPhrase", () => {
+  it("phrases minutes only when seconds are zero", () => {
+    expect(durationPhrase(600)).toBe("10 minutes");
+    expect(durationPhrase(60)).toBe("1 minute");
+  });
+
+  it("phrases seconds only when minutes are zero", () => {
+    expect(durationPhrase(20)).toBe("20 seconds");
+    expect(durationPhrase(1)).toBe("1 second");
+  });
+
+  it("combines minutes and seconds with singular forms", () => {
+    expect(durationPhrase(90)).toBe("1 minute 30 seconds");
+    expect(durationPhrase(61)).toBe("1 minute 1 second");
+    expect(durationPhrase(615)).toBe("10 minutes 15 seconds");
+  });
+
+  it("clamps negative durations to zero seconds", () => {
+    expect(durationPhrase(-5)).toBe("0 seconds");
   });
 });
 
 describe("announceBreak", () => {
   it("starts with the dialog label for the kind", () => {
-    expect(announceBreak("micro", 30)).toMatch(/^Entracte break reminder, Micro break started\./);
-    expect(announceBreak("long", 600)).toMatch(/^Entracte break reminder, Long break started\./);
-    expect(announceBreak("sleep", 30)).toMatch(/^Entracte bedtime reminder started\./);
+    expect(announceBreak("micro", 30)).toMatch(/^Entracte, micro break\. You have /);
+    expect(announceBreak("long", 600)).toMatch(/^Entracte, long break\. You have /);
+    expect(announceBreak("sleep", 30)).toMatch(/^Entracte, bedtime\. You have /);
   });
 
-  it("phrases duration with minutes only when seconds are zero", () => {
-    expect(announceBreak("long", 600)).toBe(
-      "Entracte break reminder, Long break started. 10 minutes remaining.",
-    );
-    expect(announceBreak("long", 60)).toBe(
-      "Entracte break reminder, Long break started. 1 minute remaining.",
-    );
-  });
-
-  it("phrases duration with seconds only when minutes are zero", () => {
-    expect(announceBreak("micro", 20)).toBe(
-      "Entracte break reminder, Micro break started. 20 seconds remaining.",
-    );
-    expect(announceBreak("micro", 1)).toBe(
-      "Entracte break reminder, Micro break started. 1 second remaining.",
-    );
-  });
-
-  it("combines minutes and seconds when both are non-zero with singular forms", () => {
+  it("phrases the duration gently, without 'started' or 'remaining'", () => {
+    expect(announceBreak("long", 600)).toBe("Entracte, long break. You have 10 minutes.");
+    expect(announceBreak("micro", 20)).toBe("Entracte, micro break. You have 20 seconds.");
     expect(announceBreak("long", 90)).toBe(
-      "Entracte break reminder, Long break started. 1 minute 30 seconds remaining.",
-    );
-    expect(announceBreak("long", 61)).toBe(
-      "Entracte break reminder, Long break started. 1 minute 1 second remaining.",
-    );
-    expect(announceBreak("long", 615)).toBe(
-      "Entracte break reminder, Long break started. 10 minutes 15 seconds remaining.",
+      "Entracte, long break. You have 1 minute 30 seconds.",
     );
   });
 
   it("clamps negative durations to zero seconds", () => {
-    expect(announceBreak("micro", -5)).toBe(
-      "Entracte break reminder, Micro break started. 0 seconds remaining.",
+    expect(announceBreak("micro", -5)).toBe("Entracte, micro break. You have 0 seconds.");
+  });
+});
+
+describe("breakDescription", () => {
+  it("leads with the duration and appends the hint when present", () => {
+    expect(breakDescription(600, "Look 20 feet away.")).toBe(
+      "You have 10 minutes. Look 20 feet away.",
     );
+  });
+
+  it("omits the hint clause when there is no hint", () => {
+    expect(breakDescription(600, "")).toBe("You have 10 minutes.");
   });
 });
 
@@ -157,11 +169,11 @@ describe("milestoneMessage", () => {
     expect(milestoneMessage("sleep", "halfway")).toBe("Halfway through your bedtime.");
   });
 
-  it("phrases the time-based milestones without referencing the kind", () => {
-    expect(milestoneMessage("micro", "one-minute")).toBe("1 minute remaining.");
-    expect(milestoneMessage("long", "one-minute")).toBe("1 minute remaining.");
-    expect(milestoneMessage("micro", "ten-seconds")).toBe("10 seconds remaining.");
-    expect(milestoneMessage("long", "ten-seconds")).toBe("10 seconds remaining.");
+  it("phrases the time-based milestones gently, without referencing the kind", () => {
+    expect(milestoneMessage("micro", "one-minute")).toBe("About a minute left.");
+    expect(milestoneMessage("long", "one-minute")).toBe("About a minute left.");
+    expect(milestoneMessage("micro", "ten-seconds")).toBe("Almost done.");
+    expect(milestoneMessage("long", "ten-seconds")).toBe("Almost done.");
   });
 
   it("phrases the end milestone differently for breaks and bedtime", () => {

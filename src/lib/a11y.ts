@@ -4,30 +4,50 @@ export type AnnouncedKind = "micro" | "long" | "sleep";
 /**
  * Screen-reader name for the overlay dialog. Prefixed with the app
  * name and category so VoiceOver / NVDA say something like
- * "Entracte break reminder, Micro break, dialog" on focus, instead
- * of just "Micro break".
+ * "Entracte, micro break, dialog" on focus, instead of just "Micro
+ * break". Deliberately omits the word "reminder" — a break is meant
+ * to feel like room to breathe, not a nag.
  */
 export function dialogLabel(kind: AnnouncedKind): string {
-  if (kind === "sleep") return "Entracte bedtime reminder";
-  if (kind === "long") return "Entracte break reminder, Long break";
-  return "Entracte break reminder, Micro break";
+  if (kind === "sleep") return "Entracte, bedtime";
+  if (kind === "long") return "Entracte, long break";
+  return "Entracte, micro break";
+}
+
+/** Human-readable duration, e.g. "10 minutes", "30 seconds",
+ * "2 minutes 5 seconds". Shared by the start announcement and the
+ * dialog description. */
+export function durationPhrase(durationSecs: number): string {
+  const total = Math.max(0, durationSecs);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes > 0 && seconds > 0) {
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+  if (minutes > 0) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
 }
 
 /**
- * Build the live-region message announced when a break starts.
- * Mirrors `dialogLabel` so strict-mode users (no dialog semantics)
- * hear the same context, plus the human-readable duration.
+ * Build the live-region message announced when a break starts in
+ * strict mode, where there is no dialog to carry context. Mirrors
+ * `dialogLabel` plus a gentle, non-deadline phrasing of the duration.
+ * Non-strict breaks fold the same information into the dialog
+ * description (`breakDescription`) so it is spoken once, on focus.
  */
 export function announceBreak(kind: AnnouncedKind, durationSecs: number): string {
-  const minutes = Math.floor(Math.max(0, durationSecs) / 60);
-  const seconds = Math.max(0, durationSecs) % 60;
-  const duration =
-    minutes > 0 && seconds > 0
-      ? `${minutes} minute${minutes === 1 ? "" : "s"} ${seconds} second${seconds === 1 ? "" : "s"}`
-      : minutes > 0
-        ? `${minutes} minute${minutes === 1 ? "" : "s"}`
-        : `${seconds} second${seconds === 1 ? "" : "s"}`;
-  return `${dialogLabel(kind)} started. ${duration} remaining.`;
+  return `${dialogLabel(kind)}. You have ${durationPhrase(durationSecs)}.`;
+}
+
+/**
+ * Dialog `aria-describedby` text: the duration, then the wellness tip
+ * if one is showing. Read once when the dialog gains focus, so the
+ * non-strict break start is a single calm utterance rather than a
+ * repeated announcement.
+ */
+export function breakDescription(durationSecs: number, hint: string): string {
+  const lead = `You have ${durationPhrase(durationSecs)}.`;
+  return hint ? `${lead} ${hint}` : lead;
 }
 
 /**
@@ -92,7 +112,7 @@ export function milestoneMessage(
   if (milestone === null) return "";
   const noun = kind === "sleep" ? "bedtime" : "break";
   if (milestone === "halfway") return `Halfway through your ${noun}.`;
-  if (milestone === "one-minute") return "1 minute remaining.";
-  if (milestone === "ten-seconds") return "10 seconds remaining.";
+  if (milestone === "one-minute") return "About a minute left.";
+  if (milestone === "ten-seconds") return "Almost done.";
   return kind === "sleep" ? "Bedtime complete." : "Break complete.";
 }

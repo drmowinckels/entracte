@@ -88,9 +88,9 @@ describe("useMilestoneAnnouncer", () => {
     fireEvent.click(getByTestId("set-remaining-300"));
     expect(getByTestId("message").textContent).toBe("Halfway through your break.");
     fireEvent.click(getByTestId("set-remaining-60"));
-    expect(getByTestId("message").textContent).toBe("1 minute remaining.");
+    expect(getByTestId("message").textContent).toBe("About a minute left.");
     fireEvent.click(getByTestId("set-remaining-10"));
-    expect(getByTestId("message").textContent).toBe("10 seconds remaining.");
+    expect(getByTestId("message").textContent).toBe("Almost done.");
     fireEvent.click(getByTestId("set-finished"));
     expect(getByTestId("message").textContent).toBe("Break complete.");
   });
@@ -119,7 +119,7 @@ describe("useMilestoneAnnouncer", () => {
     );
     expect(getByTestId("message").textContent).toBe("");
     fireEvent.click(getByTestId("set-remaining-10"));
-    expect(getByTestId("message").textContent).toBe("10 seconds remaining.");
+    expect(getByTestId("message").textContent).toBe("Almost done.");
     fireEvent.click(getByTestId("set-finished"));
     expect(getByTestId("message").textContent).toBe("Break complete.");
   });
