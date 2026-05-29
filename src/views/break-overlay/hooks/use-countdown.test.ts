@@ -110,6 +110,71 @@ describe("useCountdown", () => {
     expect(clearBreak).toHaveBeenCalled();
   });
 
+  it("still dismisses after a paused toggle during the Done beat (no stuck overlay)", () => {
+    // Regression: typing during the 800ms Done beat flips `paused`, which
+    // re-runs the countdown effect. The dismiss timer must survive that
+    // re-run — otherwise the overlay sticks on "Done" with no way out.
+    const invoke = vi.fn(async () => null);
+    const clearBreak = vi.fn();
+    const { rerender } = renderHook(
+      ({ paused }: { paused: boolean }) =>
+        useCountdown(
+          makeBreak(),
+          0,
+          paused,
+          DEFAULT_OVERLAY_SETTINGS,
+          vi.fn(),
+          vi.fn(),
+          clearBreak,
+          {
+            invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+            playSound: vi.fn(() => Promise.resolve()),
+          },
+        ),
+      { initialProps: { paused: false } },
+    );
+    act(() => {
+      rerender({ paused: true });
+    });
+    act(() => {
+      vi.advanceTimersByTime(DONE_LINGER_MS);
+    });
+    expect(invoke).toHaveBeenCalledWith("end_break", { reason: "completed" });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(clearBreak).toHaveBeenCalledTimes(1);
+  });
+
+  it("triggerFinish dismisses exactly once even if invoked twice", () => {
+    // Double-clicking "I'm back" must not fire end_break twice (which would
+    // double-count the taken break in stats).
+    const invoke = vi.fn(async () => null);
+    const clearBreak = vi.fn();
+    const { result } = renderHook(() =>
+      useCountdown(
+        makeBreak({ manual_finish: true }),
+        0,
+        false,
+        DEFAULT_OVERLAY_SETTINGS,
+        vi.fn(),
+        vi.fn(),
+        clearBreak,
+        {
+          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          playSound: vi.fn(() => Promise.resolve()),
+        },
+      ),
+    );
+    act(() => {
+      result.current.triggerFinish();
+      result.current.triggerFinish();
+    });
+    act(() => {
+      vi.advanceTimersByTime(DONE_LINGER_MS);
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(clearBreak).toHaveBeenCalledTimes(1);
+  });
+
   it("does not auto-end on manual_finish breaks", () => {
     const invoke = vi.fn();
     const clearBreak = vi.fn();
