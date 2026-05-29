@@ -74,6 +74,12 @@ export function useCountdown(
   };
 
   const endingRef = useRef(false);
+  // The dismiss timer lives in a ref, not the countdown effect's cleanup:
+  // a `paused` toggle (typing during the Done beat) re-runs that effect,
+  // and tying the timer to its cleanup would cancel the pending dismiss
+  // without rescheduling — leaving the overlay stuck on "Done" with no
+  // escape. Scheduled at most once; cleared only on unmount.
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const playEndChime = (): void => {
     const snap = endChimeRef.current;
@@ -86,8 +92,17 @@ export function useCountdown(
   };
 
   const dismiss = () => {
+    dismissTimerRef.current = null;
     invokeFn("end_break", { reason: "completed" });
     clearBreak();
+  };
+
+  // Schedule the single end-of-break dismissal. Idempotent: a second call
+  // (effect re-run, or a double-click on "I'm back") is a no-op, so we
+  // never fire `end_break` twice and double-count a taken break.
+  const scheduleDismiss = () => {
+    if (dismissTimerRef.current !== null) return;
+    dismissTimerRef.current = setTimeout(dismiss, DONE_LINGER_MS);
   };
 
   useEffect(() => {
@@ -104,8 +119,8 @@ export function useCountdown(
       // hold "Done" for a short fixed beat instead so the break ends
       // close to its set length regardless of the chime's length.
       playEndChime();
-      const t = setTimeout(dismiss, DONE_LINGER_MS);
-      return () => clearTimeout(t);
+      scheduleDismiss();
+      return;
     }
     if (paused) return;
     const t = setTimeout(() => setRemaining((r) => r - 1), 1000);
@@ -113,11 +128,18 @@ export function useCountdown(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, remaining, paused]);
 
+  // Clear a pending dismiss on unmount so it can't fire on a dead component.
+  useEffect(() => {
+    return () => {
+      if (dismissTimerRef.current !== null) clearTimeout(dismissTimerRef.current);
+    };
+  }, []);
+
   const triggerFinish = () => {
     if (!active) return;
     setFinished(true);
     playEndChime();
-    setTimeout(dismiss, DONE_LINGER_MS);
+    scheduleDismiss();
   };
 
   return { triggerFinish };
