@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pickRotationTheme } from "../../../lib/color";
+import { stopAllSounds as defaultStopAllSounds } from "../../../lib/sounds";
 import {
   DEFAULT_OVERLAY_SETTINGS,
   type BreakEvent,
@@ -17,6 +18,7 @@ function resolveTheme(setting: string, previous: string): string {
 export type BreakStateDeps = {
   invoke?: typeof invoke;
   listen?: typeof listen;
+  stopAllSounds?: typeof defaultStopAllSounds;
 };
 
 export type BreakStateApi = {
@@ -36,6 +38,7 @@ export type BreakStateApi = {
 export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
   const invokeFn = deps.invoke ?? invoke;
   const listenFn = deps.listen ?? listen;
+  const stopAllSoundsFn = deps.stopAllSounds ?? defaultStopAllSounds;
 
   const [active, setActive] = useState<BreakEvent | null>(null);
   const [remaining, setRemaining] = useState(0);
@@ -51,6 +54,9 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
   useEffect(() => {
     let cancelled = false;
     const applyBreak = async (payload: BreakEvent) => {
+      // Flush any chime still in flight from a previous break before the
+      // new overlay takes over, so a deferred end-sound can't play here.
+      stopAllSoundsFn();
       try {
         const s = await invokeFn<OverlaySettings>("get_settings");
         if (cancelled) return;
@@ -132,7 +138,7 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
       unlistenStartFn?.();
       unlistenEndFn?.();
     };
-  }, [invokeFn, listenFn]);
+  }, [invokeFn, listenFn, stopAllSoundsFn]);
 
   const clearBreak = () => {
     setActive(null);

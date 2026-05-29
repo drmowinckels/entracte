@@ -18,6 +18,7 @@ const {
   soundsForMode,
   startAmbient,
   startCustomAmbient,
+  stopAllSounds,
 } = await import("./sounds");
 
 // We don't mock the catalogue — these tests assert against the real
@@ -193,6 +194,17 @@ describe("playSound", () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it("tears down the element when play() rejects so a deferred play can't resume later", async () => {
+    installFakeAudio(async () => {
+      throw new Error("autoplay blocked");
+    });
+    const promise = playSound("398496", 0.5);
+    const audio = await waitForAudio();
+    await promise;
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.src).toBe("");
+  });
+
   it("resolves via the safety timeout even if neither 'ended' nor 'error' ever fires", async () => {
     // Critical invariant: the breakSoundFor caller awaits playSound and
     // must not hang forever if the Audio element gets wedged (e.g. a
@@ -206,8 +218,39 @@ describe("playSound", () => {
         new Promise((_, reject) => setTimeout(() => reject(new Error("playSound hung past safety timeout")), 3500)),
       ]),
     ).resolves.toBeUndefined();
-    void audio; // referenced to anchor the lint scope
+    // The safety timeout must also tear the element down — a chime that
+    // never started while the overlay was visible would otherwise resume
+    // and bleed into the start of the next break (issue #62).
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.src).toBe("");
   }, 5000);
+});
+
+describe("stopAllSounds", () => {
+  beforeEach(() => {
+    installFakeAudio();
+  });
+
+  afterEach(() => {
+    restoreAudio();
+  });
+
+  it("stops a one-shot playback still in flight and clears its src", async () => {
+    const promise = playSound("398496", 0.5);
+    const audio = await waitForAudio();
+    // Neither 'ended' nor 'error' has fired — the chime is still live.
+    stopAllSounds();
+    expect(audio.pause).toHaveBeenCalled();
+    expect(audio.src).toBe("");
+    // Settle the still-pending promise so the test leaves nothing hanging.
+    audio.fire("ended");
+    await promise;
+  });
+
+  it("is a no-op when nothing is playing", () => {
+    expect(() => stopAllSounds()).not.toThrow();
+    expect(createdAudios.length).toBe(0);
+  });
 });
 
 describe("startAmbient", () => {
