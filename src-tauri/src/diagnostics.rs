@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 
 use chrono::Local;
 use sysinfo::System;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::scheduler::Scheduler;
 
 const LOG_FILE_NAME: &str = "entracte.log";
 const REPORT_LOG_BYTES: u64 = 50 * 1024;
 
-fn log_file_path(app: &AppHandle) -> PathBuf {
+fn log_file_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
     app.path()
         .app_log_dir()
         .unwrap_or_else(|_| std::env::temp_dir())
@@ -105,7 +105,7 @@ fn startup_banner(
 
 /// Gather the startup facts and emit the banner at info level. Called
 /// once from the Tauri `setup` hook.
-pub fn log_startup_banner(app: &AppHandle) {
+pub fn log_startup_banner<R: Runtime>(app: &AppHandle<R>) {
     let os = std::env::consts::OS;
     let display = display_server(os, &EnvFacts::from_env());
     let webview = tauri::webview_version().unwrap_or_else(|_| "unknown".to_string());
@@ -296,7 +296,7 @@ fn format_runtime_snapshot(s: &RuntimeSnapshot) -> String {
     )
 }
 
-fn gather_monitors(app: &AppHandle) -> Vec<MonitorFacts> {
+fn gather_monitors<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
     let primary = app.primary_monitor().ok().flatten();
     let primary_key = primary
         .as_ref()
@@ -321,7 +321,7 @@ fn gather_monitors(app: &AppHandle) -> Vec<MonitorFacts> {
         .collect()
 }
 
-async fn runtime_snapshot_section(app: &AppHandle, scheduler: &Scheduler) -> String {
+async fn runtime_snapshot_section<R: Runtime>(app: &AppHandle<R>, scheduler: &Scheduler) -> String {
     use std::sync::atomic::Ordering;
     use std::time::Instant;
 
@@ -411,7 +411,7 @@ fn break_kind_label(kind: crate::scheduler::BreakKind) -> &'static str {
     }
 }
 
-fn environment_section(app: &AppHandle) -> String {
+fn environment_section<R: Runtime>(app: &AppHandle<R>) -> String {
     let os = std::env::consts::OS;
     let env = EnvFacts::from_env();
     let webview = tauri::webview_version().unwrap_or_else(|_| "unknown".to_string());
@@ -461,8 +461,8 @@ fn format_environment(
 }
 
 #[tauri::command]
-pub async fn build_diagnostics_report(
-    app: AppHandle,
+pub async fn build_diagnostics_report<R: Runtime>(
+    app: AppHandle<R>,
     scheduler: tauri::State<'_, Scheduler>,
 ) -> Result<String, String> {
     let version = app.package_info().version.to_string();
@@ -854,6 +854,51 @@ mod tests {
         assert!(out.contains("Pause: paused (indefinitely)"));
         assert!(out.contains("screen `unknown`"));
         assert!(out.contains("OS `unknown`"));
+    }
+
+    // Integration test for the Runtime-section gathering glue (pause /
+    // suppression / sensors / idle probe / timers / plugin queries) driven
+    // through a mock app. The Environment section is *not* exercised here:
+    // `MockRuntime` panics with "not implemented" on `available_monitors`,
+    // so the monitor-gathering glue is genuinely unreachable in tests and
+    // only its pure formatters (above) are covered.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn runtime_snapshot_section_reports_live_scheduler_state() {
+        use crate::scheduler::{Scheduler, Settings};
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let dir = temp_dir();
+        let sched = Scheduler::for_test(
+            vec![crate::config::Profile {
+                name: crate::config::DEFAULT_PROFILE_NAME.to_string(),
+                settings: Settings::default(),
+            }],
+            crate::config::DEFAULT_PROFILE_NAME,
+            dir.path(),
+        );
+        let app = mock_builder()
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        let section = runtime_snapshot_section(app.handle(), &sched).await;
+
+        // A fresh scheduler is running, not suppressed, no active break.
+        assert!(section.contains("Pause: running"));
+        assert!(section.contains("Auto-suppressed by: nothing"));
+        assert!(section.contains("Active break: none"));
+        assert!(section.contains("Idle detection:"));
+        assert!(section.contains("Notification permission:"));
+        assert!(section.contains("Autostart:"));
+        // Micro is enabled by default, so its break clock should render.
+        assert!(section.contains("- Micro:"));
     }
 
     #[test]
