@@ -199,6 +199,7 @@ pub async fn end_break<R: Runtime>(
     reason: Option<String>,
 ) -> Result<(), String> {
     let reason = reason.unwrap_or_else(|| "completed".to_string());
+    log::info!("scheduler: break ended (reason={reason})");
     {
         let mut stats = scheduler.stats.lock().await;
         match reason.as_str() {
