@@ -85,7 +85,7 @@ fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::W
     if let Some(w) = app.get_webview_window(&label) {
         return Some(w);
     }
-    tauri::WebviewWindowBuilder::new(
+    match tauri::WebviewWindowBuilder::new(
         app,
         &label,
         tauri::WebviewUrl::App("index.html?window=overlay".into()),
@@ -99,7 +99,19 @@ fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::W
     .visible(false)
     .focused(false)
     .build()
-    .ok()
+    {
+        Ok(w) => Some(w),
+        // Don't swallow this silently: a failed build means the break is
+        // completely invisible (no overlay, no preview, no test break) with
+        // no other symptom. On some Linux setups the windowing system
+        // rejects a transparent always-on-top surface, which used to look
+        // like "breaks just don't fire". Logging it gives users and bug
+        // reports something to go on. See issue #67.
+        Err(e) => {
+            log::error!("overlay: failed to create break window '{label}': {e}");
+            None
+        }
+    }
 }
 
 fn select_overlay_monitors<R: Runtime>(
