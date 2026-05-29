@@ -12,6 +12,7 @@ import { useCountdown } from "./break-overlay/hooks/use-countdown";
 import { useClock } from "./break-overlay/hooks/use-clock";
 import { useOverlayCssVars } from "./break-overlay/hooks/use-overlay-css-vars";
 import { useFocusTrap } from "./break-overlay/hooks/use-focus-trap";
+import { useMilestoneAnnouncer } from "./break-overlay/hooks/use-milestone-announcer";
 import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
 import { derivePostpone } from "./break-overlay/postpone";
 import { breakSoundFor, labelFor } from "./break-overlay/types";
@@ -85,6 +86,12 @@ export default function BreakOverlay() {
   const dialogSemantics = !strictMode;
   useMountFocus(rootRef, Boolean(active), dialogSemantics);
   useFocusTrap(rootRef, dialogSemantics && Boolean(active));
+  const milestone = useMilestoneAnnouncer(
+    active?.kind ?? null,
+    active?.duration_secs ?? 0,
+    remaining,
+    finished,
+  );
 
   if (!active) return null;
 
@@ -130,8 +137,22 @@ export default function BreakOverlay() {
         className="sr-only"
         role={strictMode ? "alert" : "status"}
         aria-live={strictMode ? "assertive" : "polite"}
+        data-testid="overlay-announcement"
       >
         {announcement}
+      </div>
+      {/* Separate polite live region for milestone progress (halfway,
+          1 minute left, 10 seconds left, end). Always polite even in
+          strict mode — users have opted in to being interrupted on
+          start, but per-second progress chatter would be hostile. */}
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="overlay-milestone"
+      >
+        {milestone}
       </div>
       {/* Described-by target: read once when the dialog is focused.
           Content can change (hint rotation) without re-announcing,

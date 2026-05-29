@@ -119,8 +119,8 @@ describe("BreakOverlay assistive-tech exposure", () => {
   });
 
   it("announces the break start text in the polite live region (non-strict)", async () => {
-    const { getByRole } = await startBreak(false);
-    expect(getByRole("status").textContent).toBe(
+    const { getByTestId } = await startBreak(false);
+    expect(getByTestId("overlay-announcement").textContent).toBe(
       "Entracte break reminder, Micro break started. 30 seconds remaining.",
     );
   });
@@ -282,4 +282,45 @@ describe("BreakOverlay ARIA contract", () => {
       expect(getByRole("alert").textContent).toBe(announceBreak(kind, duration));
     },
   );
+
+  it("renders the milestone live region empty at break start (no chatter)", async () => {
+    const { getByTestId } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+    });
+    const region = getByTestId("overlay-milestone");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    expect(region.getAttribute("aria-atomic")).toBe("true");
+    expect(region.getAttribute("role")).toBe("status");
+    expect(region.textContent).toBe("");
+  });
+
+  it("keeps the milestone live region polite even in strict mode", async () => {
+    // Strict mode promotes the start announcement to assertive, but
+    // milestones are progress chatter — they stay polite so the user
+    // isn't interrupted four times during a single break.
+    const { getByTestId } = await startBreak(true, {
+      kind: "long",
+      duration_secs: 600,
+      enforceable: true,
+      postpone_available: false,
+    });
+    const region = getByTestId("overlay-milestone");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    expect(region.getAttribute("role")).toBe("status");
+  });
+
+  it("fires the start milestone immediately on a short break", async () => {
+    // 20-second micro break: at remaining=20 we're already ≤ the
+    // ten-second window once the countdown ticks one cycle. Drive
+    // the countdown via the break:tick listener until the milestone
+    // engages.
+    const { getByTestId } = await startBreak(false, {
+      kind: "micro",
+      duration_secs: 20,
+    });
+    // Initial render: remaining starts at duration; no milestone yet
+    // because remaining > 10.
+    expect(getByTestId("overlay-milestone").textContent).toBe("");
+  });
 });

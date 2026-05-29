@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { announceBreak, dialogLabel, remainingAriaLabel } from "./a11y";
+import {
+  announceBreak,
+  dialogLabel,
+  milestoneFor,
+  milestoneMessage,
+  remainingAriaLabel,
+} from "./a11y";
 
 describe("dialogLabel", () => {
   it("prefixes break kinds with 'Entracte break reminder'", () => {
@@ -76,5 +82,91 @@ describe("remainingAriaLabel", () => {
   it("combines minutes and seconds with singular forms", () => {
     expect(remainingAriaLabel(61)).toBe("1 minute 1 second remaining");
     expect(remainingAriaLabel(122)).toBe("2 minutes 2 seconds remaining");
+  });
+});
+
+describe("milestoneFor", () => {
+  it("returns null when no milestone has been reached on a long break", () => {
+    expect(milestoneFor(600, 600, false)).toBeNull();
+    expect(milestoneFor(600, 400, false)).toBeNull();
+  });
+
+  it("returns null for a short break before the ten-second window", () => {
+    expect(milestoneFor(30, 30, false)).toBeNull();
+    expect(milestoneFor(30, 11, false)).toBeNull();
+  });
+
+  it("returns 'halfway' when the elapsed time crosses half on a >60s break", () => {
+    expect(milestoneFor(600, 300, false)).toBe("halfway");
+    expect(milestoneFor(600, 200, false)).toBe("halfway");
+    // Half (70) lands above the one-minute window, so it survives.
+    expect(milestoneFor(140, 70, false)).toBe("halfway");
+  });
+
+  it("does not announce 'halfway' on breaks of 60 seconds or shorter", () => {
+    expect(milestoneFor(60, 30, false)).toBeNull();
+    expect(milestoneFor(20, 10, false)).toBe("ten-seconds");
+  });
+
+  it("returns 'one-minute' when remaining drops to 60 or below on a >60s break", () => {
+    expect(milestoneFor(600, 60, false)).toBe("one-minute");
+    expect(milestoneFor(600, 30, false)).toBe("one-minute");
+  });
+
+  it("returns 'ten-seconds' when remaining drops to 10 or below", () => {
+    expect(milestoneFor(600, 10, false)).toBe("ten-seconds");
+    expect(milestoneFor(600, 1, false)).toBe("ten-seconds");
+    expect(milestoneFor(20, 10, false)).toBe("ten-seconds");
+  });
+
+  it("returns 'end' when finished is true", () => {
+    expect(milestoneFor(600, 300, true)).toBe("end");
+    expect(milestoneFor(600, 0, false)).toBe("end");
+    expect(milestoneFor(600, -1, false)).toBe("end");
+  });
+
+  it("prefers later milestones when conditions overlap", () => {
+    // 'ten-seconds' beats 'one-minute' when both are satisfied
+    expect(milestoneFor(120, 10, false)).toBe("ten-seconds");
+    // 'one-minute' beats 'halfway' when both are satisfied
+    expect(milestoneFor(120, 60, false)).toBe("one-minute");
+    // 'end' beats everything
+    expect(milestoneFor(120, 5, true)).toBe("end");
+  });
+
+  it("transitions cleanly across the per-second tick boundary", () => {
+    // Walk a 70s break tick-by-tick around the one-minute and
+    // ten-second boundaries to make sure transitions land where
+    // we expect.
+    expect(milestoneFor(70, 65, false)).toBeNull();
+    expect(milestoneFor(70, 60, false)).toBe("one-minute");
+    expect(milestoneFor(70, 35, false)).toBe("one-minute");
+    expect(milestoneFor(70, 11, false)).toBe("one-minute");
+    expect(milestoneFor(70, 10, false)).toBe("ten-seconds");
+  });
+});
+
+describe("milestoneMessage", () => {
+  it("returns an empty string for the null milestone", () => {
+    expect(milestoneMessage("micro", null)).toBe("");
+  });
+
+  it("phrases halfway with 'break' for micro and long, 'bedtime' for sleep", () => {
+    expect(milestoneMessage("micro", "halfway")).toBe("Halfway through your break.");
+    expect(milestoneMessage("long", "halfway")).toBe("Halfway through your break.");
+    expect(milestoneMessage("sleep", "halfway")).toBe("Halfway through your bedtime.");
+  });
+
+  it("phrases the time-based milestones without referencing the kind", () => {
+    expect(milestoneMessage("micro", "one-minute")).toBe("1 minute remaining.");
+    expect(milestoneMessage("long", "one-minute")).toBe("1 minute remaining.");
+    expect(milestoneMessage("micro", "ten-seconds")).toBe("10 seconds remaining.");
+    expect(milestoneMessage("long", "ten-seconds")).toBe("10 seconds remaining.");
+  });
+
+  it("phrases the end milestone differently for breaks and bedtime", () => {
+    expect(milestoneMessage("micro", "end")).toBe("Break complete.");
+    expect(milestoneMessage("long", "end")).toBe("Break complete.");
+    expect(milestoneMessage("sleep", "end")).toBe("Bedtime complete.");
   });
 });
