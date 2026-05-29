@@ -33,6 +33,24 @@ fn import_pending(flag: &AtomicBool) -> bool {
     flag.load(Ordering::Relaxed)
 }
 
+/// Inter-tick wall-clock gap above which we treat the tick as the first
+/// one after a wake from suspend. Well clear of the 1s cadence and any
+/// scheduler jitter, but far below the smallest useful bedtime interval.
+const SUSPEND_GAP_THRESHOLD: Duration = Duration::from_secs(30);
+
+/// Whether the gap between the previous tick's wall clock and `now`
+/// indicates a wake from suspend (or a forward clock leap). Pulled out
+/// of the loop body so the threshold logic is unit-testable without
+/// driving the 1Hz loop. A backwards clock step yields `Err` from
+/// `duration_since` and is treated as "not resumed".
+#[inline]
+fn resumed_after_gap(prev_wall: SystemTime, now_wall: SystemTime, threshold: Duration) -> bool {
+    now_wall
+        .duration_since(prev_wall)
+        .map(|gap| gap >= threshold)
+        .unwrap_or(false)
+}
+
 pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
     let mut sysinfo_system: Option<System> = None;
     // `Instant - Duration` panics if the result would precede the
@@ -42,9 +60,19 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         .checked_sub(Duration::from_secs(60))
         .unwrap_or_else(Instant::now);
     let mut app_pause_active = false;
+    // Wall-clock anchor for wake-from-suspend detection. The loop ticks
+    // at 1Hz, so a jump far beyond that between ticks means the machine
+    // was asleep (or the clock leapt). `SystemTime` is used rather than
+    // `Instant` because it reflects the wall clock regardless of whether
+    // the monotonic clock counts suspended time on this platform.
+    let mut last_tick_wall = SystemTime::now();
 
     loop {
         sleep(Duration::from_secs(1)).await;
+
+        let now_wall = SystemTime::now();
+        let resumed_from_suspend = resumed_after_gap(last_tick_wall, now_wall, SUSPEND_GAP_THRESHOLD);
+        last_tick_wall = now_wall;
 
         // Early-out while an import is mid-flight. This is an
         // optimisation, not the actual safety mechanism — the
@@ -159,6 +187,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 s.bedtime_interval_secs,
                 t.last_sleep,
                 now,
+                resumed_from_suspend,
             )
         };
         if !matches!(bedtime_decision, BedtimeAction::NotInWindow) {
@@ -205,6 +234,15 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 t.last_long = Instant::now();
                 t.micro_deferred_since = None;
                 t.long_deferred_since = None;
+                // On the wake tick we demoted a stale catch-up fire to a
+                // reset; re-anchor `last_sleep` to now so the next (no
+                // longer "resumed") tick doesn't immediately re-fire on
+                // the same huge elapsed interval. Normal in-interval
+                // resets leave `last_sleep` alone so the re-prompt cadence
+                // keeps counting from the real last fire.
+                if resumed_from_suspend {
+                    t.last_sleep = Some(Instant::now());
+                }
             }
             // Bedtime has its own tray snapshot (`TrayCountdownSnapshot::Bedtime`),
             // so we don't need to store a `SuppressReason` here — the
@@ -922,6 +960,36 @@ mod tests {
     fn import_pending_returns_true_when_flag_set() {
         let flag = AtomicBool::new(true);
         assert!(import_pending(&flag));
+    }
+
+    #[test]
+    fn resumed_after_gap_true_when_gap_exceeds_threshold() {
+        let prev = SystemTime::now();
+        let now = prev + Duration::from_secs(8 * 3600);
+        assert!(resumed_after_gap(prev, now, SUSPEND_GAP_THRESHOLD));
+    }
+
+    #[test]
+    fn resumed_after_gap_false_for_a_normal_tick() {
+        let prev = SystemTime::now();
+        let now = prev + Duration::from_secs(1);
+        assert!(!resumed_after_gap(prev, now, SUSPEND_GAP_THRESHOLD));
+    }
+
+    #[test]
+    fn resumed_after_gap_false_on_backwards_clock_step() {
+        // duration_since errors when now precedes prev; that must read as
+        // "not resumed" rather than panic.
+        let now = SystemTime::now();
+        let prev = now + Duration::from_secs(120);
+        assert!(!resumed_after_gap(prev, now, SUSPEND_GAP_THRESHOLD));
+    }
+
+    #[test]
+    fn resumed_after_gap_is_inclusive_at_threshold() {
+        let prev = SystemTime::now();
+        let now = prev + SUSPEND_GAP_THRESHOLD;
+        assert!(resumed_after_gap(prev, now, SUSPEND_GAP_THRESHOLD));
     }
 
     #[test]
