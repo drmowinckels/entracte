@@ -7,6 +7,21 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+## [0.0.2] — 2026-05-29
+
+Bug-fix and diagnostics beta, focused on how the breaks _feel_ and on making issues easier to triage.
+
+### Fixed
+
+- **Bedtime no longer fires when you open the laptop in the morning.** Inside an overnight bedtime window (e.g. 22:00–09:00), waking from suspend no longer triggers a stale catch-up reminder; a genuine first entry into the window still fires. ([#61](https://github.com/drmowinckels/entracte/issues/61))
+- **The end-of-break chime no longer plays at the _start_ of the next break.** A chime that didn't finish cleanly was left to resume after the overlay hid; it's now torn down, and any lingering sound is flushed when a new break opens. ([#62](https://github.com/drmowinckels/entracte/issues/62))
+- **Breaks end on time.** The overlay used to linger on "Done" for the full length of the chime, adding several seconds to every break; it now dismisses after a short fixed beat while the chime rings as it closes.
+
+### Diagnostics
+
+- The diagnostics report gained an **Environment** section (display server, desktop/compositor, webview version, monitors, local time and UTC offset, build profile) and a **Runtime** section (pause and auto-suppression state, camera/video/DND/screen-lock sensors, idle-detection probe, per-break timers with next-due, postpone counters, notification permission, autostart).
+- A startup banner and break-lifecycle / suspend-resume / overlay-outcome lines are now written to the log file, so a report's log tail tells the story of what happened. A break that fires but can't show an overlay (seen on some Linux setups) is now logged as an explicit error instead of silently doing nothing. ([#67](https://github.com/drmowinckels/entracte/issues/67))
+
 ## [0.0.1] — 2026-05-25
 
 First public beta of Entracte. macOS, Windows, and Linux installers are produced from the same Rust + Tauri codebase. Functional and usable day-to-day on macOS; Windows and Linux build and run, with a few platform-detection gaps called out below.
