@@ -182,9 +182,6 @@ fn format_monitors(monitors: &[MonitorFacts]) -> String {
         .join("\n")
 }
 
-/// Render the whole environment block from already-gathered facts.
-/// Pure: the caller does the env / windowing-system queries and passes
-/// the results in, so this formatting is fully unit-testable.
 /// Per-kind interval clock: how long since this kind last fired and the
 /// configured interval, so the report can show "due in / overdue by".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,7 +318,16 @@ fn gather_monitors<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
         .collect()
 }
 
-async fn runtime_snapshot_section<R: Runtime>(app: &AppHandle<R>, scheduler: &Scheduler) -> String {
+/// Build the Runtime section from the live scheduler state plus the two
+/// values the caller fetches from plugins (`build_diagnostics_report`
+/// passes them in). Kept free of `AppHandle` so it's testable with a bare
+/// scheduler — `MockRuntime` + the notification/autostart plugins abort on
+/// headless Linux, which is the only platform CI runs tests on.
+async fn runtime_snapshot_section(
+    scheduler: &Scheduler,
+    notification_permission: String,
+    autostart_registered: Option<bool>,
+) -> String {
     use std::sync::atomic::Ordering;
     use std::time::Instant;
 
@@ -367,19 +373,6 @@ async fn runtime_snapshot_section<R: Runtime>(app: &AppHandle<R>, scheduler: &Sc
             t.micro_postpone_count,
             t.long_postpone_count,
         )
-    };
-
-    let notification_permission = {
-        use tauri_plugin_notification::NotificationExt;
-        app.notification()
-            .permission_state()
-            .map(|p| p.to_string())
-            .unwrap_or_else(|e| format!("unknown ({e})"))
-    };
-
-    let autostart_registered = {
-        use tauri_plugin_autostart::ManagerExt;
-        app.autolaunch().is_enabled().ok()
     };
 
     let snapshot = RuntimeSnapshot {
@@ -433,6 +426,9 @@ fn environment_section<R: Runtime>(app: &AppHandle<R>) -> String {
     )
 }
 
+/// Render the whole environment block from already-gathered facts.
+/// Pure: the caller does the env / windowing-system queries and passes
+/// the results in, so this formatting is fully unit-testable.
 fn format_environment(
     os: &str,
     env: &EnvFacts,
@@ -468,7 +464,23 @@ pub async fn build_diagnostics_report<R: Runtime>(
     let version = app.package_info().version.to_string();
     let os = os_description();
     let environment = environment_section(&app);
-    let runtime = runtime_snapshot_section(&app, scheduler.inner()).await;
+    let notification_permission = {
+        use tauri_plugin_notification::NotificationExt;
+        app.notification()
+            .permission_state()
+            .map(|p| p.to_string())
+            .unwrap_or_else(|e| format!("unknown ({e})"))
+    };
+    let autostart_registered = {
+        use tauri_plugin_autostart::ManagerExt;
+        app.autolaunch().is_enabled().ok()
+    };
+    let runtime = runtime_snapshot_section(
+        scheduler.inner(),
+        notification_permission,
+        autostart_registered,
+    )
+    .await;
     let settings = scheduler.settings.lock().await.clone();
     let stats = scheduler.stats.lock().await.clone();
     let settings_value = serde_json::to_value(&settings).unwrap_or(serde_json::Value::Null);
@@ -856,18 +868,17 @@ mod tests {
         assert!(out.contains("OS `unknown`"));
     }
 
-    // Integration test for the Runtime-section gathering glue (pause /
-    // suppression / sensors / idle probe / timers / plugin queries) driven
-    // through a mock app. The Environment section is *not* exercised here:
-    // `MockRuntime` panics with "not implemented" on `available_monitors`,
-    // so the monitor-gathering glue is genuinely unreachable in tests and
-    // only its pure formatters (above) are covered.
-    #[cfg(not(target_os = "windows"))]
+    // Integration test for the Runtime-section gathering: pause /
+    // suppression / sensors / idle probe / timers, assembled from a live
+    // scheduler. The two plugin-derived values are passed in (as the
+    // command does), so no mock app / AppHandle is needed — that matters
+    // because the notification/autostart plugins under MockRuntime abort on
+    // the headless Linux runner, the only platform CI runs tests on. The
+    // Environment/monitor glue stays uncovered for the same runtime reason;
+    // only its pure formatters (above) are exercised.
     #[tokio::test]
     async fn runtime_snapshot_section_reports_live_scheduler_state() {
         use crate::scheduler::{Scheduler, Settings};
-        use tauri::test::{mock_builder, mock_context, noop_assets};
-        use tauri::Manager;
 
         let dir = temp_dir();
         let sched = Scheduler::for_test(
@@ -878,25 +889,16 @@ mod tests {
             crate::config::DEFAULT_PROFILE_NAME,
             dir.path(),
         );
-        let app = mock_builder()
-            .plugin(tauri_plugin_notification::init())
-            .plugin(tauri_plugin_autostart::init(
-                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                None,
-            ))
-            .build(mock_context(noop_assets()))
-            .expect("mock app builds");
-        app.manage(sched.clone());
 
-        let section = runtime_snapshot_section(app.handle(), &sched).await;
+        let section = runtime_snapshot_section(&sched, "granted".to_string(), Some(true)).await;
 
         // A fresh scheduler is running, not suppressed, no active break.
         assert!(section.contains("Pause: running"));
         assert!(section.contains("Auto-suppressed by: nothing"));
         assert!(section.contains("Active break: none"));
         assert!(section.contains("Idle detection:"));
-        assert!(section.contains("Notification permission:"));
-        assert!(section.contains("Autostart:"));
+        assert!(section.contains("Notification permission: `granted`"));
+        assert!(section.contains("Autostart: setting `false`, OS `registered`"));
         // Micro is enabled by default, so its break clock should render.
         assert!(section.contains("- Micro:"));
     }
