@@ -16,6 +16,11 @@ exclude = [
   # DOI is a canonical identifier; checking it adds no signal.
   '^https?://(dx\.)?doi\.org/',
   '^https?://(.*\.)?(wiley|tandfonline|sagepub|mdpi|apa|jstor|springer|frontiersin|elsevier|nature|sciencedirect)\.com',
+  # freesound.org (sound-attribution credits in docs) returns 403 to the
+  # link checker via bot protection but resolves fine in a browser. Same
+  # rationale as the publishers above — exclude rather than accept 403
+  # globally, which would mask real auth failures elsewhere.
+  '^https?://(.*\.)?freesound\.org',
   # rustdoc / TypeDoc output: generated into the built site at /api/{rust,ts}/,
   # not present in source.
   '/api/(rust|ts)/',
