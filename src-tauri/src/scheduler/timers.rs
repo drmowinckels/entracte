@@ -167,26 +167,36 @@ pub fn interval_break_due(
         && now.saturating_duration_since(last_fire) >= Duration::from_secs(interval_secs)
 }
 
+/// The four conditions that gate a pre-break warning before any timing
+/// is considered: the feature must be on, the schedule must include
+/// interval breaks, the user must not be idle-suppressed, and we must not
+/// have already warned this cycle. Grouped so each is set by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrebreakGate {
+    pub enabled: bool,
+    pub mode_includes_interval: bool,
+    pub already_warned: bool,
+    pub idle_suppressed: bool,
+}
+
 /// True iff the pre-break notification for this kind should fire now —
 /// i.e. we're inside the lead window before a due interval break, and
 /// we haven't already shown the notification for this cycle.
 ///
-/// Pure analogue of the inline check in `run_loop`. The arg list is
-/// wide because the function is deliberately decoupled from `Scheduler`
-/// state so it can be driven by tests with synthetic instants — a
-/// wrapper struct would just shuffle the same fields around.
-#[allow(clippy::too_many_arguments)]
+/// Pure analogue of the inline check in `run_loop`. Decoupled from
+/// `Scheduler` state so tests can drive it with synthetic instants. The
+/// four short-circuit conditions are grouped into [`PrebreakGate`] so
+/// call sites set each by name instead of passing a run of positional
+/// booleans.
 pub fn prebreak_warn_due(
-    enabled: bool,
-    mode_includes_interval: bool,
+    gate: PrebreakGate,
     last_fire: Instant,
     interval_secs: u64,
     lead_secs: u64,
-    already_warned: bool,
-    idle_suppressed: bool,
     now: Instant,
 ) -> bool {
-    if !enabled || !mode_includes_interval || idle_suppressed || already_warned {
+    if !gate.enabled || !gate.mode_includes_interval || gate.idle_suppressed || gate.already_warned
+    {
         return false;
     }
     let interval = Duration::from_secs(interval_secs);
@@ -211,6 +221,18 @@ pub enum BedtimeAction {
     NotInWindow,
 }
 
+/// The configured bedtime window: whether the feature is on, its
+/// start/end minute-of-day bounds, and the per-window re-prompt interval.
+/// Grouped so `decide_bedtime`'s call sites set each field by name rather
+/// than passing four positional values that are easy to transpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BedtimeWindow {
+    pub enabled: bool,
+    pub start_min: u32,
+    pub end_min: u32,
+    pub interval_secs: u64,
+}
+
 /// Pure bedtime decision: combine the time-of-day window, the per-window
 /// interval, and the `last_sleep` anchor into one of three actions.
 ///
@@ -226,23 +248,19 @@ pub enum BedtimeAction {
 /// `ResetTimersOnly` so opening the laptop mid-window stays quiet. A
 /// first entry into the window (`last_sleep` is `None`, e.g. the laptop
 /// was closed before bedtime and opened inside it) still fires normally.
-#[allow(clippy::too_many_arguments)]
 pub fn decide_bedtime(
-    enabled: bool,
+    window: BedtimeWindow,
     now_min: u32,
-    start_min: u32,
-    end_min: u32,
-    interval_secs: u64,
     last_sleep_fire: Option<Instant>,
     now: Instant,
     resumed_from_suspend: bool,
 ) -> BedtimeAction {
-    if !enabled || !in_window(now_min, start_min, end_min) {
+    if !window.enabled || !in_window(now_min, window.start_min, window.end_min) {
         return BedtimeAction::NotInWindow;
     }
     let should_fire = match last_sleep_fire {
         None => true,
-        Some(t) => now.saturating_duration_since(t) >= Duration::from_secs(interval_secs),
+        Some(t) => now.saturating_duration_since(t) >= Duration::from_secs(window.interval_secs),
     };
     if should_fire {
         if resumed_from_suspend && last_sleep_fire.is_some() {
@@ -617,14 +635,24 @@ mod tests {
     // band before the break itself. The `already_warned` flag is the
     // dedupe gate.
 
+    /// The "would warn if timing is right" gate: feature on, interval
+    /// mode, not yet warned, not idle. Variants flip one field via
+    /// struct-update syntax (`PrebreakGate { enabled: false, ..warn_gate() }`).
+    fn warn_gate() -> PrebreakGate {
+        PrebreakGate {
+            enabled: true,
+            mode_includes_interval: true,
+            already_warned: false,
+            idle_suppressed: false,
+        }
+    }
+
     #[test]
     fn prebreak_warn_fires_inside_lead_window() {
         // 50s before a 1200s break, lead is 60s → in the warn band.
         let last = Instant::now();
         let now = last + Duration::from_secs(1150);
-        assert!(prebreak_warn_due(
-            true, true, last, 1200, 60, false, false, now
-        ));
+        assert!(prebreak_warn_due(warn_gate(), last, 1200, 60, now));
     }
 
     #[test]
@@ -632,9 +660,7 @@ mod tests {
         // 100s before a 1200s break, lead is 60s → outside warn band.
         let last = Instant::now();
         let now = last + Duration::from_secs(1100);
-        assert!(!prebreak_warn_due(
-            true, true, last, 1200, 60, false, false, now
-        ));
+        assert!(!prebreak_warn_due(warn_gate(), last, 1200, 60, now));
     }
 
     #[test]
@@ -643,13 +669,15 @@ mod tests {
         // shouldn't re-fire post-interval.
         let last = Instant::now();
         let now = last + Duration::from_secs(1200);
-        assert!(!prebreak_warn_due(
-            true, true, last, 1200, 60, false, false, now
-        ));
+        assert!(!prebreak_warn_due(warn_gate(), last, 1200, 60, now));
         let way_late = Instant::now();
         let later_now = way_late + Duration::from_secs(1250);
         assert!(!prebreak_warn_due(
-            true, true, way_late, 1200, 60, false, false, later_now
+            warn_gate(),
+            way_late,
+            1200,
+            60,
+            later_now
         ));
     }
 
@@ -658,7 +686,14 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(1150);
         assert!(!prebreak_warn_due(
-            true, true, last, 1200, 60, true, false, now
+            PrebreakGate {
+                already_warned: true,
+                ..warn_gate()
+            },
+            last,
+            1200,
+            60,
+            now,
         ));
     }
 
@@ -667,13 +702,34 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(1150);
         assert!(!prebreak_warn_due(
-            false, true, last, 1200, 60, false, false, now
+            PrebreakGate {
+                enabled: false,
+                ..warn_gate()
+            },
+            last,
+            1200,
+            60,
+            now,
         ));
         assert!(!prebreak_warn_due(
-            true, false, last, 1200, 60, false, false, now
+            PrebreakGate {
+                mode_includes_interval: false,
+                ..warn_gate()
+            },
+            last,
+            1200,
+            60,
+            now,
         ));
         assert!(!prebreak_warn_due(
-            true, true, last, 1200, 60, false, true, now
+            PrebreakGate {
+                idle_suppressed: true,
+                ..warn_gate()
+            },
+            last,
+            1200,
+            60,
+            now,
         ));
     }
 
@@ -684,21 +740,39 @@ mod tests {
         // not panic or warn forever.
         let last = Instant::now();
         let now = last + Duration::from_secs(10);
-        assert!(prebreak_warn_due(
-            true, true, last, 60, 600, false, false, now
-        ));
+        assert!(prebreak_warn_due(warn_gate(), last, 60, 600, now));
     }
 
     // `decide_bedtime` — three-way decision combining window membership
     // and per-window interval. The first tick of the window always
     // fires (`None` last_sleep).
 
+    /// 22:00–06:00 window, 30-min re-prompt — the bulk of these cases.
+    fn window_2206() -> BedtimeWindow {
+        BedtimeWindow {
+            enabled: true,
+            start_min: 22 * 60,
+            end_min: 6 * 60,
+            interval_secs: 1800,
+        }
+    }
+
+    /// 22:00–09:00 window, 5-min re-prompt — the resume-from-suspend cases.
+    fn window_2209() -> BedtimeWindow {
+        BedtimeWindow {
+            enabled: true,
+            start_min: 22 * 60,
+            end_min: 9 * 60,
+            interval_secs: 300,
+        }
+    }
+
     #[test]
     fn bedtime_not_in_window_returns_not_in_window() {
         let now = Instant::now();
         // 12:00, window 22:00–06:00
         assert_eq!(
-            decide_bedtime(true, 12 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
+            decide_bedtime(window_2206(), 12 * 60, None, now, false),
             BedtimeAction::NotInWindow
         );
     }
@@ -707,7 +781,16 @@ mod tests {
     fn bedtime_disabled_returns_not_in_window_even_in_range() {
         let now = Instant::now();
         assert_eq!(
-            decide_bedtime(false, 23 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
+            decide_bedtime(
+                BedtimeWindow {
+                    enabled: false,
+                    ..window_2206()
+                },
+                23 * 60,
+                None,
+                now,
+                false,
+            ),
             BedtimeAction::NotInWindow
         );
     }
@@ -716,7 +799,7 @@ mod tests {
     fn bedtime_first_tick_of_window_fires() {
         let now = Instant::now();
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
+            decide_bedtime(window_2206(), 23 * 60, None, now, false),
             BedtimeAction::Fire
         );
     }
@@ -726,7 +809,7 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(1800);
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(last), now, false),
+            decide_bedtime(window_2206(), 23 * 60, Some(last), now, false),
             BedtimeAction::Fire
         );
     }
@@ -737,7 +820,7 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(900);
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 6 * 60, 1800, Some(last), now, false),
+            decide_bedtime(window_2206(), 23 * 60, Some(last), now, false),
             BedtimeAction::ResetTimersOnly
         );
     }
@@ -747,7 +830,7 @@ mod tests {
         let now = Instant::now();
         // 02:00 should still be in window 22:00–06:00
         assert_eq!(
-            decide_bedtime(true, 2 * 60, 22 * 60, 6 * 60, 1800, None, now, false),
+            decide_bedtime(window_2206(), 2 * 60, None, now, false),
             BedtimeAction::Fire
         );
     }
@@ -759,16 +842,7 @@ mod tests {
         let now = Instant::now();
         let future = now + Duration::from_secs(60);
         assert_eq!(
-            decide_bedtime(
-                true,
-                23 * 60,
-                22 * 60,
-                6 * 60,
-                1800,
-                Some(future),
-                now,
-                false
-            ),
+            decide_bedtime(window_2206(), 23 * 60, Some(future), now, false),
             BedtimeAction::ResetTimersOnly
         );
     }
@@ -782,13 +856,13 @@ mod tests {
         let last = Instant::now();
         let now = last + Duration::from_secs(8 * 3600);
         assert_eq!(
-            decide_bedtime(true, 8 * 60, 22 * 60, 9 * 60, 300, Some(last), now, true),
+            decide_bedtime(window_2209(), 8 * 60, Some(last), now, true),
             BedtimeAction::ResetTimersOnly
         );
         // Without the resume flag the same inputs would (wrongly, for the
         // user) re-fire — proving the flag is what suppresses it.
         assert_eq!(
-            decide_bedtime(true, 8 * 60, 22 * 60, 9 * 60, 300, Some(last), now, false),
+            decide_bedtime(window_2209(), 8 * 60, Some(last), now, false),
             BedtimeAction::Fire
         );
     }
@@ -800,7 +874,7 @@ mod tests {
         // should fire the first reminder.
         let now = Instant::now();
         assert_eq!(
-            decide_bedtime(true, 23 * 60, 22 * 60, 9 * 60, 300, None, now, true),
+            decide_bedtime(window_2209(), 23 * 60, None, now, true),
             BedtimeAction::Fire
         );
     }
@@ -810,7 +884,7 @@ mod tests {
         // A wake well outside the window is still just NotInWindow.
         let now = Instant::now();
         assert_eq!(
-            decide_bedtime(true, 12 * 60, 22 * 60, 9 * 60, 300, Some(now), now, true),
+            decide_bedtime(window_2209(), 12 * 60, Some(now), now, true),
             BedtimeAction::NotInWindow
         );
     }

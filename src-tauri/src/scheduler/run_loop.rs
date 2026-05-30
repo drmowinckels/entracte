@@ -19,8 +19,9 @@ use super::settings::{delivery_for, effective_long_hints, effective_micro_hints,
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
     prebreak_warn_due, should_defer_for_typing, should_fire_fixed_now, BedtimeAction,
+    BedtimeWindow, PrebreakGate,
 };
-use super::types::{BreakDelivery, BreakKind, SuppressReason};
+use super::types::{BreakDelivery, BreakEvent, BreakKind, SuppressReason};
 use super::Scheduler;
 
 /// Cheap atomic-load check that the run loop reads at the top of
@@ -188,11 +189,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         let bedtime_decision = {
             let t = sched.timers.lock().await;
             decide_bedtime(
-                s.bedtime_enabled,
+                BedtimeWindow {
+                    enabled: s.bedtime_enabled,
+                    start_min: s.bedtime_start_minutes,
+                    end_min: s.bedtime_end_minutes,
+                    interval_secs: s.bedtime_interval_secs,
+                },
                 now_min,
-                s.bedtime_start_minutes,
-                s.bedtime_end_minutes,
-                s.bedtime_interval_secs,
                 t.last_sleep,
                 now,
                 resumed_from_suspend,
@@ -204,20 +207,22 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 super::overlay::fire_break(
                     &app,
                     &sched.current_break,
-                    BreakKind::Sleep,
-                    s.bedtime_duration_secs,
-                    true,
+                    BreakEvent {
+                        kind: BreakKind::Sleep,
+                        duration_secs: s.bedtime_duration_secs,
+                        enforceable: true,
+                        manual_finish: false,
+                        postpone_available: false,
+                        hints: s.sleep_hints.clone(),
+                        hint_rotate_seconds: s.hint_rotate_seconds,
+                        health_intensity: if s.break_health_enabled {
+                            intensity
+                        } else {
+                            0.0
+                        },
+                    },
                     s.monitor_placement,
                     super::settings::is_windowed_mode(BreakKind::Sleep, &s),
-                    false,
-                    false,
-                    s.sleep_hints.clone(),
-                    s.hint_rotate_seconds,
-                    if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
-                    },
                 );
                 hooks::run_hooks(
                     &s,
@@ -349,20 +354,22 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 deliver_break(
                     &app,
                     &sched.current_break,
-                    delivery,
-                    BreakKind::Long,
-                    s.long_duration_secs,
-                    enforceable,
-                    s.monitor_placement,
-                    s.long_manual_finish,
-                    s.postpone_enabled && !s.strict_mode,
-                    effective_long_hints(&s),
-                    s.hint_rotate_seconds,
-                    if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
+                    BreakEvent {
+                        kind: BreakKind::Long,
+                        duration_secs: s.long_duration_secs,
+                        enforceable,
+                        manual_finish: s.long_manual_finish,
+                        postpone_available: s.postpone_enabled && !s.strict_mode,
+                        hints: effective_long_hints(&s),
+                        hint_rotate_seconds: s.hint_rotate_seconds,
+                        health_intensity: if s.break_health_enabled {
+                            intensity
+                        } else {
+                            0.0
+                        },
                     },
+                    delivery,
+                    s.monitor_placement,
                 );
                 hooks::run_hooks(
                     &s,
@@ -394,20 +401,22 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 deliver_break(
                     &app,
                     &sched.current_break,
-                    delivery,
-                    BreakKind::Micro,
-                    s.micro_duration_secs,
-                    enforceable,
-                    s.monitor_placement,
-                    s.micro_manual_finish,
-                    s.postpone_enabled && !s.strict_mode,
-                    effective_micro_hints(&s),
-                    s.hint_rotate_seconds,
-                    if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
+                    BreakEvent {
+                        kind: BreakKind::Micro,
+                        duration_secs: s.micro_duration_secs,
+                        enforceable,
+                        manual_finish: s.micro_manual_finish,
+                        postpone_available: s.postpone_enabled && !s.strict_mode,
+                        hints: effective_micro_hints(&s),
+                        hint_rotate_seconds: s.hint_rotate_seconds,
+                        health_intensity: if s.break_health_enabled {
+                            intensity
+                        } else {
+                            0.0
+                        },
                     },
+                    delivery,
+                    s.monitor_placement,
                 );
                 hooks::run_hooks(
                     &s,
@@ -460,26 +469,30 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         if s.prebreak_notification_enabled && s.prebreak_notification_seconds > 0 {
             let mut t = sched.timers.lock().await;
             if prebreak_warn_due(
-                s.long_enabled,
-                long_interval_active,
+                PrebreakGate {
+                    enabled: s.long_enabled,
+                    mode_includes_interval: long_interval_active,
+                    already_warned: t.long_warned,
+                    idle_suppressed: long_idle_suppressed,
+                },
                 t.last_long,
                 s.long_interval_secs,
                 s.prebreak_notification_seconds,
-                t.long_warned,
-                long_idle_suppressed,
                 tick_now,
             ) {
                 notify_break_coming(&app, BreakKind::Long, s.prebreak_notification_seconds);
                 t.long_warned = true;
             }
             if prebreak_warn_due(
-                s.micro_enabled,
-                micro_interval_active,
+                PrebreakGate {
+                    enabled: s.micro_enabled,
+                    mode_includes_interval: micro_interval_active,
+                    already_warned: t.micro_warned,
+                    idle_suppressed: micro_idle_suppressed,
+                },
                 t.last_micro,
                 s.micro_interval_secs,
                 s.prebreak_notification_seconds,
-                t.micro_warned,
-                micro_idle_suppressed,
                 tick_now,
             ) {
                 notify_break_coming(&app, BreakKind::Micro, s.prebreak_notification_seconds);
@@ -563,20 +576,22 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             deliver_break(
                 &app,
                 &sched.current_break,
-                delivery,
-                BreakKind::Long,
-                s.long_duration_secs,
-                enforceable,
-                s.monitor_placement,
-                s.long_manual_finish,
-                s.postpone_enabled && !s.strict_mode,
-                effective_long_hints(&s),
-                s.hint_rotate_seconds,
-                if s.break_health_enabled {
-                    intensity
-                } else {
-                    0.0
+                BreakEvent {
+                    kind: BreakKind::Long,
+                    duration_secs: s.long_duration_secs,
+                    enforceable,
+                    manual_finish: s.long_manual_finish,
+                    postpone_available: s.postpone_enabled && !s.strict_mode,
+                    hints: effective_long_hints(&s),
+                    hint_rotate_seconds: s.hint_rotate_seconds,
+                    health_intensity: if s.break_health_enabled {
+                        intensity
+                    } else {
+                        0.0
+                    },
                 },
+                delivery,
+                s.monitor_placement,
             );
             hooks::run_hooks(
                 &s,
@@ -605,20 +620,22 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             deliver_break(
                 &app,
                 &sched.current_break,
-                delivery,
-                BreakKind::Micro,
-                s.micro_duration_secs,
-                enforceable,
-                s.monitor_placement,
-                s.micro_manual_finish,
-                s.postpone_enabled && !s.strict_mode,
-                effective_micro_hints(&s),
-                s.hint_rotate_seconds,
-                if s.break_health_enabled {
-                    intensity
-                } else {
-                    0.0
+                BreakEvent {
+                    kind: BreakKind::Micro,
+                    duration_secs: s.micro_duration_secs,
+                    enforceable,
+                    manual_finish: s.micro_manual_finish,
+                    postpone_available: s.postpone_enabled && !s.strict_mode,
+                    hints: effective_micro_hints(&s),
+                    hint_rotate_seconds: s.hint_rotate_seconds,
+                    health_intensity: if s.break_health_enabled {
+                        intensity
+                    } else {
+                        0.0
+                    },
                 },
+                delivery,
+                s.monitor_placement,
             );
             hooks::run_hooks(
                 &s,
