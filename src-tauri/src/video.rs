@@ -264,7 +264,7 @@ mod macos {
         let Ok(text) = std::str::from_utf8(&output.stdout) else {
             return false;
         };
-        super::parse_display_sleep_blocked(text)
+        super::parse_display_sleep_blocked(text) // LCOV_EXCL_LINE — only reached after a live pmset call; parser itself is unit-tested
     }
 
     fn fullscreen_window_present() -> bool {
@@ -402,7 +402,7 @@ mod windows {
         let Ok(text) = std::str::from_utf8(&output.stdout) else {
             return false;
         };
-        super::parse_display_request(text)
+        super::parse_display_request(text) // LCOV_EXCL_LINE — only reached after a live powercfg call; parser itself is unit-tested
     }
 
     fn fullscreen_window_present() -> bool {
@@ -540,7 +540,7 @@ mod linux {
         let Ok(text) = std::str::from_utf8(&output.stdout) else {
             return false;
         };
-        super::parse_idle_inhibitor(text)
+        super::parse_idle_inhibitor(text) // LCOV_EXCL_LINE — only reached after a live systemd-inhibit call; parser itself is unit-tested
     }
 
     fn is_wayland_session() -> bool {
@@ -569,7 +569,7 @@ mod linux {
         let Some(state) = xprop_window_state(&active_id) else {
             return false;
         };
-        super::parse_net_wm_state_fullscreen(&state)
+        super::parse_net_wm_state_fullscreen(&state) // LCOV_EXCL_LINE — only reached after a live xprop call; parser itself is unit-tested
     }
 
     fn xprop_active_window_id() -> Option<String> {
@@ -581,7 +581,7 @@ mod linux {
             return None;
         }
         let text = std::str::from_utf8(&out.stdout).ok()?;
-        super::parse_active_window_id(text)
+        super::parse_active_window_id(text) // LCOV_EXCL_LINE — only reached after a live xprop call; parser itself is unit-tested
     }
 
     fn xprop_window_state(id: &str) -> Option<String> {

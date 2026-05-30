@@ -32,7 +32,7 @@ pub(crate) fn classify_camera_line(line: &str) -> Option<bool> {
 /// The Windows webcam-in-use rule: an app's `LastUsedTimeStop` of `0`
 /// means it is *currently* streaming (a non-zero value is the timestamp it
 /// stopped). Extracted so the rule itself is testable without a registry;
-/// the registry walk in [`windows::any_active_app`] feeds it. Un-gated so
+/// the registry walk in `windows::any_active_app` feeds it. Un-gated so
 /// it's tested everywhere; only the Windows walk calls it in non-test builds.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn app_is_active(last_used_time_stop: Option<u64>) -> bool {

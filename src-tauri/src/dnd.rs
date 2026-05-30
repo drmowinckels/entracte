@@ -11,7 +11,7 @@ pub fn is_active() -> bool {
 /// Disturb assertion (i.e. some entry's `storeAssertionRecords` array is
 /// non-empty). Kept platform-agnostic and un-gated so it compiles and is
 /// unit-tested on every OS, not just macOS — only the file read in
-/// [`macos::check`] is platform-specific (so in a non-test build only the
+/// `macos::check` is platform-specific (so in a non-test build only the
 /// macOS target actually calls it).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn parse_assertions_active(json: &str) -> bool {
