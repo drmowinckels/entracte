@@ -11,7 +11,7 @@ use super::super::settings::{
     delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode, Settings,
 };
 use super::super::timers::{clear_last_break, postpone_counter, reset_postpone_counter};
-use super::super::types::{BreakKind, LastBreakInfo, PostponeState};
+use super::super::types::{BreakEvent, BreakKind, LastBreakInfo, PostponeState};
 use super::super::Scheduler;
 
 /// Pause the scheduler. `duration_secs = None` pauses indefinitely;
@@ -152,20 +152,22 @@ pub async fn trigger_break_from_cli<R: Runtime>(
     deliver_break(
         app,
         &scheduler.current_break,
-        delivery,
-        kind,
-        duration_secs,
-        enforceable,
-        s.monitor_placement,
-        manual_finish,
-        s.postpone_enabled && !s.strict_mode,
-        hints,
-        s.hint_rotate_seconds,
-        if s.break_health_enabled {
-            intensity
-        } else {
-            0.0
+        BreakEvent {
+            kind,
+            duration_secs,
+            enforceable,
+            manual_finish,
+            postpone_available: s.postpone_enabled && !s.strict_mode,
+            hints,
+            hint_rotate_seconds: s.hint_rotate_seconds,
+            health_intensity: if s.break_health_enabled {
+                intensity
+            } else {
+                0.0
+            },
         },
+        delivery,
+        s.monitor_placement,
     );
     hooks::run_hooks(
         &s,
@@ -532,20 +534,22 @@ pub async fn resume_last_break_impl<R: Runtime>(
     fire_break(
         app,
         &scheduler.current_break,
-        kind,
-        duration_secs,
-        enforceable,
+        BreakEvent {
+            kind,
+            duration_secs,
+            enforceable,
+            manual_finish,
+            postpone_available: s.postpone_enabled && !s.strict_mode,
+            hints,
+            hint_rotate_seconds: s.hint_rotate_seconds,
+            health_intensity: if s.break_health_enabled {
+                intensity
+            } else {
+                0.0
+            },
+        },
         s.monitor_placement,
         is_windowed_mode(kind, &s),
-        manual_finish,
-        s.postpone_enabled && !s.strict_mode,
-        hints,
-        s.hint_rotate_seconds,
-        if s.break_health_enabled {
-            intensity
-        } else {
-            0.0
-        },
     );
     scheduler.logger.log(EventPayload::BreakResumed { kind });
     hooks::run_hooks(

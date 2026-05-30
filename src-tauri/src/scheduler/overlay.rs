@@ -163,69 +163,44 @@ fn select_overlay_monitors<R: Runtime>(
 /// Surface a break through whichever channel the active settings ask
 /// for: a system notification or the overlay (full-screen or windowed).
 /// `Notification` delivery short-circuits the overlay path entirely.
-#[allow(clippy::too_many_arguments)]
+///
+/// `event` carries the break content (kind, duration, hints, …); the
+/// `delivery` and `placement` decide *how* and *where* it surfaces.
 pub fn deliver_break<R: Runtime>(
     app: &AppHandle<R>,
     current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
+    event: BreakEvent,
     delivery: BreakDelivery,
-    kind: BreakKind,
-    duration_secs: u64,
-    enforceable: bool,
     placement: MonitorPlacement,
-    manual_finish: bool,
-    postpone_available: bool,
-    hints: Vec<String>,
-    hint_rotate_seconds: u64,
-    health_intensity: f32,
 ) {
     match delivery {
-        BreakDelivery::Notification => notify_break_now(app, kind, duration_secs),
+        BreakDelivery::Notification => notify_break_now(app, event.kind, event.duration_secs),
         BreakDelivery::Overlay | BreakDelivery::Windowed => fire_break(
             app,
             current_break,
-            kind,
-            duration_secs,
-            enforceable,
+            event,
             placement,
             matches!(delivery, BreakDelivery::Windowed),
-            manual_finish,
-            postpone_available,
-            hints,
-            hint_rotate_seconds,
-            health_intensity,
         ),
     }
 }
 
-/// Build a `BreakEvent`, stash it in `current_break`, position an
-/// overlay window on each selected monitor, and emit `break:start` to
-/// the renderer. Used directly for sleep/resume-last paths; normal
-/// scheduled breaks go through `deliver_break` instead.
-#[allow(clippy::too_many_arguments)]
+/// Stash the break `event` in `current_break`, position an overlay window
+/// on each selected monitor, and emit `break:start` to the renderer. Used
+/// directly for sleep/resume-last paths; normal scheduled breaks go
+/// through `deliver_break` instead.
+///
+/// `postpone_available` is forced off for enforceable breaks here, so
+/// callers can pass the user's raw intent without re-deriving it.
 pub fn fire_break<R: Runtime>(
     app: &AppHandle<R>,
     current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
-    kind: BreakKind,
-    duration_secs: u64,
-    enforceable: bool,
+    event: BreakEvent,
     placement: MonitorPlacement,
     windowed: bool,
-    manual_finish: bool,
-    postpone_available: bool,
-    hints: Vec<String>,
-    hint_rotate_seconds: u64,
-    health_intensity: f32,
 ) {
-    let payload = BreakEvent {
-        kind,
-        duration_secs,
-        enforceable,
-        manual_finish,
-        postpone_available: postpone_available && !enforceable,
-        hints,
-        hint_rotate_seconds,
-        health_intensity,
-    };
+    let mut payload = event;
+    payload.postpone_available = payload.postpone_available && !payload.enforceable;
     *super::lock_current_break(current_break) = Some(payload.clone());
 
     let monitors = select_overlay_monitors(app, placement);
@@ -261,10 +236,14 @@ pub fn fire_break<R: Runtime>(
     if shown == 0 {
         log::error!(
             "scheduler: break kind={kind:?} fired but NO overlay window could be shown \
-             ({count} monitor(s) targeted) — the break is invisible"
+             ({count} monitor(s) targeted) — the break is invisible",
+            kind = payload.kind
         );
     } else {
-        log::info!("scheduler: break kind={kind:?} shown on {shown}/{count} monitor(s)");
+        log::info!(
+            "scheduler: break kind={kind:?} shown on {shown}/{count} monitor(s)",
+            kind = payload.kind
+        );
     }
 
     // Close (not just hide) any overlays for monitors that disconnected since
