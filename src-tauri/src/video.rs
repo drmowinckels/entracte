@@ -125,6 +125,90 @@ pub(crate) fn pause_decision(assertion_active: bool, window: WindowKnowledge) ->
     }
 }
 
+// --- Per-OS assertion / window parsers ---------------------------------
+//
+// These are pure string parsers, one per platform's CLI output. They live
+// at module level (not inside the `#[cfg(target_os)]` mods) so every CI
+// runner compiles and unit-tests all of them — otherwise the macOS runner
+// would never see the Windows/Linux parsers, which is exactly the
+// cross-platform blind spot these tests close. Each `check()` reads its
+// own OS's command output and calls the matching parser via `super::`.
+// The per-symbol `allow(dead_code)` mirrors `Rect`/`rect_matches` above:
+// in a non-test build only one OS's parser is actually called.
+
+/// macOS `pmset -g assertions`: true if `PreventUserIdleDisplaySleep` has
+/// a non-zero count (something is keeping the display awake).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn parse_display_sleep_blocked(text: &str) -> bool {
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("PreventUserIdleDisplaySleep") else {
+            continue;
+        };
+        let count: u32 = rest.trim().parse().unwrap_or(0);
+        return count > 0;
+    }
+    false
+}
+
+/// Windows `powercfg /requests`: true if the `DISPLAY:` section lists any
+/// request other than `None.` (something is requesting the display stay on).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn parse_display_request(text: &str) -> bool {
+    let mut in_display = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("DISPLAY:") {
+            in_display = true;
+            continue;
+        }
+        if trimmed.ends_with(':') && !trimmed.eq_ignore_ascii_case("DISPLAY:") {
+            in_display = false;
+            continue;
+        }
+        if in_display && !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("None.") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Linux `systemd-inhibit --list`: true if any inhibitor's WHAT column
+/// (colon-separated types) includes `idle`. System-managed inhibitors like
+/// `handle-lid-switch` / `sleep` don't carry the `idle` component.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_idle_inhibitor(text: &str) -> bool {
+    for line in text.lines() {
+        for token in line.split_whitespace() {
+            if token.split(':').any(|w| w == "idle") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Linux `xprop -root _NET_ACTIVE_WINDOW`: extract the `0x…` window id,
+/// rejecting the `0x0` "no active window" sentinel so we don't chain a
+/// useless follow-up xprop call.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_active_window_id(text: &str) -> Option<String> {
+    let (_, after) = text.trim().rsplit_once('#')?;
+    let id = after.trim();
+    if !id.starts_with("0x") || id == "0x0" {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+/// Linux `xprop -id <id> _NET_WM_STATE`: true iff `_NET_WM_STATE_FULLSCREEN`
+/// is present. Crucially `_NET_WM_STATE_MAXIMIZED_*` must NOT match — a
+/// maximised window with the taskbar visible is the case we exclude.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_net_wm_state_fullscreen(text: &str) -> bool {
+    text.contains("_NET_WM_STATE_FULLSCREEN")
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::process::Command;
@@ -180,19 +264,7 @@ mod macos {
         let Ok(text) = std::str::from_utf8(&output.stdout) else {
             return false;
         };
-        parse_display_sleep_blocked(text)
-    }
-
-    pub(super) fn parse_display_sleep_blocked(text: &str) -> bool {
-        for line in text.lines() {
-            let trimmed = line.trim_start();
-            let Some(rest) = trimmed.strip_prefix("PreventUserIdleDisplaySleep") else {
-                continue;
-            };
-            let count: u32 = rest.trim().parse().unwrap_or(0);
-            return count > 0;
-        }
-        false
+        super::parse_display_sleep_blocked(text)
     }
 
     fn fullscreen_window_present() -> bool {
@@ -330,26 +402,7 @@ mod windows {
         let Ok(text) = std::str::from_utf8(&output.stdout) else {
             return false;
         };
-        parse_display_request(text)
-    }
-
-    pub(super) fn parse_display_request(text: &str) -> bool {
-        let mut in_display = false;
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.eq_ignore_ascii_case("DISPLAY:") {
-                in_display = true;
-                continue;
-            }
-            if trimmed.ends_with(':') && !trimmed.eq_ignore_ascii_case("DISPLAY:") {
-                in_display = false;
-                continue;
-            }
-            if in_display && !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("None.") {
-                return true;
-            }
-        }
-        false
+        super::parse_display_request(text)
     }
 
     fn fullscreen_window_present() -> bool {
@@ -487,22 +540,7 @@ mod linux {
         let Ok(text) = std::str::from_utf8(&output.stdout) else {
             return false;
         };
-        parse_idle_inhibitor(text)
-    }
-
-    pub(super) fn parse_idle_inhibitor(text: &str) -> bool {
-        // The WHY column can contain spaces, so we can't reliably index by column.
-        // The WHAT column is a colon-separated set of inhibitor types; only "idle"
-        // matches a display-blocking video player (system-managed inhibitors like
-        // "handle-lid-switch" or "sleep" don't include the "idle" component).
-        for line in text.lines() {
-            for token in line.split_whitespace() {
-                if token.split(':').any(|w| w == "idle") {
-                    return true;
-                }
-            }
-        }
-        false
+        super::parse_idle_inhibitor(text)
     }
 
     fn is_wayland_session() -> bool {
@@ -531,7 +569,7 @@ mod linux {
         let Some(state) = xprop_window_state(&active_id) else {
             return false;
         };
-        parse_net_wm_state_fullscreen(&state)
+        super::parse_net_wm_state_fullscreen(&state)
     }
 
     fn xprop_active_window_id() -> Option<String> {
@@ -543,19 +581,7 @@ mod linux {
             return None;
         }
         let text = std::str::from_utf8(&out.stdout).ok()?;
-        parse_active_window_id(text)
-    }
-
-    pub(super) fn parse_active_window_id(text: &str) -> Option<String> {
-        // Expected line: `_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3c00006`
-        // `0x0` is the "no active window" sentinel — reject it so we
-        // don't follow up with a useless xprop call.
-        let (_, after) = text.trim().rsplit_once('#')?;
-        let id = after.trim();
-        if !id.starts_with("0x") || id == "0x0" {
-            return None;
-        }
-        Some(id.to_string())
+        super::parse_active_window_id(text)
     }
 
     fn xprop_window_state(id: &str) -> Option<String> {
@@ -567,14 +593,6 @@ mod linux {
             return None;
         }
         std::str::from_utf8(&out.stdout).ok().map(str::to_string)
-    }
-
-    /// True iff `_NET_WM_STATE_FULLSCREEN` appears in xprop output for
-    /// `_NET_WM_STATE`. Crucially, `_NET_WM_STATE_MAXIMIZED_*` must NOT
-    /// match — a maximised window with the taskbar visible is the exact
-    /// case we want to exclude.
-    pub(super) fn parse_net_wm_state_fullscreen(text: &str) -> bool {
-        text.contains("_NET_WM_STATE_FULLSCREEN")
     }
 }
 
@@ -734,11 +752,160 @@ mod tests {
         // assertion is the strongest signal we have.
         assert!(pause_decision(true, WindowKnowledge::Unknowable));
     }
+
+    // --- macOS pmset parser (runs on every OS) ---
+
+    #[test]
+    fn pmset_no_assertions_means_inactive() {
+        let sample = "Assertion status system-wide:\n   PreventUserIdleDisplaySleep    0\n   UserIsActive                   1\n";
+        assert!(!parse_display_sleep_blocked(sample));
+    }
+
+    #[test]
+    fn pmset_nonzero_count_means_active() {
+        let sample = "Assertion status system-wide:\n   PreventUserIdleDisplaySleep    1\n   UserIsActive                   1\n";
+        assert!(parse_display_sleep_blocked(sample));
+    }
+
+    #[test]
+    fn pmset_higher_counts_still_active() {
+        let sample = "   PreventUserIdleDisplaySleep    3\n";
+        assert!(parse_display_sleep_blocked(sample));
+    }
+
+    #[test]
+    fn pmset_missing_key_means_inactive() {
+        let sample = "Assertion status system-wide:\n   UserIsActive                   1\n";
+        assert!(!parse_display_sleep_blocked(sample));
+    }
+
+    #[test]
+    fn pmset_garbled_count_means_inactive() {
+        let sample = "   PreventUserIdleDisplaySleep    NaN\n";
+        assert!(!parse_display_sleep_blocked(sample));
+    }
+
+    // --- Windows powercfg parser (runs on every OS) ---
+
+    #[test]
+    fn powercfg_all_none_means_inactive() {
+        let sample = "DISPLAY:\nNone.\n\nSYSTEM:\nNone.\n\nAWAYMODE:\nNone.\n";
+        assert!(!parse_display_request(sample));
+    }
+
+    #[test]
+    fn powercfg_display_process_means_active() {
+        let sample =
+            "DISPLAY:\n[PROCESS] \\Device\\HarddiskVolume3\\firefox.exe\n\nSYSTEM:\nNone.\n";
+        assert!(parse_display_request(sample));
+    }
+
+    #[test]
+    fn powercfg_only_system_request_is_inactive() {
+        let sample = "DISPLAY:\nNone.\n\nSYSTEM:\n[DRIVER] Realtek HD Audio\n";
+        assert!(!parse_display_request(sample));
+    }
+
+    // --- Linux systemd-inhibit parser (runs on every OS) ---
+
+    #[test]
+    fn inhibit_empty_means_inactive() {
+        assert!(!parse_idle_inhibitor(""));
+    }
+
+    #[test]
+    fn inhibit_idle_what_means_active() {
+        let sample = "user 1000 alice 12345 firefox idle Playing:video block\n";
+        assert!(parse_idle_inhibitor(sample));
+    }
+
+    #[test]
+    fn inhibit_compound_what_with_idle_means_active() {
+        let sample = "user 1000 alice 12345 vlc sleep:idle Playing block\n";
+        assert!(parse_idle_inhibitor(sample));
+    }
+
+    #[test]
+    fn inhibit_non_idle_inhibitor_is_inactive() {
+        let sample = "user 1000 alice 12345 systemd-logind handle-power-key:handle-suspend-key Lid closed block\n";
+        assert!(!parse_idle_inhibitor(sample));
+    }
+
+    #[test]
+    fn inhibit_substring_idle_does_not_match() {
+        let sample = "user 1000 alice 12345 daemon sleep Process-is-idle-checker block\n";
+        assert!(!parse_idle_inhibitor(sample));
+    }
+
+    // --- Linux xprop _NET_ACTIVE_WINDOW parser (runs on every OS) ---
+
+    #[test]
+    fn active_window_id_extracts_hex_id() {
+        let sample = "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3c00006\n";
+        assert_eq!(
+            parse_active_window_id(sample),
+            Some("0x3c00006".to_string())
+        );
+    }
+
+    #[test]
+    fn active_window_id_rejects_non_hex() {
+        let sample = "_NET_ACTIVE_WINDOW(WINDOW): not set\n";
+        assert_eq!(parse_active_window_id(sample), None);
+    }
+
+    #[test]
+    fn active_window_id_rejects_zero_sentinel() {
+        // `0x0` is what xprop returns when no window is focused (e.g.,
+        // the desktop has focus). We must not chain a second xprop
+        // call against that bogus id.
+        let sample = "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0\n";
+        assert_eq!(parse_active_window_id(sample), None);
+    }
+
+    // --- Linux xprop _NET_WM_STATE parser (runs on every OS) ---
+
+    #[test]
+    fn net_wm_state_true_when_fullscreen_present() {
+        let sample = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN\n";
+        assert!(parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn net_wm_state_true_when_fullscreen_combined_with_other_states() {
+        // Common Picture-in-Picture / always-on-top combo from Firefox.
+        let sample = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_ABOVE\n";
+        assert!(parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn net_wm_state_false_for_maximised() {
+        // Maximised is NOT fullscreen — the taskbar / dock is still
+        // visible and the user isn't committed to a video. This is the
+        // exact regression we're guarding against.
+        let sample =
+            "_NET_WM_STATE(ATOM) = _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_MAXIMIZED_VERT\n";
+        assert!(!parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn net_wm_state_false_when_property_missing() {
+        // xprop's "no such property" output. Must not match.
+        let sample = "_NET_WM_STATE:  not found.\n";
+        assert!(!parse_net_wm_state_fullscreen(sample));
+    }
+
+    #[test]
+    fn net_wm_state_false_for_empty_output() {
+        assert!(!parse_net_wm_state_fullscreen(""));
+    }
 }
 
+// Absolute-path sanity for the per-OS command binaries. These stay
+// OS-gated because each const only exists on its own platform.
 #[cfg(all(test, target_os = "macos"))]
-mod macos_tests {
-    use super::macos::{parse_display_sleep_blocked, PMSET_BIN};
+mod macos_bin_tests {
+    use super::macos::PMSET_BIN;
 
     #[test]
     fn pmset_bin_is_absolute_and_non_empty() {
@@ -748,41 +915,11 @@ mod macos_tests {
             "expected absolute path, got {PMSET_BIN}"
         );
     }
-
-    #[test]
-    fn no_assertions_means_inactive() {
-        let sample = "Assertion status system-wide:\n   PreventUserIdleDisplaySleep    0\n   UserIsActive                   1\n";
-        assert!(!parse_display_sleep_blocked(sample));
-    }
-
-    #[test]
-    fn nonzero_count_means_active() {
-        let sample = "Assertion status system-wide:\n   PreventUserIdleDisplaySleep    1\n   UserIsActive                   1\n";
-        assert!(parse_display_sleep_blocked(sample));
-    }
-
-    #[test]
-    fn higher_counts_still_active() {
-        let sample = "   PreventUserIdleDisplaySleep    3\n";
-        assert!(parse_display_sleep_blocked(sample));
-    }
-
-    #[test]
-    fn missing_key_means_inactive() {
-        let sample = "Assertion status system-wide:\n   UserIsActive                   1\n";
-        assert!(!parse_display_sleep_blocked(sample));
-    }
-
-    #[test]
-    fn garbled_count_means_inactive() {
-        let sample = "   PreventUserIdleDisplaySleep    NaN\n";
-        assert!(!parse_display_sleep_blocked(sample));
-    }
 }
 
 #[cfg(all(test, target_os = "windows"))]
-mod windows_tests {
-    use super::windows::{parse_display_request, POWERCFG_BIN};
+mod windows_bin_tests {
+    use super::windows::POWERCFG_BIN;
 
     #[test]
     fn powercfg_bin_is_absolute_and_non_empty() {
@@ -794,30 +931,11 @@ mod windows_tests {
             "expected absolute Windows path, got {POWERCFG_BIN}"
         );
     }
-
-    #[test]
-    fn all_none_means_inactive() {
-        let sample = "DISPLAY:\nNone.\n\nSYSTEM:\nNone.\n\nAWAYMODE:\nNone.\n";
-        assert!(!parse_display_request(sample));
-    }
-
-    #[test]
-    fn display_process_means_active() {
-        let sample =
-            "DISPLAY:\n[PROCESS] \\Device\\HarddiskVolume3\\firefox.exe\n\nSYSTEM:\nNone.\n";
-        assert!(parse_display_request(sample));
-    }
-
-    #[test]
-    fn only_system_request_is_inactive() {
-        let sample = "DISPLAY:\nNone.\n\nSYSTEM:\n[DRIVER] Realtek HD Audio\n";
-        assert!(!parse_display_request(sample));
-    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
-mod linux_tests {
-    use super::linux::{parse_active_window_id, parse_idle_inhibitor, SYSTEMD_INHIBIT_BIN};
+mod linux_bin_tests {
+    use super::linux::SYSTEMD_INHIBIT_BIN;
 
     #[test]
     fn systemd_inhibit_bin_is_absolute_and_non_empty() {
@@ -826,95 +944,5 @@ mod linux_tests {
             SYSTEMD_INHIBIT_BIN.starts_with('/'),
             "expected absolute path, got {SYSTEMD_INHIBIT_BIN}"
         );
-    }
-
-    #[test]
-    fn empty_means_inactive() {
-        assert!(!parse_idle_inhibitor(""));
-    }
-
-    #[test]
-    fn idle_what_means_active() {
-        let sample = "user 1000 alice 12345 firefox idle Playing:video block\n";
-        assert!(parse_idle_inhibitor(sample));
-    }
-
-    #[test]
-    fn compound_what_with_idle_means_active() {
-        let sample = "user 1000 alice 12345 vlc sleep:idle Playing block\n";
-        assert!(parse_idle_inhibitor(sample));
-    }
-
-    #[test]
-    fn non_idle_inhibitor_is_inactive() {
-        let sample = "user 1000 alice 12345 systemd-logind handle-power-key:handle-suspend-key Lid closed block\n";
-        assert!(!parse_idle_inhibitor(sample));
-    }
-
-    #[test]
-    fn substring_idle_does_not_match() {
-        let sample = "user 1000 alice 12345 daemon sleep Process-is-idle-checker block\n";
-        assert!(!parse_idle_inhibitor(sample));
-    }
-
-    #[test]
-    fn parse_active_window_id_extracts_hex_id() {
-        let sample = "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3c00006\n";
-        assert_eq!(
-            parse_active_window_id(sample),
-            Some("0x3c00006".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_active_window_id_rejects_non_hex() {
-        let sample = "_NET_ACTIVE_WINDOW(WINDOW): not set\n";
-        assert_eq!(parse_active_window_id(sample), None);
-    }
-
-    #[test]
-    fn parse_active_window_id_rejects_zero_sentinel() {
-        // `0x0` is what xprop returns when no window is focused (e.g.,
-        // the desktop has focus). We must not chain a second xprop
-        // call against that bogus id.
-        let sample = "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0\n";
-        assert_eq!(parse_active_window_id(sample), None);
-    }
-
-    use super::linux::parse_net_wm_state_fullscreen;
-
-    #[test]
-    fn parse_net_wm_state_true_when_fullscreen_present() {
-        let sample = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN\n";
-        assert!(parse_net_wm_state_fullscreen(sample));
-    }
-
-    #[test]
-    fn parse_net_wm_state_true_when_fullscreen_combined_with_other_states() {
-        // Common Picture-in-Picture / always-on-top combo from Firefox.
-        let sample = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_ABOVE\n";
-        assert!(parse_net_wm_state_fullscreen(sample));
-    }
-
-    #[test]
-    fn parse_net_wm_state_false_for_maximised() {
-        // Maximised is NOT fullscreen — the taskbar / dock is still
-        // visible and the user isn't committed to a video. This is the
-        // exact regression we're guarding against.
-        let sample =
-            "_NET_WM_STATE(ATOM) = _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_MAXIMIZED_VERT\n";
-        assert!(!parse_net_wm_state_fullscreen(sample));
-    }
-
-    #[test]
-    fn parse_net_wm_state_false_when_property_missing() {
-        // xprop's "no such property" output. Must not match.
-        let sample = "_NET_WM_STATE:  not found.\n";
-        assert!(!parse_net_wm_state_fullscreen(sample));
-    }
-
-    #[test]
-    fn parse_net_wm_state_false_for_empty_output() {
-        assert!(!parse_net_wm_state_fullscreen(""));
     }
 }
