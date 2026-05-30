@@ -1,0 +1,141 @@
+name: E2E smoke (CLI ↔ app IPC)
+
+# Black-box runtime smoke test on Windows and Linux. Development happens on
+# macOS, so this is the only automated check that the app actually *boots*
+# on the other OSes and that the CLI can talk to it over the per-OS IPC
+# transport (Unix domain socket vs Windows named pipe) — the surface most
+# likely to break per-platform and invisible to `cargo test`.
+#
+# It builds the real binary, launches it as the background tray app, then
+# drives it through the public CLI: wait for `status` to answer (proves the
+# IPC server came up), exercise pause/resume and a break trigger, and shut
+# it down. macOS is intentionally excluded: GUI/menu-bar apps don't get a
+# reliable WindowServer session on the hosted macOS runners, and macOS is
+# the platform we already test by hand.
+#
+# Note: headless GUI launch is inherently runner-sensitive (xvfb + webkit2gtk
+# on Linux). Keep this workflow OFF branch-protection's required list until a
+# few green runs prove it's stable; treat early red runs as harness tuning,
+# not product bugs.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev xvfb
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # `--no-bundle` compiles the binary + frontend without packaging
+      # installers (faster, and skips updater signing entirely). The same
+      # binary is both the tray app and the CLI client.
+      - name: Build app binary
+        shell: bash
+        run: npm run tauri build -- --debug --no-bundle
+
+      - name: Smoke test CLI ↔ app IPC
+        shell: bash
+        env:
+          # webkit2gtk under xvfb needs compositing disabled or it can hang
+          # bringing up the (hidden) main window, which would stop the IPC
+          # server from ever starting.
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        run: |
+          set -uo pipefail
+
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BIN="src-tauri/target/debug/entracte.exe"
+            "$BIN" > app.out 2>&1 &
+            APP_PID=$!
+          else
+            BIN="src-tauri/target/debug/entracte"
+            xvfb-run -a "$BIN" > app.out 2>&1 &
+            APP_PID=$!
+          fi
+          echo "launched app (pid $APP_PID)"
+
+          # Tail the app's own captured output (NOT `entracte log`, which
+          # follows the file forever and would hang the job).
+          cleanup() {
+            echo "::group::app output tail"
+            tail -n 80 app.out 2>/dev/null || true
+            echo "::endgroup::"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              taskkill //F //IM entracte.exe >/dev/null 2>&1 || true
+            else
+              kill "$APP_PID" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          # The CLI commands are `runs_locally` and exit before any window is
+          # created, so they need no display — they just hit the IPC socket.
+          echo "waiting for IPC server..."
+          up=0
+          for _ in $(seq 1 45); do
+            if "$BIN" status > status.json 2>status.err; then up=1; break; fi
+            sleep 2
+          done
+          if [ "$up" != "1" ]; then
+            echo "::error::app IPC never came up within ~90s"
+            cat status.err || true
+            exit 1
+          fi
+          echo "IPC up. status:"; cat status.json
+
+          echo "--- pause 30m ---"
+          "$BIN" pause 30m
+          "$BIN" status > paused.json
+          cat paused.json
+          grep -q '"paused": true' paused.json || {
+            echo "::error::status did not reflect the pause"; exit 1; }
+
+          echo "--- resume ---"
+          "$BIN" resume
+          "$BIN" status > resumed.json
+          cat resumed.json
+          grep -q '"paused": false' resumed.json || {
+            echo "::error::status did not reflect the resume"; exit 1; }
+
+          # Fire a break: the CLI call only sends the IPC request and returns;
+          # the overlay is built in the app process and may not render under
+          # xvfb, so we assert the request is accepted, not that it's visible.
+          echo "--- trigger micro ---"
+          "$BIN" trigger micro
+
+          echo "smoke test passed on $RUNNER_OS"
