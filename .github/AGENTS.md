@@ -93,6 +93,8 @@ Helper components in [src/views/settings/components/rows.tsx](../src/views/setti
 
 The Windows WNF state name is the part most likely to need empirical verification — if Focus Assist toggling doesn't pause breaks on a Windows build, that constant is the first thing to check.
 
+**Parsers are cross-tested on every OS.** The pure string parsers behind each detector (`dnd::parse_assertions_active`, `camera::{classify_camera_line, app_is_active}`, `video::parse_{display_sleep_blocked,display_request,idle_inhibitor,active_window_id,net_wm_state_fullscreen}`) live at module level — outside the `#[cfg(target_os)]` blocks — with a `#[cfg_attr(not(target_os = "…"), allow(dead_code))]` on each. So the macOS dev machine compiles and unit-tests the Windows/Linux parsers too, not just its own. When adding a new per-OS signal, extract the parse step the same way and put its tests in the un-gated `mod tests`; keep only the genuinely OS-bound bits (the FFI/registry/`/proc`/command call and the absolute-path `*_BIN` consts) inside the gated modules.
+
 ## Conventions
 
 - **No code comments** unless explaining a non-obvious workaround. Self-explanatory names instead.
