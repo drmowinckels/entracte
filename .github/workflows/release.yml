@@ -121,6 +121,54 @@ jobs:
           prerelease: ${{ startsWith(github.ref_name, 'v0.0.') }}
           args: ${{ matrix.args }}
 
+      # tauri-action notarises and staples the inner `.app`, but leaves the
+      # `.dmg` container only Developer ID-signed — `spctl` reports the raw
+      # DMG as "Unnotarized Developer ID" (issue #59). Submit and staple the
+      # DMG itself so security tooling and browser-level Gatekeeper checks on
+      # the downloaded file see a notarised container. The same Apple
+      # app-specific password tauri-action already used is reused; absent
+      # credentials skip the step (symmetric with the SignPath probe).
+      - name: Probe Apple notarisation availability
+        id: notarise
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          if [ -n "$APPLE_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLE_ID unset — DMG container left un-notarised."
+          fi
+
+      - name: Notarise and staple the DMG container
+        if: matrix.platform == 'macos-latest' && steps.notarise.outputs.available == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DMG=$(find src-tauri/target -path '*/release/bundle/dmg/*.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "::error::no .dmg found under src-tauri/target to notarise"
+            exit 1
+          fi
+          echo "Notarising $DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          # tauri-action already uploaded the un-stapled DMG to the draft
+          # release; replace it with the stapled copy. This runs before the
+          # checksums / manifest jobs, so SHA256SUMS is computed over the
+          # stapled file.
+          gh release upload "${{ github.ref_name }}" "$DMG" --clobber
+
   build-windows-unsigned:
     needs: verify-updater-pubkey
     runs-on: windows-latest
