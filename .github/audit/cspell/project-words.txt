@@ -62,6 +62,8 @@ WNF
 WnfStateData
 powercfg
 pmset
+geninfo
+gdbus
 systemd
 XDG
 DBus
