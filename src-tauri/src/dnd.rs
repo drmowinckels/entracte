@@ -7,8 +7,34 @@ pub fn is_active() -> bool {
     return false;
 }
 
+/// True if the parsed macOS `Assertions.json` contains any active Do Not
+/// Disturb assertion (i.e. some entry's `storeAssertionRecords` array is
+/// non-empty). Kept platform-agnostic and un-gated so it compiles and is
+/// unit-tested on every OS, not just macOS — only the file read in
+/// [`macos::check`] is platform-specific.
+pub(crate) fn parse_assertions_active(json: &str) -> bool {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json) else {
+        return false;
+    };
+    parsed
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter().any(|entry| {
+                entry
+                    .get("storeAssertionRecords")
+                    .and_then(|r| r.as_array())
+                    .map(|records| !records.is_empty())
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
+    use super::parse_assertions_active;
+
     pub fn check() -> bool {
         let Some(home) = std::env::var_os("HOME") else {
             return false;
@@ -17,22 +43,7 @@ mod macos {
         let Ok(content) = std::fs::read_to_string(&path) else {
             return false;
         };
-        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) else {
-            return false;
-        };
-        parsed
-            .get("data")
-            .and_then(|d| d.as_array())
-            .map(|arr| {
-                arr.iter().any(|entry| {
-                    entry
-                        .get("storeAssertionRecords")
-                        .and_then(|r| r.as_array())
-                        .map(|records| !records.is_empty())
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
+        parse_assertions_active(&content)
     }
 }
 
@@ -129,5 +140,47 @@ mod windows {
         }
         let mode = u32::from_le_bytes(buffer);
         mode > 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_assertions_active;
+
+    #[test]
+    fn empty_data_array_means_inactive() {
+        assert!(!parse_assertions_active(r#"{"data":[]}"#));
+    }
+
+    #[test]
+    fn missing_data_key_means_inactive() {
+        assert!(!parse_assertions_active(r#"{"other":123}"#));
+    }
+
+    #[test]
+    fn entry_with_empty_records_means_inactive() {
+        let json = r#"{"data":[{"storeAssertionRecords":[]}]}"#;
+        assert!(!parse_assertions_active(json));
+    }
+
+    #[test]
+    fn entry_with_a_record_means_active() {
+        let json = r#"{"data":[{"storeAssertionRecords":[{"assertionDetails":"x"}]}]}"#;
+        assert!(parse_assertions_active(json));
+    }
+
+    #[test]
+    fn one_active_entry_among_inactive_means_active() {
+        let json = r#"{"data":[
+            {"storeAssertionRecords":[]},
+            {"storeAssertionRecords":[{"assertionDetails":"focus"}]}
+        ]}"#;
+        assert!(parse_assertions_active(json));
+    }
+
+    #[test]
+    fn malformed_json_means_inactive() {
+        assert!(!parse_assertions_active("not json at all"));
+        assert!(!parse_assertions_active(""));
     }
 }
