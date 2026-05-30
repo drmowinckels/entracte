@@ -3,7 +3,9 @@ pub fn is_active() -> bool {
     return macos::check();
     #[cfg(target_os = "windows")]
     return windows::check();
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    return linux::check();
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     return false;
 }
 
@@ -31,6 +33,34 @@ pub(crate) fn parse_assertions_active(json: &str) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+/// GNOME exposes "Do Not Disturb" as the *inverse* of
+/// `org.gnome.desktop.notifications show-banners`: when banners are
+/// turned off, DnD is on. `gsettings get` prints the GVariant literal
+/// `true` / `false` (with a trailing newline). Anything we can't parse as
+/// an explicit `false` is treated as "banners on" → DnD off, so a missing
+/// key or unexpected output fails safe (breaks keep firing).
+///
+/// Un-gated so it's unit-tested on every OS; only `linux::check` calls it
+/// in a non-test build.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_gnome_show_banners_dnd(gsettings_output: &str) -> bool {
+    gsettings_output.trim() == "false"
+}
+
+/// KDE Plasma exposes DnD as the boolean `Inhibited` property on
+/// `org.freedesktop.Notifications`. Read via
+/// `gdbus call … org.freedesktop.DBus.Properties.Get`, the reply is a
+/// GVariant tuple wrapping a variant, e.g. `(<true>,)` or `(<false>,)`.
+/// True only when the wrapped value is `true`; any other / unparseable
+/// output fails safe to `false`.
+///
+/// Un-gated so it's unit-tested on every OS; only `linux::check` calls it
+/// in a non-test build.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_kde_inhibited(gdbus_output: &str) -> bool {
+    gdbus_output.contains("<true>") || gdbus_output.trim() == "(true,)"
 }
 
 #[cfg(target_os = "macos")]
@@ -145,6 +175,71 @@ mod windows {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::process::Command;
+
+    use super::{parse_gnome_show_banners_dnd, parse_kde_inhibited};
+
+    // Absolute paths so a planted `gsettings` / `gdbus` earlier in `$PATH`
+    // can't intercept the probe. These are the canonical locations on the
+    // distros we target; if a session ships them elsewhere the command
+    // simply fails and we fail safe to "DnD off".
+    pub(super) const GSETTINGS_BIN: &str = "/usr/bin/gsettings";
+    pub(super) const GDBUS_BIN: &str = "/usr/bin/gdbus";
+
+    // GNOME is the most common case, so try it first; fall through to the
+    // KDE property only if GNOME didn't report DnD on. Either probe failing
+    // (tool missing, not that desktop) just yields `false` — there's no
+    // portable cross-desktop DnD signal, so unknown environments fail safe.
+    pub fn check() -> bool {
+        gnome_dnd_active() || kde_dnd_active()
+    }
+
+    fn gnome_dnd_active() -> bool {
+        let Ok(output) = Command::new(GSETTINGS_BIN)
+            .args(["get", "org.gnome.desktop.notifications", "show-banners"])
+            .output()
+        else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        let Ok(text) = std::str::from_utf8(&output.stdout) else {
+            return false;
+        };
+        parse_gnome_show_banners_dnd(text)
+    }
+
+    fn kde_dnd_active() -> bool {
+        let Ok(output) = Command::new(GDBUS_BIN)
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                "org.freedesktop.Notifications",
+                "--object-path",
+                "/org/freedesktop/Notifications",
+                "--method",
+                "org.freedesktop.DBus.Properties.Get",
+                "org.freedesktop.Notifications",
+                "Inhibited",
+            ])
+            .output()
+        else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        let Ok(text) = std::str::from_utf8(&output.stdout) else {
+            return false;
+        };
+        parse_kde_inhibited(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_assertions_active;
@@ -184,5 +279,59 @@ mod tests {
     fn malformed_json_means_inactive() {
         assert!(!parse_assertions_active("not json at all"));
         assert!(!parse_assertions_active(""));
+    }
+
+    use super::{parse_gnome_show_banners_dnd, parse_kde_inhibited};
+
+    #[test]
+    fn gnome_banners_false_means_dnd_on() {
+        // gsettings prints the GVariant literal with a trailing newline.
+        assert!(parse_gnome_show_banners_dnd("false\n"));
+        assert!(parse_gnome_show_banners_dnd("false"));
+    }
+
+    #[test]
+    fn gnome_banners_true_means_dnd_off() {
+        assert!(!parse_gnome_show_banners_dnd("true\n"));
+    }
+
+    #[test]
+    fn gnome_unexpected_output_fails_safe_to_off() {
+        assert!(!parse_gnome_show_banners_dnd(""));
+        assert!(!parse_gnome_show_banners_dnd(
+            "No such key 'show-banners'\n"
+        ));
+    }
+
+    #[test]
+    fn kde_inhibited_true_means_dnd_on() {
+        // gdbus reply for the Properties.Get of a boolean property.
+        assert!(parse_kde_inhibited("(<true>,)\n"));
+    }
+
+    #[test]
+    fn kde_inhibited_false_means_dnd_off() {
+        assert!(!parse_kde_inhibited("(<false>,)\n"));
+    }
+
+    #[test]
+    fn kde_unexpected_output_fails_safe_to_off() {
+        assert!(!parse_kde_inhibited(""));
+        assert!(!parse_kde_inhibited("Error: no such property\n"));
+    }
+}
+
+// Absolute-path sanity for the Linux probe binaries. Gated because the
+// consts only exist on Linux (mirrors the *_bin_tests in camera/video).
+#[cfg(all(test, target_os = "linux"))]
+mod linux_bin_tests {
+    use super::linux::{GDBUS_BIN, GSETTINGS_BIN};
+
+    #[test]
+    fn probe_bins_are_absolute_and_non_empty() {
+        for bin in [GSETTINGS_BIN, GDBUS_BIN] {
+            assert!(!bin.is_empty());
+            assert!(bin.starts_with('/'), "expected absolute path, got {bin}");
+        }
     }
 }
