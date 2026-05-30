@@ -1,9 +1,9 @@
 cask "entracte" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.0.1"
-  sha256 arm:   "d747837c3bd91613cf4e8c37b027ddab17632f330606e6e5d92c34ac9e8c0d05",
-         intel: "489799abb289cb4b631a49535a85ee45975519b96dc7bc8e446edefec55579c5"
+  version "0.0.2"
+  sha256 arm:   "d7057c96c27ded2620a8ef19acc6e750f73cebbbf6b128442203fad9ef1e30da",
+         intel: "60a83c4ea636ee03cdf93f41df388bc62b5346c9aebcc833f87b240f5c6fc7de"
 
   url "https://github.com/drmowinckels/entracte/releases/download/v#{version}/Entracte_#{version}_#{arch}.dmg",
       verified: "github.com/drmowinckels/entracte/"
