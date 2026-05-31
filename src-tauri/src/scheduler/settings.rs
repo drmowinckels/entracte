@@ -951,6 +951,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn schedule_mode_helpers_match_interval_fixed_and_both() {
         let mut s = Settings::default();
 
@@ -972,6 +973,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn schedule_mode_helpers_reject_unknown_and_sleep() {
         let mut s = Settings::default();
         s.micro_schedule_mode = "garbage".into();
