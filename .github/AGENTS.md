@@ -84,12 +84,12 @@ Helper components in [src/views/settings/components/rows.tsx](../src/views/setti
 
 ## Per-OS detection
 
-| Feature | macOS                                                         | Windows                                                 | Linux                                                    |
-| ------- | ------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
-| DnD     | `~/Library/DoNotDisturb/DB/Assertions.json` poll              | WNF `NtQueryWnfStateData` (state `0xA3BC1875_A3BC0875`) | not implemented                                          |
-| Camera  | `log stream` event-driven                                     | `HKCU\…\ConsentStore\webcam` poll (2s)                  | walk `/proc/<pid>/fd/*` for `/dev/video*` (2s)           |
-| Idle    | `user-idle` crate (CGEventSourceSeconds…)                     | `user-idle` (GetLastInputInfo)                          | `user-idle` X11; Wayland is unreliable                   |
-| Video   | `pmset -g assertions` `PreventUserIdleDisplaySleep` poll (2s) | `powercfg /requests` DISPLAY section poll (2s)          | `systemd-inhibit --list` poll (2s), match WHAT == `idle` |
+| Feature | macOS                                                         | Windows                                                 | Linux                                                                                   |
+| ------- | ------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| DnD     | `~/Library/DoNotDisturb/DB/Assertions.json` poll              | WNF `NtQueryWnfStateData` (state `0xA3BC1875_A3BC0875`) | GNOME `gsettings … show-banners` (inverted), else KDE `Inhibited` DBus prop via `gdbus` |
+| Camera  | `log stream` event-driven                                     | `HKCU\…\ConsentStore\webcam` poll (2s)                  | walk `/proc/<pid>/fd/*` for `/dev/video*` (2s)                                          |
+| Idle    | `user-idle` crate (CGEventSourceSeconds…)                     | `user-idle` (GetLastInputInfo)                          | `user-idle` X11; Wayland is unreliable                                                  |
+| Video   | `pmset -g assertions` `PreventUserIdleDisplaySleep` poll (2s) | `powercfg /requests` DISPLAY section poll (2s)          | `systemd-inhibit --list` poll (2s), match WHAT == `idle`                                |
 
 The Windows WNF state name is the part most likely to need empirical verification — if Focus Assist toggling doesn't pause breaks on a Windows build, that constant is the first thing to check.
 
@@ -223,7 +223,7 @@ Configure these to enable signed/notarized builds. The workflow runs without the
 ## Known gaps / next moves
 
 - **Auto-installing updater**: [updater.rs](../src-tauri/src/updater.rs) is a manual GitHub-releases version check, not the Tauri auto-updater plugin. Notarization (macOS) and signed-updater wiring is the remaining work.
-- **Linux DnD**: would need per-DE handling (GNOME `gsettings`, KDE DBus). Currently the checkbox is greyed with `(macOS/Windows only)`.
+- **Linux DnD**: implemented for GNOME (`gsettings get org.gnome.desktop.notifications show-banners`, inverted) and KDE (the `Inhibited` DBus property on `org.freedesktop.Notifications`, read via `gdbus`). Other desktops fall through to "off" — no portable cross-DE DnD signal exists, so they fail safe. Both probes shell out and feed pure parsers (`parse_gnome_show_banners_dnd`, `parse_kde_inhibited`) that are unit-tested on every OS.
 - **Wayland idle detection**: known flaky; X11-only Linux support may be the practical limit short-term.
 
 ## Things that have bitten me

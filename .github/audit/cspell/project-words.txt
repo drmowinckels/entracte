@@ -54,6 +54,7 @@ Lemon
 appimage
 AppImage
 gsettings
+gdbus
 WebKit
 WebView
 webview

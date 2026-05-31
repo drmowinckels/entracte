@@ -42,8 +42,7 @@ export function QuietTab({
           label="Do Not Disturb is on"
           value={settings.pause_during_dnd}
           onChange={(v) => update("pause_during_dnd", v)}
-          onlyOn={["macos", "windows"]}
-          tip="Reads your OS-level DnD / Focus state. When on, scheduled breaks are suppressed until DnD turns off."
+          tip="Reads your OS-level DnD / Focus state (macOS, Windows, and GNOME/KDE on Linux). When on, scheduled breaks are suppressed until DnD turns off."
         />
         <CheckboxRow
           label="Camera is in use"
