@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
 import { formatClockList, parseClockList } from "../../../lib/clock-list";
+import { useLocalDraft } from "../../../lib/use-local-draft";
 import { formatScreenTime, progressPercent } from "../../../lib/screen-time";
 import { Advanced } from "../components/advanced";
 import { BreakModeRow } from "../components/break-mode-row";
@@ -22,23 +22,14 @@ export function ScheduleTab({
   supporter: SupporterStatus;
 }) {
   const isSupporter = supporter.is_supporter;
-  const [microFixedTimesText, setMicroFixedTimesText] = useState(
-    formatClockList(settings.micro_fixed_times, settings.clock_format),
+  const [microFixedTimesText, setMicroFixedTimesText] = useLocalDraft(
+    () => formatClockList(settings.micro_fixed_times, settings.clock_format),
+    [settings.micro_fixed_times, settings.clock_format],
   );
-  const [longFixedTimesText, setLongFixedTimesText] = useState(
-    formatClockList(settings.long_fixed_times, settings.clock_format),
+  const [longFixedTimesText, setLongFixedTimesText] = useLocalDraft(
+    () => formatClockList(settings.long_fixed_times, settings.clock_format),
+    [settings.long_fixed_times, settings.clock_format],
   );
-
-  useEffect(() => {
-    setMicroFixedTimesText(
-      formatClockList(settings.micro_fixed_times, settings.clock_format),
-    );
-  }, [settings.micro_fixed_times, settings.clock_format]);
-  useEffect(() => {
-    setLongFixedTimesText(
-      formatClockList(settings.long_fixed_times, settings.clock_format),
-    );
-  }, [settings.long_fixed_times, settings.clock_format]);
 
   const screenTime = useScreenTime(settings.daily_screen_time_enabled);
 

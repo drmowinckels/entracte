@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
 import {
   clampCsvToDark,
   hexToRgbCsv,
   normalizeHexInput,
   rgbCsvToHex,
 } from "../../../lib/color";
+import { useLocalDraft } from "../../../lib/use-local-draft";
 import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
 import { InfoTip } from "../components/info-tip";
@@ -32,38 +32,35 @@ export function BreaksTab({
   supporter: SupporterStatus;
 }) {
   const isSupporter = supporter.is_supporter;
-  const [microPhysical, setMicroPhysical] = useState(
-    listToLines(settings.micro_physical_hints),
+  // Local drafts re-seed when the active profile swaps the setting out.
+  const [microPhysical, setMicroPhysical] = useLocalDraft(
+    () => listToLines(settings.micro_physical_hints),
+    [settings.micro_physical_hints],
   );
-  const [microPsychological, setMicroPsychological] = useState(
-    listToLines(settings.micro_psychological_hints),
+  const [microPsychological, setMicroPsychological] = useLocalDraft(
+    () => listToLines(settings.micro_psychological_hints),
+    [settings.micro_psychological_hints],
   );
-  const [longSolo, setLongSolo] = useState(listToLines(settings.long_hints));
-  const [longSocial, setLongSocial] = useState(
-    listToLines(settings.long_social_hints),
+  const [longSolo, setLongSolo] = useLocalDraft(
+    () => listToLines(settings.long_hints),
+    [settings.long_hints],
   );
-  const [sleep, setSleep] = useState(listToLines(settings.sleep_hints));
-  const [customCss, setCustomCss] = useState(settings.custom_css);
+  const [longSocial, setLongSocial] = useLocalDraft(
+    () => listToLines(settings.long_social_hints),
+    [settings.long_social_hints],
+  );
+  const [sleep, setSleep] = useLocalDraft(
+    () => listToLines(settings.sleep_hints),
+    [settings.sleep_hints],
+  );
+  const [customCss, setCustomCss] = useLocalDraft(
+    () => settings.custom_css,
+    [settings.custom_css],
+  );
 
-  // Re-seed when the active profile changes underneath us.
-  useEffect(() => {
-    setMicroPhysical(listToLines(settings.micro_physical_hints));
-  }, [settings.micro_physical_hints]);
-  useEffect(() => {
-    setMicroPsychological(listToLines(settings.micro_psychological_hints));
-  }, [settings.micro_psychological_hints]);
-  useEffect(() => {
-    setLongSolo(listToLines(settings.long_hints));
-  }, [settings.long_hints]);
-  useEffect(() => {
-    setLongSocial(listToLines(settings.long_social_hints));
-  }, [settings.long_social_hints]);
-  useEffect(() => {
-    setSleep(listToLines(settings.sleep_hints));
-  }, [settings.sleep_hints]);
-  useEffect(() => {
-    setCustomCss(settings.custom_css);
-  }, [settings.custom_css]);
+  const transparencyPct = Math.round((1 - settings.overlay_opacity) * 100);
+  const fontScalePct = Math.round(settings.overlay_font_scale * 100);
+  const soundVolumePct = Math.round(settings.sound_volume * 100);
 
   return (
     <>
@@ -80,14 +77,12 @@ export function BreaksTab({
               min={0}
               max={20}
               step={1}
-              value={Math.round((1 - settings.overlay_opacity) * 100)}
+              value={transparencyPct}
               onChange={(e) =>
                 update("overlay_opacity", 1 - Number(e.target.value) / 100)
               }
             />
-            <span className="range-value">
-              {Math.round((1 - settings.overlay_opacity) * 100)}%
-            </span>
+            <span className="range-value">{transparencyPct}%</span>
           </span>
         </label>
         <label className="row">
@@ -98,14 +93,12 @@ export function BreaksTab({
               min={80}
               max={160}
               step={5}
-              value={Math.round(settings.overlay_font_scale * 100)}
+              value={fontScalePct}
               onChange={(e) =>
                 update("overlay_font_scale", Number(e.target.value) / 100)
               }
             />
-            <span className="range-value">
-              {Math.round(settings.overlay_font_scale * 100)}%
-            </span>
+            <span className="range-value">{fontScalePct}%</span>
           </span>
         </label>
         <label className="row">
@@ -273,14 +266,12 @@ export function BreaksTab({
               min={0}
               max={100}
               step={1}
-              value={Math.round(settings.sound_volume * 100)}
+              value={soundVolumePct}
               onChange={(e) =>
                 update("sound_volume", Number(e.target.value) / 100)
               }
             />
-            <span className="range-value">
-              {Math.round(settings.sound_volume * 100)}%
-            </span>
+            <span className="range-value">{soundVolumePct}%</span>
           </span>
         </label>
       </section>

@@ -326,13 +326,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
 
         let long_fixed_due = s.long_enabled
-            && matches!(s.long_schedule_mode.as_str(), "fixed" | "both")
+            && s.fixed_active(BreakKind::Long)
             && s.long_fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
                 .any(|m| m == now_min);
         let micro_fixed_due = s.micro_enabled
-            && matches!(s.micro_schedule_mode.as_str(), "fixed" | "both")
+            && s.fixed_active(BreakKind::Micro)
             && s.micro_fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
@@ -358,39 +358,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             };
             // Fixed-time fires bypass the idle gate: the clock is the signal, not user activity.
             if fire_long {
-                let enforceable = s.long_enforceable || s.strict_mode;
-                let intensity = sched.stats.lock().await.intensity();
-                let delivery = delivery_for(BreakKind::Long, &s);
-                deliver_break(
-                    &app,
-                    &sched.current_break,
-                    BreakEvent {
-                        kind: BreakKind::Long,
-                        duration_secs: s.long_duration_secs,
-                        enforceable,
-                        manual_finish: s.long_manual_finish,
-                        postpone_available: s.postpone_enabled && !s.strict_mode,
-                        hints: effective_long_hints(&s),
-                        hint_rotate_seconds: s.hint_rotate_seconds,
-                        health_intensity: if s.break_health_enabled {
-                            intensity
-                        } else {
-                            0.0
-                        },
-                    },
-                    delivery,
-                    s.monitor_placement,
-                );
-                hooks::run_hooks(
-                    &s,
-                    HookEvent::BreakStart,
-                    HookContext::with_kind_duration(BreakKind::Long, s.long_duration_secs),
-                );
-                sched.logger.log(EventPayload::BreakStart {
-                    kind: BreakKind::Long,
-                    duration_secs: s.long_duration_secs,
-                    enforceable,
-                });
+                let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Long).await;
                 let mut t = sched.timers.lock().await;
                 t.last_long = Instant::now();
                 t.last_micro = Instant::now();
@@ -405,39 +373,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 continue;
             }
             if fire_micro {
-                let enforceable = s.micro_enforceable || s.strict_mode;
-                let intensity = sched.stats.lock().await.intensity();
-                let delivery = delivery_for(BreakKind::Micro, &s);
-                deliver_break(
-                    &app,
-                    &sched.current_break,
-                    BreakEvent {
-                        kind: BreakKind::Micro,
-                        duration_secs: s.micro_duration_secs,
-                        enforceable,
-                        manual_finish: s.micro_manual_finish,
-                        postpone_available: s.postpone_enabled && !s.strict_mode,
-                        hints: effective_micro_hints(&s),
-                        hint_rotate_seconds: s.hint_rotate_seconds,
-                        health_intensity: if s.break_health_enabled {
-                            intensity
-                        } else {
-                            0.0
-                        },
-                    },
-                    delivery,
-                    s.monitor_placement,
-                );
-                hooks::run_hooks(
-                    &s,
-                    HookEvent::BreakStart,
-                    HookContext::with_kind_duration(BreakKind::Micro, s.micro_duration_secs),
-                );
-                sched.logger.log(EventPayload::BreakStart {
-                    kind: BreakKind::Micro,
-                    duration_secs: s.micro_duration_secs,
-                    enforceable,
-                });
+                let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Micro).await;
                 let mut t = sched.timers.lock().await;
                 t.last_micro = Instant::now();
                 t.micro_warned = false;
@@ -450,8 +386,8 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             }
         }
 
-        let micro_interval_active = matches!(s.micro_schedule_mode.as_str(), "interval" | "both");
-        let long_interval_active = matches!(s.long_schedule_mode.as_str(), "interval" | "both");
+        let micro_interval_active = s.interval_active(BreakKind::Micro);
+        let long_interval_active = s.interval_active(BreakKind::Long);
 
         let (micro_idle_suppressed, long_idle_suppressed) = (
             idle_secs >= s.micro_idle_reset_secs,
@@ -580,39 +516,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
 
         if should_fire_long {
-            let enforceable = s.long_enforceable || s.strict_mode;
-            let intensity = sched.stats.lock().await.intensity();
-            let delivery = delivery_for(BreakKind::Long, &s);
-            deliver_break(
-                &app,
-                &sched.current_break,
-                BreakEvent {
-                    kind: BreakKind::Long,
-                    duration_secs: s.long_duration_secs,
-                    enforceable,
-                    manual_finish: s.long_manual_finish,
-                    postpone_available: s.postpone_enabled && !s.strict_mode,
-                    hints: effective_long_hints(&s),
-                    hint_rotate_seconds: s.hint_rotate_seconds,
-                    health_intensity: if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
-                    },
-                },
-                delivery,
-                s.monitor_placement,
-            );
-            hooks::run_hooks(
-                &s,
-                HookEvent::BreakStart,
-                HookContext::with_kind_duration(BreakKind::Long, s.long_duration_secs),
-            );
-            sched.logger.log(EventPayload::BreakStart {
-                kind: BreakKind::Long,
-                duration_secs: s.long_duration_secs,
-                enforceable,
-            });
+            let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Long).await;
             let mut t = sched.timers.lock().await;
             t.last_long = Instant::now();
             t.last_micro = Instant::now();
@@ -624,39 +528,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 t.active_break = Some(BreakKind::Long);
             }
         } else if should_fire_micro {
-            let enforceable = s.micro_enforceable || s.strict_mode;
-            let intensity = sched.stats.lock().await.intensity();
-            let delivery = delivery_for(BreakKind::Micro, &s);
-            deliver_break(
-                &app,
-                &sched.current_break,
-                BreakEvent {
-                    kind: BreakKind::Micro,
-                    duration_secs: s.micro_duration_secs,
-                    enforceable,
-                    manual_finish: s.micro_manual_finish,
-                    postpone_available: s.postpone_enabled && !s.strict_mode,
-                    hints: effective_micro_hints(&s),
-                    hint_rotate_seconds: s.hint_rotate_seconds,
-                    health_intensity: if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
-                    },
-                },
-                delivery,
-                s.monitor_placement,
-            );
-            hooks::run_hooks(
-                &s,
-                HookEvent::BreakStart,
-                HookContext::with_kind_duration(BreakKind::Micro, s.micro_duration_secs),
-            );
-            sched.logger.log(EventPayload::BreakStart {
-                kind: BreakKind::Micro,
-                duration_secs: s.micro_duration_secs,
-                enforceable,
-            });
+            let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Micro).await;
             let mut t = sched.timers.lock().await;
             t.last_micro = Instant::now();
             t.micro_warned = false;
@@ -666,6 +538,72 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             }
         }
     }
+}
+
+/// Build and surface a scheduled micro/long break: resolve the per-kind
+/// content from `s`, deliver it through the configured channel, fire the
+/// `BreakStart` hook, and log the event. Returns the resolved delivery so
+/// the caller can decide whether to mark an `active_break`.
+///
+/// Timer bookkeeping stays with the caller: fixed-time and interval fires
+/// reset different timer fields, so folding them in here would just move
+/// the divergence. `Sleep` goes through the bedtime path's own
+/// `overlay::fire_break` (different postpone semantics) and never reaches
+/// this helper.
+async fn deliver_scheduled_break(
+    app: &AppHandle,
+    sched: &Scheduler,
+    s: &Settings,
+    kind: BreakKind,
+) -> BreakDelivery {
+    let (duration_secs, enforceable, manual_finish, hints) = match kind {
+        BreakKind::Long => (
+            s.long_duration_secs,
+            s.long_enforceable || s.strict_mode,
+            s.long_manual_finish,
+            effective_long_hints(s),
+        ),
+        BreakKind::Micro => (
+            s.micro_duration_secs,
+            s.micro_enforceable || s.strict_mode,
+            s.micro_manual_finish,
+            effective_micro_hints(s),
+        ),
+        BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
+    };
+    let intensity = sched.stats.lock().await.intensity();
+    let delivery = delivery_for(kind, s);
+    deliver_break(
+        app,
+        &sched.current_break,
+        BreakEvent {
+            kind,
+            duration_secs,
+            enforceable,
+            manual_finish,
+            postpone_available: s.postpone_enabled && !s.strict_mode,
+            hints,
+            hint_rotate_seconds: s.hint_rotate_seconds,
+            health_intensity: if s.break_health_enabled {
+                intensity
+            } else {
+                0.0
+            },
+        },
+        delivery,
+        s.monitor_placement,
+    );
+    hooks::run_hooks(
+        s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(kind, duration_secs),
+    );
+    sched.logger.log(EventPayload::BreakStart {
+        kind,
+        duration_secs,
+        enforceable,
+    });
+    delivery
 }
 
 /// Rate-limit window for repeated `UserIdle::get_time` failure warnings.
