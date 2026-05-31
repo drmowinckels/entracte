@@ -36,7 +36,7 @@ body.overlay-window {
   max-width: 32rem;
   margin: 3rem auto;
   padding: 1.5rem 2rem;
-  background: rgba(20, 24, 32, 0.92);
+  background: rgb(20 24 32 / 92%);
   color: #f1f5f9;
   border-radius: 12px;
   font-family:
@@ -44,35 +44,41 @@ body.overlay-window {
     -apple-system,
     sans-serif;
 }
+
 .error-boundary h2 {
   margin: 0 0 0.5rem;
   font-size: 1.2rem;
 }
+
 .error-boundary p {
   margin: 0 0 1rem;
   opacity: 0.85;
 }
+
 .error-boundary-message {
-  background: rgba(0, 0, 0, 0.35);
+  background: rgb(0 0 0 / 35%);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   font-size: 0.85rem;
   overflow-x: auto;
   max-height: 8rem;
 }
+
 .error-boundary-actions {
   display: flex;
   gap: 0.75rem;
   margin-top: 1rem;
 }
+
 .error-boundary-actions button {
   padding: 0.45rem 0.95rem;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(255 255 255 / 18%);
+  background: rgb(255 255 255 / 8%);
   color: inherit;
   cursor: pointer;
 }
+
 .error-boundary-actions button.secondary {
   background: transparent;
 }

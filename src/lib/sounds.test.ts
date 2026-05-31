@@ -92,6 +92,8 @@ class FakeAudio {
     this.src = url;
     this.play = vi.fn(FakeAudio.playBehavior);
     createdAudios.push(this);
+    // Test fake tracks its own latest instance so assertions can reach it.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     lastAudio = this;
   }
 

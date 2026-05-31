@@ -53,6 +53,10 @@ export function ProfilesTab({ profiles }: { profiles: UseProfiles }) {
                     type="text"
                     aria-label="Profile name"
                     value={draft}
+                    // Autofocus is appropriate here: the field appears in
+                    // response to a user clicking "rename", not on page
+                    // load, so focusing it is expected, not disorienting.
+                    // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
                     onChange={(e) => profiles.setRenameDraft(name, e.target.value)}
                     onKeyDown={(e) => {

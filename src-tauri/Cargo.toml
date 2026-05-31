@@ -8,6 +8,15 @@ repository = "https://github.com/drmowinckels/entracte"
 edition = "2021"
 default-run = "entracte"
 
+# Mirror CI's `clippy -- -D warnings` so local `cargo clippy`/`cargo build`
+# enforce the same gate. Item-level `#[allow(...)]` still overrides where a
+# lint is deliberately suppressed.
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = "deny"
+
 [lib]
 name = "entracte_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

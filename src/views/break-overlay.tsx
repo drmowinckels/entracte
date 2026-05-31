@@ -214,6 +214,10 @@ export default function BreakOverlay() {
           <p
             className="overlay-hint"
             role="note"
+            // Deliberately focusable: the overlay traps focus, so keyboard
+            // and screen-reader users can only reach the wellness tip if
+            // it sits in the tab order.
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
             tabIndex={0}
             aria-label={`Wellness tip: ${hintText}`}
           >
