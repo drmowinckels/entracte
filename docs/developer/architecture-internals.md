@@ -200,15 +200,23 @@ The backend → renderer / tray surface is just Tauri events. The renderer subsc
 
 The renderer has two windows and each has a documented assistive-technology surface. Keep these contracts intact when touching the relevant files — they're tested at the unit level and gated by [`scripts/audit-a11y.mjs`](https://github.com/drmowinckels/entracte/blob/main/scripts/audit-a11y.mjs) at the structural level.
 
+### Document titles
+
+The [`window-kind`](https://github.com/drmowinckels/entracte/blob/main/src/lib/window-kind.ts) helper resolves `?window=` once per webview and exposes a `titleForWindow` mapping. [`App.tsx`](https://github.com/drmowinckels/entracte/blob/main/src/App.tsx) sets `document.title` from it on mount so VoiceOver announces the window's purpose when focus enters it. The HTML `<title>` in [`index.html`](https://github.com/drmowinckels/entracte/blob/main/index.html) is just `"Entracte"` — the React layer overrides it with the kind-specific title.
+
 ### Settings window
 
 The Settings window follows the W3C [Tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/) with automatic activation. The shell lives in [`src/views/settings/index.tsx`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/index.tsx) and the keyboard controller in [`src/views/settings/hooks/use-roving-tab-list.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/settings/hooks/use-roving-tab-list.ts).
 
+A `Skip to settings content` link is the first focusable element of the shell. It is visually hidden via `transform: translateY(-200%)` until `:focus-visible`, then jumps to the **active tabpanel's id** so focus lands directly on content (no intermediate wrapper). Its `href` tracks the active tab via `tabPanelId(tab)`.
+
+All seven tabpanels render at all times with the inactive ones `hidden` — this keeps every tab's `aria-controls` pointing at an element that exists in the DOM, as required by the W3C APG Tabs pattern.
+
 | Element        | Role       | Required attrs                                                                                        |
 | -------------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| `<nav>`        | `tablist`  | `aria-label="Settings sections"`, `aria-orientation="horizontal"`                                     |
+| `<div>` tabs   | `tablist`  | `aria-label="Settings sections"`, `aria-orientation="horizontal"`                                     |
 | Tab `<button>` | `tab`      | `aria-selected`, `aria-controls={panel-id}`, `id={tab-id}`, roving `tabindex` (0 active, -1 inactive) |
-| `<div>` panel  | `tabpanel` | `aria-labelledby={tab-id}`, `id={panel-id}`, `tabindex={0}` so the panel is reachable when empty      |
+| `<div>` panel  | `tabpanel` | `aria-labelledby={tab-id}`, `id={panel-id}`, `tabindex={0}`, `hidden` on inactive panels              |
 
 Keyboard:
 
