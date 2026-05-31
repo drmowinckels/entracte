@@ -131,7 +131,8 @@ export function useCountdown(
   // Clear a pending dismiss on unmount so it can't fire on a dead component.
   useEffect(() => {
     return () => {
-      if (dismissTimerRef.current !== null) clearTimeout(dismissTimerRef.current);
+      if (dismissTimerRef.current !== null)
+        clearTimeout(dismissTimerRef.current);
     };
   }, []);
 

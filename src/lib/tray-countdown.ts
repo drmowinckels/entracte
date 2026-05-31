@@ -17,7 +17,10 @@ export function formatTrayCountdown(secs: number): string {
 export type TrayCountdownTarget = "next" | "short" | "long";
 
 /** Options for the tray-countdown target dropdown on the System tab. */
-export const TRAY_COUNTDOWN_TARGETS: { id: TrayCountdownTarget; label: string }[] = [
+export const TRAY_COUNTDOWN_TARGETS: {
+  id: TrayCountdownTarget;
+  label: string;
+}[] = [
   { id: "next", label: "Next break (soonest)" },
   { id: "short", label: "Next micro break" },
   { id: "long", label: "Next long break" },

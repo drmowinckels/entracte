@@ -7,8 +7,8 @@ export function ProfilesTab({ profiles }: { profiles: UseProfiles }) {
       <section>
         <p className="placeholder">
           Each profile keeps its own break cadence, hints, and overlay settings.
-          Switching is instant. The active profile drives every other tab here, and
-          appears in the tray under "Active profile".
+          Switching is instant. The active profile drives every other tab here,
+          and appears in the tray under "Active profile".
         </p>
         {profiles.profileError && (
           <p className="profile-error">{profiles.profileError}</p>
@@ -58,10 +58,13 @@ export function ProfilesTab({ profiles }: { profiles: UseProfiles }) {
                     // load, so focusing it is expected, not disorienting.
                     // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
-                    onChange={(e) => profiles.setRenameDraft(name, e.target.value)}
+                    onChange={(e) =>
+                      profiles.setRenameDraft(name, e.target.value)
+                    }
                     onKeyDown={(e) => {
                       if (e.key === "Enter") profiles.rename(name);
-                      if (e.key === "Escape") profiles.setRenameDraft(name, null);
+                      if (e.key === "Escape")
+                        profiles.setRenameDraft(name, null);
                     }}
                     onBlur={() => profiles.rename(name)}
                   />

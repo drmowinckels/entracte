@@ -31,6 +31,10 @@ describe("formatTrayCountdown", () => {
 
 describe("TRAY_COUNTDOWN_TARGETS", () => {
   it("exposes the three documented choices", () => {
-    expect(TRAY_COUNTDOWN_TARGETS.map((t) => t.id)).toEqual(["next", "short", "long"]);
+    expect(TRAY_COUNTDOWN_TARGETS.map((t) => t.id)).toEqual([
+      "next",
+      "short",
+      "long",
+    ]);
   });
 });

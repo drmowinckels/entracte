@@ -49,9 +49,7 @@ describe("WeekdayHistogram", () => {
     expect(document.querySelector('[title="Tue: 5 taken"]')).not.toBeNull();
     expect(document.querySelector('[title="Tue: 0 dismissed"]')).not.toBeNull();
     expect(document.querySelector('[title="Sat: 0 taken"]')).not.toBeNull();
-    expect(
-      document.querySelector('[title="Sat: 0 dismissed"]'),
-    ).not.toBeNull();
+    expect(document.querySelector('[title="Sat: 0 dismissed"]')).not.toBeNull();
   });
 
   it("never divides by zero when every day is empty", () => {

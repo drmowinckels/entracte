@@ -23,9 +23,13 @@ describe("SuppressionBars", () => {
       />,
     );
     expect(screen.getAllByRole("row")).toHaveLength(2);
-    const dnd = screen.getByRole("cell", { name: /Do Not Disturb: 6 suppressions/ });
+    const dnd = screen.getByRole("cell", {
+      name: /Do Not Disturb: 6 suppressions/,
+    });
     expect(dnd).toBeTruthy();
-    const camera = screen.getByRole("cell", { name: /Camera in use: 3 suppressions/ });
+    const camera = screen.getByRole("cell", {
+      name: /Camera in use: 3 suppressions/,
+    });
     expect(camera).toBeTruthy();
   });
 
@@ -44,11 +48,14 @@ describe("SuppressionBars", () => {
     expect(bars[0].style.getPropertyValue("--bar-width")).toBe("100%");
     expect(bars[1].style.getPropertyValue("--bar-width")).toBe("50%");
 
-    const dndSegments = bars[0].querySelectorAll<HTMLElement>(".suppression-seg");
+    const dndSegments =
+      bars[0].querySelectorAll<HTMLElement>(".suppression-seg");
     const micro = Array.from(dndSegments).find(
       (s) => s.dataset.kind === "micro",
     )!;
-    const long = Array.from(dndSegments).find((s) => s.dataset.kind === "long")!;
+    const long = Array.from(dndSegments).find(
+      (s) => s.dataset.kind === "long",
+    )!;
     expect(micro.style.getPropertyValue("--seg-width")).toBe("20%");
     expect(long.style.getPropertyValue("--seg-width")).toBe("80%");
   });
@@ -69,9 +76,7 @@ describe("SuppressionBars", () => {
   it("labels each segment with kind + reason + count for hover", () => {
     render(
       <SuppressionBars
-        rows={[
-          { kind: "micro", reason: "idle", label: "Idle", count: 7 },
-        ]}
+        rows={[{ kind: "micro", reason: "idle", label: "Idle", count: 7 }]}
       />,
     );
     expect(document.querySelector('[title="Micro — Idle: 7"]')).not.toBeNull();

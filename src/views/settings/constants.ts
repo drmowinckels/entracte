@@ -1,9 +1,4 @@
-import type {
-  BreakSoundMode,
-  HookEvent,
-  MonitorPlacement,
-  Tab,
-} from "./types";
+import type { BreakSoundMode, HookEvent, MonitorPlacement, Tab } from "./types";
 
 export const MONITOR_PLACEMENTS: { id: MonitorPlacement; label: string }[] = [
   { id: "primary", label: "Primary monitor" },

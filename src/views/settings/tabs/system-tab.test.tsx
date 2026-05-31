@@ -82,7 +82,9 @@ describe("SystemTab hook list", () => {
 
     render(<Harness initial={initial} />);
 
-    const before = screen.getAllByLabelText("Hook command") as HTMLInputElement[];
+    const before = screen.getAllByLabelText(
+      "Hook command",
+    ) as HTMLInputElement[];
     expect(before).toHaveLength(3);
     const middle = before[1];
     const last = before[2];
@@ -90,7 +92,9 @@ describe("SystemTab hook list", () => {
     const removeButtons = screen.getAllByRole("button", { name: "Remove" });
     await user.click(removeButtons[0]);
 
-    const after = screen.getAllByLabelText("Hook command") as HTMLInputElement[];
+    const after = screen.getAllByLabelText(
+      "Hook command",
+    ) as HTMLInputElement[];
     expect(after).toHaveLength(2);
     // With stable keys, the surviving rows keep their backing DOM nodes
     // instead of being repurposed at shifted indices (the `key={idx}` bug).
@@ -109,7 +113,9 @@ describe("SystemTab hook list", () => {
 
     render(<Harness initial={initial} />);
 
-    const inputs = screen.getAllByLabelText("Hook command") as HTMLInputElement[];
+    const inputs = screen.getAllByLabelText(
+      "Hook command",
+    ) as HTMLInputElement[];
     const target = inputs[1];
     await act(async () => {
       target.focus();
@@ -118,7 +124,9 @@ describe("SystemTab hook list", () => {
 
     await user.type(target, "hi");
 
-    const after = screen.getAllByLabelText("Hook command") as HTMLInputElement[];
+    const after = screen.getAllByLabelText(
+      "Hook command",
+    ) as HTMLInputElement[];
     expect(after[1]).toBe(target);
     expect(after[1].value).toBe("hi");
     expect(document.activeElement).toBe(target);
@@ -153,15 +161,20 @@ function buildHooks(over: Partial<UseHooks> = {}): UseHooks {
   };
 }
 
-function renderTab(opts: {
-  settings?: Partial<SchedulerSettings>;
-  hooks?: Partial<UseHooks>;
-  update?: (k: string, v: unknown) => void;
-  setAutostart?: (enabled: boolean) => Promise<void>;
-} = {}) {
+function renderTab(
+  opts: {
+    settings?: Partial<SchedulerSettings>;
+    hooks?: Partial<UseHooks>;
+    update?: (k: string, v: unknown) => void;
+    setAutostart?: (enabled: boolean) => Promise<void>;
+  } = {},
+) {
   const update = opts.update ?? vi.fn();
   const setAutostart = opts.setAutostart ?? vi.fn(async () => undefined);
-  const settings = { ...baseSettings, ...(opts.settings ?? {}) } as SchedulerSettings;
+  const settings = {
+    ...baseSettings,
+    ...(opts.settings ?? {}),
+  } as SchedulerSettings;
   const hooks = buildHooks(opts.hooks);
   const utils = render(
     <SystemTab
@@ -182,7 +195,9 @@ describe("SystemTab — Startup", () => {
     const setAutostart = vi.fn(async () => undefined);
     const update = vi.fn();
     renderTab({ setAutostart, update });
-    fireEvent.click(screen.getByRole("checkbox", { name: /start entracte at login/i }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /start entracte at login/i }),
+    );
     expect(setAutostart).toHaveBeenCalledWith(true);
     expect(update).not.toHaveBeenCalled();
   });
@@ -201,7 +216,9 @@ describe("SystemTab — Notifications", () => {
   it("lead-time input is in seconds (multiplier 1) and dispatches the typed value", () => {
     const update = vi.fn();
     renderTab({ settings: { prebreak_notification_seconds: 30 }, update });
-    const input = screen.getByRole("spinbutton", { name: /lead time/i }) as HTMLInputElement;
+    const input = screen.getByRole("spinbutton", {
+      name: /lead time/i,
+    }) as HTMLInputElement;
     expect(input.value).toBe("30");
     fireEvent.change(input, { target: { value: "45" } });
     expect(update).toHaveBeenCalledWith("prebreak_notification_seconds", 45);
@@ -261,7 +278,11 @@ describe("SystemTab — Hooks editor", () => {
     renderTab({ hooks: { draftEnabled: true, draft: [], setDraft } });
     fireEvent.click(screen.getByRole("button", { name: /add hook/i }));
     expect(setDraft).toHaveBeenCalledWith([
-      expect.objectContaining({ event: "break_start", command: "", enabled: true }),
+      expect.objectContaining({
+        event: "break_start",
+        command: "",
+        enabled: true,
+      }),
     ]);
   });
 
@@ -304,7 +325,9 @@ describe("SystemTab — Hooks editor", () => {
     const { rerender } = renderTab({
       hooks: { draftEnabled: true, draft: [], save, isDirty: () => true },
     });
-    const btn = screen.getByRole("button", { name: /save hooks/i }) as HTMLButtonElement;
+    const btn = screen.getByRole("button", {
+      name: /save hooks/i,
+    }) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
     expect(save).toHaveBeenCalledTimes(1);
@@ -343,7 +366,9 @@ describe("SystemTab — Hooks editor", () => {
         })}
       />,
     );
-    const idle = screen.getByRole("button", { name: /save hooks/i }) as HTMLButtonElement;
+    const idle = screen.getByRole("button", {
+      name: /save hooks/i,
+    }) as HTMLButtonElement;
     expect(idle.disabled).toBe(true);
   });
 

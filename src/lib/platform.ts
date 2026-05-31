@@ -18,7 +18,9 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
  * that announce themselves as Mac/Safari for compatibility, so the
  * renderer should prefer the {@link usePlatform} hook, which upgrades
  * to the authoritative Rust-side answer once it resolves. */
-export function detectPlatform(userAgent: string = navigator.userAgent): Platform {
+export function detectPlatform(
+  userAgent: string = navigator.userAgent,
+): Platform {
   const ua = userAgent.toLowerCase();
   if (ua.includes("mac")) return "macos";
   if (ua.includes("win")) return "windows";
@@ -68,7 +70,9 @@ function getPlatform(): Promise<Platform> {
  * the authoritative Rust-side answer once `get_platform` resolves.
  * Safe to call from any component. */
 export function usePlatform(): Platform {
-  const [platform, setPlatform] = useState<Platform>(() => cached ?? detectPlatform());
+  const [platform, setPlatform] = useState<Platform>(
+    () => cached ?? detectPlatform(),
+  );
   useEffect(() => {
     if (cached) return;
     let cancelled = false;

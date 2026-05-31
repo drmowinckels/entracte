@@ -19,7 +19,8 @@ describe("useTypingPause", () => {
     const invoke = vi.fn();
     const { result } = renderHook(() =>
       useTypingPause(sampleBreak, false, {
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
       }),
     );
     expect(result.current).toBe(false);
@@ -30,7 +31,8 @@ describe("useTypingPause", () => {
     const invoke = vi.fn();
     const { result } = renderHook(() =>
       useTypingPause(null, true, {
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
       }),
     );
     expect(result.current).toBe(false);
@@ -41,7 +43,8 @@ describe("useTypingPause", () => {
     const invoke = vi.fn(async () => 1);
     const { result } = renderHook(() =>
       useTypingPause(sampleBreak, true, {
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
         intervalMs: 20,
       }),
     );
@@ -54,7 +57,8 @@ describe("useTypingPause", () => {
     const invoke = vi.fn(async () => idle);
     const { result } = renderHook(() =>
       useTypingPause(sampleBreak, true, {
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
         intervalMs: 10,
       }),
     );
@@ -67,7 +71,8 @@ describe("useTypingPause", () => {
     const invoke = vi.fn(async () => 0);
     const { unmount } = renderHook(() =>
       useTypingPause(sampleBreak, true, {
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
         intervalMs: 10,
       }),
     );

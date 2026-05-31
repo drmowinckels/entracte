@@ -19,10 +19,7 @@ export function WeekdayHistogram({ days }: { days: WeekdayBucket[] }) {
               <div
                 className="weekday-bar weekday-bar-taken"
                 ref={(el) => {
-                  el?.style.setProperty(
-                    "--weekday-bar-height",
-                    `${takenPct}%`,
-                  );
+                  el?.style.setProperty("--weekday-bar-height", `${takenPct}%`);
                 }}
                 title={`${label}: ${d.taken} taken`}
               />

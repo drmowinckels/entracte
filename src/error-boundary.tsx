@@ -36,7 +36,9 @@ export class ErrorBoundary extends Component<Props, State> {
     invoke("report_renderer_error", {
       message: redactRendererPayload(error.message),
       stack: error.stack ? redactRendererPayload(error.stack) : null,
-      componentStack: info.componentStack ? redactRendererPayload(info.componentStack) : null,
+      componentStack: info.componentStack
+        ? redactRendererPayload(info.componentStack)
+        : null,
     }).catch(() => {});
   }
 
@@ -59,7 +61,9 @@ export class ErrorBoundary extends Component<Props, State> {
         <p>The window can usually recover. If it doesn't, reload.</p>
         <details className="error-boundary-details">
           <summary>Technical details</summary>
-          <pre className="error-boundary-message">{this.state.error.message}</pre>
+          <pre className="error-boundary-message">
+            {this.state.error.message}
+          </pre>
         </details>
         <div className="error-boundary-actions">
           <button onClick={this.reset}>Try again</button>
@@ -104,7 +108,8 @@ export function installGlobalRendererErrorReporters(): void {
         : typeof reason === "string"
           ? reason
           : safeJsonStringify(reason);
-    const stack = reason instanceof Error && reason.stack ? reason.stack : undefined;
+    const stack =
+      reason instanceof Error && reason.stack ? reason.stack : undefined;
     void invoke("report_renderer_error", {
       message: `[unhandledrejection] ${redactRendererPayload(message)}`,
       stack: stack ? redactRendererPayload(stack) : null,

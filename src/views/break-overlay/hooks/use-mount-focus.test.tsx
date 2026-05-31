@@ -3,13 +3,7 @@ import { describe, expect, it } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { useMountFocus } from "./use-mount-focus";
 
-function Wrapper({
-  active,
-  enabled,
-}: {
-  active: boolean;
-  enabled: boolean;
-}) {
+function Wrapper({ active, enabled }: { active: boolean; enabled: boolean }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useMountFocus(ref, active, enabled);
   return (

@@ -34,7 +34,9 @@ describe("useHintRotation", () => {
 
   it("does nothing when there is only one hint", () => {
     const setHintIndex = vi.fn();
-    renderHook(() => useHintRotation(makeBreak({ hints: ["only one"] }), setHintIndex));
+    renderHook(() =>
+      useHintRotation(makeBreak({ hints: ["only one"] }), setHintIndex),
+    );
     vi.advanceTimersByTime(60_000);
     expect(setHintIndex).not.toHaveBeenCalled();
   });
@@ -61,7 +63,9 @@ describe("useHintRotation", () => {
 
   it("clears its interval on unmount", () => {
     const setHintIndex = vi.fn();
-    const { unmount } = renderHook(() => useHintRotation(makeBreak(), setHintIndex));
+    const { unmount } = renderHook(() =>
+      useHintRotation(makeBreak(), setHintIndex),
+    );
     unmount();
     vi.advanceTimersByTime(60_000);
     expect(setHintIndex).not.toHaveBeenCalled();

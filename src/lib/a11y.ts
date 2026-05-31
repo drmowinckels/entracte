@@ -35,7 +35,10 @@ export function durationPhrase(durationSecs: number): string {
  * Non-strict breaks fold the same information into the dialog
  * description (`breakDescription`) so it is spoken once, on focus.
  */
-export function announceBreak(kind: AnnouncedKind, durationSecs: number): string {
+export function announceBreak(
+  kind: AnnouncedKind,
+  durationSecs: number,
+): string {
   return `${dialogLabel(kind)}. You have ${durationPhrase(durationSecs)}.`;
 }
 

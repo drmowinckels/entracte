@@ -94,8 +94,10 @@ export function useRovingTabList<T extends string>({
       if (current < 0) return;
       const last = ids.length - 1;
       let target: T | null = null;
-      if (event.key === prevKey) target = ids[current === 0 ? last : current - 1];
-      else if (event.key === nextKey) target = ids[current === last ? 0 : current + 1];
+      if (event.key === prevKey)
+        target = ids[current === 0 ? last : current - 1];
+      else if (event.key === nextKey)
+        target = ids[current === last ? 0 : current + 1];
       else if (event.key === "Home") target = ids[0];
       else if (event.key === "End") target = ids[last];
       if (target === null || target === undefined) return;

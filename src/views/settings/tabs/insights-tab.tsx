@@ -31,12 +31,7 @@ function DeltaChip({
   goodDirection?: "up" | "down";
 }) {
   const dir = deltaDirection(curr, prev);
-  const tone =
-    dir === "flat"
-      ? "flat"
-      : dir === goodDirection
-        ? "up"
-        : "down";
+  const tone = dir === "flat" ? "flat" : dir === goodDirection ? "up" : "down";
   return (
     <span className={`delta-chip ${tone}`} title={`Previous: ${prev}`}>
       {deltaPct(curr, prev)}
@@ -50,9 +45,10 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
   // fire on every render and re-trigger `refreshDigest` indefinitely.
   const { stats: session, digest, digestLoading, reset, refreshDigest } = stats;
   const [range, setRange] = useState<StatsRange>("week");
-  const [backupStatus, setBackupStatus] = useState<
-    { kind: "ok" | "err"; message: string } | null
-  >(null);
+  const [backupStatus, setBackupStatus] = useState<{
+    kind: "ok" | "err";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     refreshDigest(range);
@@ -231,7 +227,8 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
                 </span>
                 <span className="stat-card-label">Time paused</span>
                 <span className="stat-card-sub">
-                  {digest.pause_count} pause{digest.pause_count === 1 ? "" : "s"}
+                  {digest.pause_count} pause
+                  {digest.pause_count === 1 ? "" : "s"}
                 </span>
               </div>
               <div className="stat-card">

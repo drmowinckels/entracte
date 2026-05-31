@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { DONE_LINGER_MS, useCountdown } from "./use-countdown";
-import { DEFAULT_OVERLAY_SETTINGS, type BreakEvent, type OverlaySettings } from "../types";
+import {
+  DEFAULT_OVERLAY_SETTINGS,
+  type BreakEvent,
+  type OverlaySettings,
+} from "../types";
 
 function makeBreak(overrides: Partial<BreakEvent> = {}): BreakEvent {
   return {
@@ -39,7 +43,8 @@ describe("useCountdown", () => {
         vi.fn(),
         vi.fn(),
         {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          invoke:
+            invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
           playSound,
         },
       ),
@@ -90,7 +95,8 @@ describe("useCountdown", () => {
         setFinished,
         clearBreak,
         {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          invoke:
+            invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
           playSound,
         },
       ),
@@ -127,7 +133,8 @@ describe("useCountdown", () => {
           vi.fn(),
           clearBreak,
           {
-            invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+            invoke:
+              invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
             playSound: vi.fn(() => Promise.resolve()),
           },
         ),
@@ -159,7 +166,8 @@ describe("useCountdown", () => {
         vi.fn(),
         clearBreak,
         {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          invoke:
+            invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
           playSound: vi.fn(() => Promise.resolve()),
         },
       ),
@@ -204,7 +212,13 @@ describe("useCountdown", () => {
       micro_sound: { mode: "end_chime", sound_id: "chime-old" },
     };
     const { rerender, result } = renderHook(
-      ({ settings, remaining }: { settings: OverlaySettings; remaining: number }) =>
+      ({
+        settings,
+        remaining,
+      }: {
+        settings: OverlaySettings;
+        remaining: number;
+      }) =>
         useCountdown(
           makeBreak(),
           remaining,
@@ -214,7 +228,8 @@ describe("useCountdown", () => {
           vi.fn(),
           vi.fn(),
           {
-            invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+            invoke:
+              invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
             playSound,
           },
         ),
@@ -248,20 +263,12 @@ describe("useCountdown", () => {
       sound_volume: 0.7,
     };
     renderHook(() =>
-      useCountdown(
-        makeBreak(),
-        0,
-        false,
-        settings,
-        vi.fn(),
-        vi.fn(),
-        vi.fn(),
-        {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
-          playSound,
-          playCustomSound,
-        },
-      ),
+      useCountdown(makeBreak(), 0, false, settings, vi.fn(), vi.fn(), vi.fn(), {
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        playSound,
+        playCustomSound,
+      }),
     );
     expect(playCustomSound).toHaveBeenCalledWith("/Users/me/chime.mp3", 0.7);
     expect(playSound).not.toHaveBeenCalled();
@@ -290,7 +297,8 @@ describe("useCountdown", () => {
         vi.fn(),
         clearBreak,
         {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          invoke:
+            invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
           playSound,
           playCustomSound,
         },
@@ -318,7 +326,8 @@ describe("useCountdown", () => {
         vi.fn(),
         clearBreak,
         {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          invoke:
+            invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
           playSound: vi.fn(() => Promise.resolve()),
         },
       ),
@@ -347,7 +356,8 @@ describe("useCountdown", () => {
         vi.fn(),
         vi.fn(),
         {
-          invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+          invoke:
+            invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
           playSound,
         },
       ),

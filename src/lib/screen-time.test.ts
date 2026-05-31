@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { budgetReached, formatScreenTime, progressPercent } from "./screen-time";
+import {
+  budgetReached,
+  formatScreenTime,
+  progressPercent,
+} from "./screen-time";
 
 describe("formatScreenTime", () => {
   it("renders zero as 0m", () => {

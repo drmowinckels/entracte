@@ -76,7 +76,8 @@ export default function BreakOverlay() {
 
   useEscapeToDismiss(active, onSkip);
 
-  const highContrast = appearance.overlay_high_contrast || systemPrefersContrast();
+  const highContrast =
+    appearance.overlay_high_contrast || systemPrefersContrast();
   const opaque = highContrast || systemPrefersReducedTransparency();
   const { rootRef, ringBarRef } = useOverlayCssVars(
     active,

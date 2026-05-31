@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatRemaining, localDateString, minutesToTime, timeToMinutes } from "./time";
+import {
+  formatRemaining,
+  localDateString,
+  minutesToTime,
+  timeToMinutes,
+} from "./time";
 
 describe("minutesToTime", () => {
   it("pads single digits", () => {

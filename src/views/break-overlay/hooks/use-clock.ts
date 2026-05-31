@@ -19,7 +19,10 @@ export function useClock(
   useEffect(() => {
     if (!enabled) return;
     setClock(currentTimeString(format));
-    const id = setInterval(() => setClock(currentTimeString(format)), intervalMs);
+    const id = setInterval(
+      () => setClock(currentTimeString(format)),
+      intervalMs,
+    );
     return () => clearInterval(id);
   }, [enabled, intervalMs, format]);
   return clock;

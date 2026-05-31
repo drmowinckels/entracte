@@ -60,10 +60,7 @@ export function groupSuppressionsByReason(
       bucket = { reason: r.reason, label: r.label, segments: new Map() };
       byReason.set(r.reason, bucket);
     }
-    bucket.segments.set(
-      r.kind,
-      (bucket.segments.get(r.kind) ?? 0) + r.count,
-    );
+    bucket.segments.set(r.kind, (bucket.segments.get(r.kind) ?? 0) + r.count);
   }
   const KIND_ORDER = ["micro", "long", "sleep"];
   return [...byReason.values()]
@@ -96,7 +93,10 @@ export function deltaPct(curr: number, prev: number): string {
 /** Direction of a current-vs-previous comparison — drives the colour
  * class on delta chips. Equal counts read as `"flat"` so the renderer
  * can stay quiet. */
-export function deltaDirection(curr: number, prev: number): "up" | "down" | "flat" {
+export function deltaDirection(
+  curr: number,
+  prev: number,
+): "up" | "down" | "flat" {
   if (curr === prev) return "flat";
   return curr > prev ? "up" : "down";
 }
@@ -140,8 +140,18 @@ export function buildHeatmapWeeks(days: DayBucket[]): (DayBucket | null)[][] {
 }
 
 const MONTH_ABBR = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 
 /** Month abbreviations (Jan/Feb/...) anchored to the column where

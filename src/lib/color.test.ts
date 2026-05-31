@@ -67,7 +67,9 @@ describe("clampRgbToDark", () => {
 
   it("scales bright colours under the luminance cap", () => {
     const [r, g, b] = clampRgbToDark(255, 255, 255);
-    expect(perceivedLuminance(r, g, b)).toBeLessThanOrEqual(MAX_OVERLAY_LUMINANCE + 1);
+    expect(perceivedLuminance(r, g, b)).toBeLessThanOrEqual(
+      MAX_OVERLAY_LUMINANCE + 1,
+    );
     expect(r).toBe(g);
     expect(g).toBe(b);
   });
@@ -77,7 +79,9 @@ describe("clampRgbToDark", () => {
     expect(r).toBe(0);
     expect(b).toBe(0);
     expect(g).toBeLessThan(255);
-    expect(perceivedLuminance(r, g, b)).toBeLessThanOrEqual(MAX_OVERLAY_LUMINANCE + 1);
+    expect(perceivedLuminance(r, g, b)).toBeLessThanOrEqual(
+      MAX_OVERLAY_LUMINANCE + 1,
+    );
   });
 });
 
@@ -86,9 +90,9 @@ describe("clampCsvToDark", () => {
     const out = clampCsvToDark("255, 255, 255");
     expect(out).not.toBeNull();
     const parts = out!.split(",").map((s) => Number.parseInt(s.trim(), 10));
-    expect(perceivedLuminance(parts[0], parts[1], parts[2])).toBeLessThanOrEqual(
-      MAX_OVERLAY_LUMINANCE + 1,
-    );
+    expect(
+      perceivedLuminance(parts[0], parts[1], parts[2]),
+    ).toBeLessThanOrEqual(MAX_OVERLAY_LUMINANCE + 1);
   });
 
   it("passes through dark values", () => {

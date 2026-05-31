@@ -45,21 +45,33 @@ describe("durationPhrase", () => {
 
 describe("announceBreak", () => {
   it("starts with the dialog label for the kind", () => {
-    expect(announceBreak("micro", 30)).toMatch(/^Entracte, micro break\. You have /);
-    expect(announceBreak("long", 600)).toMatch(/^Entracte, long break\. You have /);
-    expect(announceBreak("sleep", 30)).toMatch(/^Entracte, bedtime\. You have /);
+    expect(announceBreak("micro", 30)).toMatch(
+      /^Entracte, micro break\. You have /,
+    );
+    expect(announceBreak("long", 600)).toMatch(
+      /^Entracte, long break\. You have /,
+    );
+    expect(announceBreak("sleep", 30)).toMatch(
+      /^Entracte, bedtime\. You have /,
+    );
   });
 
   it("phrases the duration gently, without 'started' or 'remaining'", () => {
-    expect(announceBreak("long", 600)).toBe("Entracte, long break. You have 10 minutes.");
-    expect(announceBreak("micro", 20)).toBe("Entracte, micro break. You have 20 seconds.");
+    expect(announceBreak("long", 600)).toBe(
+      "Entracte, long break. You have 10 minutes.",
+    );
+    expect(announceBreak("micro", 20)).toBe(
+      "Entracte, micro break. You have 20 seconds.",
+    );
     expect(announceBreak("long", 90)).toBe(
       "Entracte, long break. You have 1 minute 30 seconds.",
     );
   });
 
   it("clamps negative durations to zero seconds", () => {
-    expect(announceBreak("micro", -5)).toBe("Entracte, micro break. You have 0 seconds.");
+    expect(announceBreak("micro", -5)).toBe(
+      "Entracte, micro break. You have 0 seconds.",
+    );
   });
 });
 
@@ -164,13 +176,21 @@ describe("milestoneMessage", () => {
   });
 
   it("phrases halfway with 'break' for micro and long, 'bedtime' for sleep", () => {
-    expect(milestoneMessage("micro", "halfway")).toBe("Halfway through your break.");
-    expect(milestoneMessage("long", "halfway")).toBe("Halfway through your break.");
-    expect(milestoneMessage("sleep", "halfway")).toBe("Halfway through your bedtime.");
+    expect(milestoneMessage("micro", "halfway")).toBe(
+      "Halfway through your break.",
+    );
+    expect(milestoneMessage("long", "halfway")).toBe(
+      "Halfway through your break.",
+    );
+    expect(milestoneMessage("sleep", "halfway")).toBe(
+      "Halfway through your bedtime.",
+    );
   });
 
   it("phrases the time-based milestones gently, without referencing the kind", () => {
-    expect(milestoneMessage("micro", "one-minute")).toBe("About a minute left.");
+    expect(milestoneMessage("micro", "one-minute")).toBe(
+      "About a minute left.",
+    );
     expect(milestoneMessage("long", "one-minute")).toBe("About a minute left.");
     expect(milestoneMessage("micro", "ten-seconds")).toBe("Almost done.");
     expect(milestoneMessage("long", "ten-seconds")).toBe("Almost done.");

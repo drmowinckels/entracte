@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadCsv, linesToList, listToLines, writeToClipboard } from "./utils";
+import {
+  downloadCsv,
+  linesToList,
+  listToLines,
+  writeToClipboard,
+} from "./utils";
 
 describe("linesToList", () => {
   it("splits on newline and trims each entry", () => {
@@ -41,8 +46,10 @@ describe("downloadCsv", () => {
     revokeObjectURL = vi.fn();
     originalCreate = URL.createObjectURL;
     originalRevoke = URL.revokeObjectURL;
-    URL.createObjectURL = createObjectURL as unknown as typeof URL.createObjectURL;
-    URL.revokeObjectURL = revokeObjectURL as unknown as typeof URL.revokeObjectURL;
+    URL.createObjectURL =
+      createObjectURL as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL =
+      revokeObjectURL as unknown as typeof URL.revokeObjectURL;
     vi.useFakeTimers();
   });
 
@@ -76,8 +83,14 @@ describe("downloadCsv", () => {
 });
 
 describe("writeToClipboard", () => {
-  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
-  const originalIsSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
+  const originalClipboard = Object.getOwnPropertyDescriptor(
+    navigator,
+    "clipboard",
+  );
+  const originalIsSecureContext = Object.getOwnPropertyDescriptor(
+    window,
+    "isSecureContext",
+  );
   let originalExecCommand: typeof document.execCommand;
 
   beforeEach(() => {
@@ -85,8 +98,10 @@ describe("writeToClipboard", () => {
   });
 
   afterEach(() => {
-    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
-    if (originalIsSecureContext) Object.defineProperty(window, "isSecureContext", originalIsSecureContext);
+    if (originalClipboard)
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    if (originalIsSecureContext)
+      Object.defineProperty(window, "isSecureContext", originalIsSecureContext);
     document.execCommand = originalExecCommand;
   });
 
@@ -96,7 +111,10 @@ describe("writeToClipboard", () => {
       configurable: true,
       value: { writeText },
     });
-    Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: true,
+    });
 
     const ok = await writeToClipboard("hello");
 
@@ -107,9 +125,16 @@ describe("writeToClipboard", () => {
   it("falls back to execCommand when clipboard API throws", async () => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText: vi.fn(async () => { throw new Error("denied"); }) },
+      value: {
+        writeText: vi.fn(async () => {
+          throw new Error("denied");
+        }),
+      },
     });
-    Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: true,
+    });
     document.execCommand = vi.fn(() => true);
 
     const ok = await writeToClipboard("hello");
@@ -119,8 +144,14 @@ describe("writeToClipboard", () => {
   });
 
   it("returns false when both paths fail", async () => {
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
-    Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: false,
+    });
     document.execCommand = vi.fn(() => {
       throw new Error("nope");
     });
@@ -134,8 +165,14 @@ describe("writeToClipboard", () => {
     // The async clipboard API is gated behind a secure context; in
     // file:// or http:// the renderer falls through to the textarea +
     // execCommand path. Verifies that path actually executes copy.
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
-    Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(window, "isSecureContext", {
+      configurable: true,
+      value: false,
+    });
     document.execCommand = vi.fn(() => true);
 
     const ok = await writeToClipboard("hello");

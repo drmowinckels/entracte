@@ -19,7 +19,11 @@ export function SuppressionBars({ rows }: { rows: SuppressionByKind[] }) {
       ["micro", "long", "sleep"].indexOf(b),
   );
   return (
-    <div className="suppression-bars" role="table" aria-label="Suppressions by reason and break kind">
+    <div
+      className="suppression-bars"
+      role="table"
+      aria-label="Suppressions by reason and break kind"
+    >
       <div className="suppression-legend" role="presentation">
         {kindsPresent.map((kind) => (
           <span key={kind} className="suppression-legend-item" data-kind={kind}>

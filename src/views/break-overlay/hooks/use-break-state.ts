@@ -44,7 +44,9 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
   const [remaining, setRemaining] = useState(0);
   const [hintIndex, setHintIndex] = useState(0);
   const [finished, setFinished] = useState(false);
-  const [postponeState, setPostponeState] = useState<PostponeState | null>(null);
+  const [postponeState, setPostponeState] = useState<PostponeState | null>(
+    null,
+  );
   const [appearance, setAppearance] = useState<OverlaySettings>(
     DEFAULT_OVERLAY_SETTINGS,
   );

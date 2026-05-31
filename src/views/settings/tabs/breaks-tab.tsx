@@ -15,7 +15,11 @@ import {
   ROTATION_GRADIENT,
 } from "../constants";
 import type { UseSettings } from "../hooks/use-settings";
-import type { MonitorPlacement, SchedulerSettings, SupporterStatus } from "../types";
+import type {
+  MonitorPlacement,
+  SchedulerSettings,
+  SupporterStatus,
+} from "../types";
 import { linesToList, listToLines } from "../utils";
 
 export function BreaksTab({
@@ -119,9 +123,9 @@ export function BreaksTab({
                       background: `rgb(${
                         settings.overlay_color === "custom"
                           ? settings.overlay_custom_rgb
-                          : OVERLAY_THEMES.find(
+                          : (OVERLAY_THEMES.find(
                               (t) => t.id === settings.overlay_color,
-                            )?.rgb ?? OVERLAY_THEMES[0].rgb
+                            )?.rgb ?? OVERLAY_THEMES[0].rgb)
                       })`,
                     }
               }
@@ -270,7 +274,9 @@ export function BreaksTab({
               max={100}
               step={1}
               value={Math.round(settings.sound_volume * 100)}
-              onChange={(e) => update("sound_volume", Number(e.target.value) / 100)}
+              onChange={(e) =>
+                update("sound_volume", Number(e.target.value) / 100)
+              }
             />
             <span className="range-value">
               {Math.round(settings.sound_volume * 100)}%
@@ -361,7 +367,10 @@ export function BreaksTab({
               <select
                 value={settings.micro_hint_mix}
                 onChange={(e) =>
-                  update("micro_hint_mix", e.target.value as typeof settings.micro_hint_mix)
+                  update(
+                    "micro_hint_mix",
+                    e.target.value as typeof settings.micro_hint_mix,
+                  )
                 }
               >
                 <option value="both">Both</option>
@@ -405,7 +414,10 @@ export function BreaksTab({
               <select
                 value={settings.long_hint_mix}
                 onChange={(e) =>
-                  update("long_hint_mix", e.target.value as typeof settings.long_hint_mix)
+                  update(
+                    "long_hint_mix",
+                    e.target.value as typeof settings.long_hint_mix,
+                  )
                 }
               >
                 <option value="both">Both</option>

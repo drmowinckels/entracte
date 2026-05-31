@@ -86,9 +86,7 @@ describe("AboutTab — Windows SmartScreen advisory", () => {
     currentPlatform = "windows";
     mockUpdate = { ...mockUpdate, info: updateAvailable };
     render(<AboutTab supporter={supporterStub()} />);
-    expect(
-      screen.getByText(/SmartScreen will warn/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/SmartScreen will warn/i)).toBeTruthy();
   });
 
   it("hides the SmartScreen warning on macOS even when an update is available", () => {
@@ -109,7 +107,12 @@ describe("AboutTab — Windows SmartScreen advisory", () => {
     currentPlatform = "windows";
     mockUpdate = {
       ...mockUpdate,
-      info: { current: "0.0.1", latest: "0.0.1", has_update: false, release_url: null },
+      info: {
+        current: "0.0.1",
+        latest: "0.0.1",
+        has_update: false,
+        release_url: null,
+      },
     };
     render(<AboutTab supporter={supporterStub()} />);
     expect(screen.queryByText(/SmartScreen will warn/i)).toBeNull();
@@ -133,7 +136,9 @@ describe("AboutTab — update banner", () => {
       info: { ...updateAvailable, release_url: null },
     };
     render(<AboutTab supporter={supporterStub()} />);
-    expect(screen.queryByRole("button", { name: /open release page/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /open release page/i }),
+    ).toBeNull();
   });
 
   it("renders the 'Check for updates' button and dispatches on click", async () => {
@@ -141,14 +146,18 @@ describe("AboutTab — update banner", () => {
     const check = vi.fn(async () => undefined);
     mockUpdate = { ...mockUpdate, check };
     render(<AboutTab supporter={supporterStub()} />);
-    await user.click(screen.getByRole("button", { name: /check for updates/i }));
+    await user.click(
+      screen.getByRole("button", { name: /check for updates/i }),
+    );
     expect(check).toHaveBeenCalledTimes(1);
   });
 
   it("disables and relabels the check button while checking", () => {
     mockUpdate = { ...mockUpdate, checking: true };
     render(<AboutTab supporter={supporterStub()} />);
-    const btn = screen.getByRole("button", { name: /checking/i }) as HTMLButtonElement;
+    const btn = screen.getByRole("button", {
+      name: /checking/i,
+    }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 

@@ -61,8 +61,12 @@ describe("DEFAULT_OVERLAY_SETTINGS", () => {
   });
 
   it("keeps font scale inside the clamp range Rust enforces (0.5..3.0)", () => {
-    expect(DEFAULT_OVERLAY_SETTINGS.overlay_font_scale).toBeGreaterThanOrEqual(0.5);
-    expect(DEFAULT_OVERLAY_SETTINGS.overlay_font_scale).toBeLessThanOrEqual(3.0);
+    expect(DEFAULT_OVERLAY_SETTINGS.overlay_font_scale).toBeGreaterThanOrEqual(
+      0.5,
+    );
+    expect(DEFAULT_OVERLAY_SETTINGS.overlay_font_scale).toBeLessThanOrEqual(
+      3.0,
+    );
   });
 
   it("ships a non-silent volume so chimes/ambient are audible by default", () => {

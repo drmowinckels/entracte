@@ -17,7 +17,9 @@ const baseBreak: BreakEvent = {
 describe("useAmbientSound", () => {
   it("does nothing when there is no active break", () => {
     const startAmbient = vi.fn();
-    renderHook(() => useAmbientSound(null, DEFAULT_OVERLAY_SETTINGS, { startAmbient }));
+    renderHook(() =>
+      useAmbientSound(null, DEFAULT_OVERLAY_SETTINGS, { startAmbient }),
+    );
     expect(startAmbient).not.toHaveBeenCalled();
   });
 
@@ -92,7 +94,10 @@ describe("useAmbientSound", () => {
       sound_volume: 0.3,
     };
     renderHook(() =>
-      useAmbientSound(baseBreak, settings, { startAmbient, startCustomAmbient }),
+      useAmbientSound(baseBreak, settings, {
+        startAmbient,
+        startCustomAmbient,
+      }),
     );
     expect(startCustomAmbient).toHaveBeenCalledWith(
       "/Users/me/Music/loop.mp3",
@@ -113,7 +118,10 @@ describe("useAmbientSound", () => {
       },
     };
     renderHook(() =>
-      useAmbientSound(baseBreak, settings, { startAmbient, startCustomAmbient }),
+      useAmbientSound(baseBreak, settings, {
+        startAmbient,
+        startCustomAmbient,
+      }),
     );
     expect(startAmbient).not.toHaveBeenCalled();
     expect(startCustomAmbient).not.toHaveBeenCalled();

@@ -5,11 +5,15 @@ import { detectPlatform, normalisePlatform, PLATFORM_LABELS } from "./platform";
 
 describe("detectPlatform", () => {
   it("identifies macOS", () => {
-    expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe("macos");
+    expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe(
+      "macos",
+    );
   });
 
   it("identifies Windows", () => {
-    expect(detectPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("windows");
+    expect(detectPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(
+      "windows",
+    );
   });
 
   it("identifies Linux", () => {

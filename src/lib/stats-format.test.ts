@@ -228,10 +228,20 @@ describe("heatmapMonthLabels", () => {
 
   it("labels the first column of each new month", () => {
     const days = [
-      day("2026-02-23"), day("2026-02-24"), day("2026-02-25"), day("2026-02-26"),
-      day("2026-02-27"), day("2026-02-28"), day("2026-03-01"),
-      day("2026-03-02"), day("2026-03-03"), day("2026-03-04"), day("2026-03-05"),
-      day("2026-03-06"), day("2026-03-07"), day("2026-03-08"),
+      day("2026-02-23"),
+      day("2026-02-24"),
+      day("2026-02-25"),
+      day("2026-02-26"),
+      day("2026-02-27"),
+      day("2026-02-28"),
+      day("2026-03-01"),
+      day("2026-03-02"),
+      day("2026-03-03"),
+      day("2026-03-04"),
+      day("2026-03-05"),
+      day("2026-03-06"),
+      day("2026-03-07"),
+      day("2026-03-08"),
     ];
     const weeks = buildHeatmapWeeks(days);
     expect(heatmapMonthLabels(weeks)).toEqual([
