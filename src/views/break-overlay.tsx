@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { announceBreak, dialogLabel, remainingAriaLabel } from "../lib/a11y";
+import {
+  announceBreak,
+  breakDescription,
+  dialogLabel,
+  remainingAriaLabel,
+} from "../lib/a11y";
 import { soundById } from "../lib/sounds";
 import { useCustomStylesheet } from "../lib/use-custom-stylesheet";
 import { SoundCredit } from "./break-overlay/sound-credit";
@@ -12,6 +17,7 @@ import { useCountdown } from "./break-overlay/hooks/use-countdown";
 import { useClock } from "./break-overlay/hooks/use-clock";
 import { useOverlayCssVars } from "./break-overlay/hooks/use-overlay-css-vars";
 import { useFocusTrap } from "./break-overlay/hooks/use-focus-trap";
+import { useMilestoneAnnouncer } from "./break-overlay/hooks/use-milestone-announcer";
 import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
 import { derivePostpone } from "./break-overlay/postpone";
 import { breakSoundFor, labelFor } from "./break-overlay/types";
@@ -85,6 +91,12 @@ export default function BreakOverlay() {
   const dialogSemantics = !strictMode;
   useMountFocus(rootRef, Boolean(active), dialogSemantics);
   useFocusTrap(rootRef, dialogSemantics && Boolean(active));
+  const milestone = useMilestoneAnnouncer(
+    active?.kind ?? null,
+    active?.duration_secs ?? 0,
+    remaining,
+    finished,
+  );
 
   if (!active) return null;
 
@@ -122,22 +134,43 @@ export default function BreakOverlay() {
       aria-label={dialogSemantics ? dialogLabel(active.kind) : undefined}
       aria-describedby={dialogSemantics ? "overlay-detail" : undefined}
     >
-      {/* Live region: announces only the initial "break started"
-          message. The rotating hint deliberately lives outside this
-          element — putting it inside means every rotation triggers
-          a re-announcement, which is unusable with a screen reader. */}
+      {/* Strict mode only: there is no dialog to carry context, so this
+          assertive live region is the sole start announcement. In
+          non-strict mode the dialog's aria-describedby speaks the same
+          information once, on focus — no second utterance, so the start
+          stays calm rather than repeating itself. */}
+      {strictMode && (
+        <div
+          className="sr-only"
+          role="alert"
+          aria-live="assertive"
+          data-testid="overlay-announcement"
+        >
+          {announcement}
+        </div>
+      )}
+      {/* Separate polite live region for milestone progress (halfway,
+          1 minute left, 10 seconds left, end). Always polite even in
+          strict mode — users have opted in to being interrupted on
+          start, but per-second progress chatter would be hostile. */}
       <div
         className="sr-only"
-        role={strictMode ? "alert" : "status"}
-        aria-live={strictMode ? "assertive" : "polite"}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="overlay-milestone"
       >
-        {announcement}
+        {milestone}
       </div>
-      {/* Described-by target: read once when the dialog is focused.
-          Content can change (hint rotation) without re-announcing,
-          because aria-describedby is not a live region. */}
+      {/* Described-by target: read once when the dialog is focused —
+          the duration, then the wellness tip. Content can change (hint
+          rotation) without re-announcing, because aria-describedby is
+          not a live region. */}
       <div id="overlay-detail" className="sr-only">
-        {appearance.show_hint && hintText ? hintText : ""}
+        {breakDescription(
+          active.duration_secs,
+          appearance.show_hint && hintText ? hintText : "",
+        )}
       </div>
       {intensity > 0 && <div className="overlay-vignette" aria-hidden="true" />}
       {appearance.show_current_time && (
@@ -178,7 +211,14 @@ export default function BreakOverlay() {
           </p>
         </div>
         {appearance.show_hint && hintText && (
-          <p className="overlay-hint">{hintText}</p>
+          <p
+            className="overlay-hint"
+            role="note"
+            tabIndex={0}
+            aria-label={`Wellness tip: ${hintText}`}
+          >
+            {hintText}
+          </p>
         )}
         {paused && !finished && (
           <p className="overlay-paused">

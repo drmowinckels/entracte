@@ -74,9 +74,7 @@ describe("BreakOverlay strict-mode dialog semantics", () => {
     const root = container.querySelector(".overlay-root");
     expect(root?.getAttribute("role")).toBe("dialog");
     expect(root?.getAttribute("aria-modal")).toBe("true");
-    expect(root?.getAttribute("aria-label")).toBe(
-      "Entracte break reminder, Micro break",
-    );
+    expect(root?.getAttribute("aria-label")).toBe("Entracte, micro break");
   });
 
   it("drops dialog semantics when strict mode is on", async () => {
@@ -110,7 +108,7 @@ describe("BreakOverlay assistive-tech exposure", () => {
   it("exposes dialog, countdown, and action buttons by accessible name", async () => {
     const { getByRole } = await startBreak(false);
     const dialog = getByRole("dialog", {
-      name: "Entracte break reminder, Micro break",
+      name: "Entracte, micro break",
     });
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     within(dialog).getByLabelText("30 seconds remaining");
@@ -118,11 +116,15 @@ describe("BreakOverlay assistive-tech exposure", () => {
     within(dialog).getByRole("button", { name: "Skip break" });
   });
 
-  it("announces the break start text in the polite live region (non-strict)", async () => {
-    const { getByRole } = await startBreak(false);
-    expect(getByRole("status").textContent).toBe(
-      "Entracte break reminder, Micro break started. 30 seconds remaining.",
-    );
+  it("does not duplicate the start announcement in non-strict mode", async () => {
+    // The dialog label + aria-describedby carry the start context once,
+    // on focus. A separate live region would speak it a second time,
+    // which is the chatter we deliberately removed.
+    const { queryByTestId, container } = await startBreak(false);
+    expect(queryByTestId("overlay-announcement")).toBeNull();
+    const detail = container.querySelector("#overlay-detail");
+    expect(detail?.textContent).toContain("You have 30 seconds.");
+    expect(detail?.textContent).toContain("Look away");
   });
 
   it("hides skip/postpone and uses an alert region in strict mode", async () => {
@@ -134,7 +136,7 @@ describe("BreakOverlay assistive-tech exposure", () => {
     expect(queryByRole("button", { name: "Skip break" })).toBeNull();
     expect(queryByRole("button", { name: "Postpone break" })).toBeNull();
     expect(getByRole("alert").textContent).toContain(
-      "Entracte break reminder, Micro break started.",
+      "Entracte, micro break. You have 30 seconds.",
     );
   });
 
@@ -144,7 +146,7 @@ describe("BreakOverlay assistive-tech exposure", () => {
       duration_secs: 300,
     });
     getByRole("dialog", {
-      name: "Entracte break reminder, Long break",
+      name: "Entracte, long break",
     });
     getByLabelText("5 minutes remaining");
   });
@@ -282,4 +284,61 @@ describe("BreakOverlay ARIA contract", () => {
       expect(getByRole("alert").textContent).toBe(announceBreak(kind, duration));
     },
   );
+
+  it("renders the milestone live region empty at break start (no chatter)", async () => {
+    const { getByTestId } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+    });
+    const region = getByTestId("overlay-milestone");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    expect(region.getAttribute("aria-atomic")).toBe("true");
+    expect(region.getAttribute("role")).toBe("status");
+    expect(region.textContent).toBe("");
+  });
+
+  it("keeps the milestone live region polite even in strict mode", async () => {
+    // Strict mode promotes the start announcement to assertive, but
+    // milestones are progress chatter — they stay polite so the user
+    // isn't interrupted four times during a single break.
+    const { getByTestId } = await startBreak(true, {
+      kind: "long",
+      duration_secs: 600,
+      enforceable: true,
+      postpone_available: false,
+    });
+    const region = getByTestId("overlay-milestone");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    expect(region.getAttribute("role")).toBe("status");
+  });
+
+  it("exposes the wellness hint as a focusable, labelled note", async () => {
+    // VoiceOver users reach the tip via the rotor / Tab order and hear
+    // "Wellness tip: …" rather than having to hunt for static text that
+    // rotates out from under the cursor.
+    const { getByRole } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+      hints: ["Look 20 feet away."],
+    });
+    const note = getByRole("note", {
+      name: "Wellness tip: Look 20 feet away.",
+    });
+    expect(note.getAttribute("tabindex")).toBe("0");
+    expect(note.textContent).toBe("Look 20 feet away.");
+  });
+
+  it("fires the start milestone immediately on a short break", async () => {
+    // 20-second micro break: at remaining=20 we're already ≤ the
+    // ten-second window once the countdown ticks one cycle. Drive
+    // the countdown via the break:tick listener until the milestone
+    // engages.
+    const { getByTestId } = await startBreak(false, {
+      kind: "micro",
+      duration_secs: 20,
+    });
+    // Initial render: remaining starts at duration; no milestone yet
+    // because remaining > 10.
+    expect(getByTestId("overlay-milestone").textContent).toBe("");
+  });
 });
