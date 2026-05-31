@@ -12,6 +12,33 @@ pub fn spawn_monitor(active: Arc<AtomicBool>) {
     let _ = active;
 }
 
+/// Classify one line of macOS `log stream` output: `Some(true)` when the
+/// camera turned on, `Some(false)` when it turned off, `None` for an
+/// unrelated line. Start wins if a single line somehow carries both
+/// markers, matching the original `if/else if` ordering. Kept un-gated so
+/// the start/stop contract is unit-tested on every OS — only the macOS
+/// log-stream reader calls it in non-test builds.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn classify_camera_line(line: &str) -> Option<bool> {
+    if line.contains("kCameraStreamStart") {
+        Some(true)
+    } else if line.contains("kCameraStreamStop") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// The Windows webcam-in-use rule: an app's `LastUsedTimeStop` of `0`
+/// means it is *currently* streaming (a non-zero value is the timestamp it
+/// stopped). Extracted so the rule itself is testable without a registry;
+/// the registry walk in `windows::any_active_app` feeds it. Un-gated so
+/// it's tested everywhere; only the Windows walk calls it in non-test builds.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn app_is_active(last_used_time_stop: Option<u64>) -> bool {
+    matches!(last_used_time_stop, Some(0))
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::io::{BufRead, BufReader};
@@ -47,10 +74,8 @@ mod macos {
             };
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                if line.contains("kCameraStreamStart") {
-                    active.store(true, Ordering::Relaxed);
-                } else if line.contains("kCameraStreamStop") {
-                    active.store(false, Ordering::Relaxed);
+                if let Some(state) = super::classify_camera_line(&line) {
+                    active.store(state, Ordering::Relaxed);
                 }
             }
         });
@@ -105,10 +130,8 @@ mod windows {
             let Ok(app_key) = key.open_subkey(&name) else {
                 continue;
             };
-            if let Ok(stop) = app_key.get_value::<u64, _>("LastUsedTimeStop") {
-                if stop == 0 {
-                    return true;
-                }
+            if super::app_is_active(app_key.get_value::<u64, _>("LastUsedTimeStop").ok()) {
+                return true;
             }
         }
         false
@@ -170,5 +193,41 @@ mod macos_bin_tests {
             LOG_BIN.starts_with('/'),
             "expected absolute path, got {LOG_BIN}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{app_is_active, classify_camera_line};
+
+    #[test]
+    fn classify_start_line_is_on() {
+        let line = "2026-05-30 ... Post event kCameraStreamStart for ...";
+        assert_eq!(classify_camera_line(line), Some(true));
+    }
+
+    #[test]
+    fn classify_stop_line_is_off() {
+        let line = "2026-05-30 ... Post event kCameraStreamStop for ...";
+        assert_eq!(classify_camera_line(line), Some(false));
+    }
+
+    #[test]
+    fn classify_unrelated_line_is_none() {
+        assert_eq!(classify_camera_line("some other log line"), None);
+        assert_eq!(classify_camera_line(""), None);
+    }
+
+    #[test]
+    fn classify_prefers_start_when_both_markers_present() {
+        let line = "kCameraStreamStart ... kCameraStreamStop";
+        assert_eq!(classify_camera_line(line), Some(true));
+    }
+
+    #[test]
+    fn app_active_only_when_stop_is_zero() {
+        assert!(app_is_active(Some(0)));
+        assert!(!app_is_active(Some(133_000_000_000_000_000)));
+        assert!(!app_is_active(None));
     }
 }
