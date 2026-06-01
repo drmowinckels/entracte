@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Idle-detection no longer floods the log on X11 servers without the screensaver extension.** When the windowing-system idle probe keeps failing (e.g. an X11 display with no `MIT-SCREEN-SAVER` extension, which made libX11 print a warning roughly once a second), Entracte now backs off exponentially — up to one attempt every five minutes — instead of re-querying the missing extension every tick. Idle detection still recovers automatically if the extension reappears. ([#67](https://github.com/drmowinckels/entracte/issues/67))
+
 ## [0.0.2] — 2026-05-29
 
 Bug-fix and diagnostics beta, focused on how the breaks _feel_ and on making issues easier to triage.
