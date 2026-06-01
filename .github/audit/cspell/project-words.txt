@@ -170,3 +170,5 @@ keydowns
 tabpanels
 describedby
 MPRIS
+noninteractive
+autofocus

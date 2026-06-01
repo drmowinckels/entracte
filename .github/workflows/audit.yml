@@ -44,17 +44,16 @@ jobs:
         run: npm run audit:size
 
   # Lint the GitHub Actions workflows themselves (syntax, expressions,
-  # and shellcheck over every `run:` script). Installed via the same
-  # taiki-e/install-action the Rust jobs already use.
+  # and shellcheck over every `run:` script). Pinned docker image rather
+  # than a curl|bash installer.
   workflows:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: actionlint
       - name: actionlint
-        run: actionlint -color
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
 
   # Advisory audits: surface signal without blocking merges.
   # cargo-deny covers licenses + CVEs + duplicate-version checks.
