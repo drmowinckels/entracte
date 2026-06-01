@@ -44,6 +44,55 @@ pub fn centered_windowed_rect(monitor: MonitorRect, fraction: f64) -> MonitorRec
     }
 }
 
+/// Pure Wayland-session test over the two relevant env signals, split out
+/// so the decision is unit-testable without mutating process env.
+fn wayland_session_from_env(session_type: Option<&str>, wayland_display: bool) -> bool {
+    session_type.is_some_and(|s| s.eq_ignore_ascii_case("wayland")) || wayland_display
+}
+
+/// Whether this is a Wayland session. Used to decide if the overlay
+/// geometry needs the HiDPI scale correction below (#67). Mirrors the
+/// probe in `video.rs`; kept local so the overlay path stays
+/// self-contained.
+fn is_wayland_session() -> bool {
+    wayland_session_from_env(
+        std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+        std::env::var("WAYLAND_DISPLAY").is_ok(),
+    )
+}
+
+/// Correct a monitor's reported geometry for the GNOME/Wayland HiDPI
+/// quirk where `tao` returns `monitor.size()` and `position()` already
+/// multiplied by the scale factor. Feeding those straight into
+/// `set_size`/`set_position` (which divide by the window's scale factor
+/// again) builds an overlay `scale`× too large in each axis — it spills
+/// onto the neighbouring monitor and pushes the hint and Skip controls
+/// off the bottom of the screen (#67, Steffi's 2×4K @ 200% report). On
+/// Wayland with a >1 scale we divide back out to the true physical
+/// geometry; on X11 and macOS `monitor.size()` is already true physical,
+/// so it's a no-op. Pure so the correction is unit-testable without a
+/// windowing system.
+///
+/// Assumes a uniform scale across monitors: each rect's *position* is
+/// divided by that monitor's own scale, which only stays globally
+/// coherent when every monitor shares one factor (the common case). A
+/// mixed-DPI Wayland layout would need a shared coordinate basis — not
+/// handled here, since the whole correction is a workaround for the tao
+/// reporting quirk rather than a general geometry layer.
+fn scale_corrected_rect(rect: MonitorRect, scale: f64, wayland: bool) -> MonitorRect {
+    if !wayland || scale <= 1.0 {
+        return rect;
+    }
+    let div_i = |v: i32| (v as f64 / scale).round() as i32;
+    let div_u = |v: u32| ((v as f64 / scale).round() as u32).max(1);
+    MonitorRect {
+        x: div_i(rect.x),
+        y: div_i(rect.y),
+        width: div_u(rect.width),
+        height: div_u(rect.height),
+    }
+}
+
 /// Human-friendly break duration for notifications (e.g. `"20 seconds"`,
 /// `"5 minutes"`, `"1m 30s"`). Drops the seconds part when the
 /// duration is a whole-minute multiple.
@@ -132,13 +181,28 @@ fn primary_or_first<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
     }
 }
 
+/// Monitors to cover for the `Primary` placement. When the windowing
+/// system names a primary monitor we cover exactly it. When it can't
+/// (Wayland has no "primary" concept) we cover *every* monitor instead of
+/// just the first: "the primary screen" is meaningless there, and leaving
+/// the other monitors uncovered lets the user dodge an enforceable break
+/// by glancing at the next screen (#67, Steffi's dual-monitor setup).
+/// Generic + pure so the fallback is unit-testable without a windowing
+/// system.
+fn primary_or_all<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
+    match primary {
+        Some(m) => vec![m],
+        None => available.to_vec(),
+    }
+}
+
 fn select_overlay_monitors<R: Runtime>(
     app: &AppHandle<R>,
     placement: MonitorPlacement,
 ) -> Vec<tauri::Monitor> {
     match placement {
         MonitorPlacement::All => app.available_monitors().unwrap_or_default(),
-        MonitorPlacement::Primary => primary_or_first(
+        MonitorPlacement::Primary => primary_or_all(
             app.primary_monitor().ok().flatten(),
             &app.available_monitors().unwrap_or_default(),
         ),
@@ -219,20 +283,39 @@ pub fn fire_break<R: Runtime>(
     let monitors = select_overlay_monitors(app, placement);
     let count = monitors.len().max(1);
     let mut shown = 0usize;
+    let wayland = is_wayland_session();
 
     for (idx, monitor) in monitors.iter().enumerate() {
         if let Some(window) = ensure_overlay(app, idx) {
-            let monitor_rect = MonitorRect {
+            let scale = monitor.scale_factor();
+            let reported = MonitorRect {
                 x: monitor.position().x,
                 y: monitor.position().y,
                 width: monitor.size().width,
                 height: monitor.size().height,
             };
+            let monitor_rect = scale_corrected_rect(reported, scale, wayland);
             let rect = if windowed {
                 centered_windowed_rect(monitor_rect, 0.8)
             } else {
                 monitor_rect
             };
+            // The geometry, scale, and Wayland flag in one line so a
+            // diagnostics report can confirm the overlay was sized to the
+            // monitor (and flag the inverse of #67 — a too-small overlay
+            // if some compositor reports true physical despite scaling).
+            log::debug!(
+                "overlay-{idx}: wayland={wayland} scale={scale:.2} reported={rw}x{rh}@({rx},{ry}) \
+                 -> set {w}x{h}@({x},{y})",
+                rw = reported.width,
+                rh = reported.height,
+                rx = reported.x,
+                ry = reported.y,
+                w = rect.width,
+                h = rect.height,
+                x = rect.x,
+                y = rect.y,
+            );
             let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
             let _ = window.set_size(tauri::PhysicalSize::new(rect.width, rect.height));
             let _ = window.set_always_on_top(true);
@@ -342,12 +425,79 @@ mod tests {
     }
 
     #[test]
+    fn primary_or_all_uses_primary_when_present() {
+        // A named primary is honoured exactly — never widened.
+        assert_eq!(
+            primary_or_all(Some("HDMI-1"), &["HDMI-1", "DP-2"]),
+            vec!["HDMI-1"]
+        );
+    }
+
+    #[test]
+    fn primary_or_all_covers_every_monitor_on_wayland() {
+        // No primary (Wayland): cover all monitors so a break can't be
+        // dodged on the second screen (#67).
+        assert_eq!(
+            primary_or_all(None, &["DP-2", "HDMI-1"]),
+            vec!["DP-2", "HDMI-1"]
+        );
+    }
+
+    #[test]
+    fn primary_or_all_empty_when_no_monitors_at_all() {
+        let none: Option<&str> = None;
+        assert!(primary_or_all(none, &[] as &[&str]).is_empty());
+    }
+
+    #[test]
+    fn wayland_session_from_env_detects_session_type_and_display() {
+        assert!(wayland_session_from_env(Some("wayland"), false));
+        assert!(wayland_session_from_env(Some("WAYLAND"), false));
+        assert!(wayland_session_from_env(None, true));
+        assert!(!wayland_session_from_env(Some("x11"), false));
+        assert!(!wayland_session_from_env(None, false));
+    }
+
+    #[test]
     fn primary_or_first_empty_when_no_monitors_at_all() {
         // No primary and no available monitors (headless / all unplugged)
         // — nothing to target, and the caller logs the invisible-break
         // error rather than crashing.
         let none: Option<&str> = None;
         assert!(primary_or_first(none, &[] as &[&str]).is_empty());
+    }
+
+    #[test]
+    fn scale_corrected_rect_divides_out_doubled_wayland_geometry() {
+        // Steffi's #67 case: a 4K panel at 200% is reported as 7680×4320
+        // (physical × scale). Dividing by the scale recovers true physical
+        // 3840×2160, so the overlay covers exactly one monitor instead of
+        // 2× spilling onto the neighbour.
+        let reported = rect(7680, 0, 7680, 4320);
+        let r = scale_corrected_rect(reported, 2.0, true);
+        assert_eq!(r, rect(3840, 0, 3840, 2160));
+    }
+
+    #[test]
+    fn scale_corrected_rect_noop_off_wayland() {
+        // X11 / macOS report true physical already — never halve them.
+        let reported = rect(0, 0, 3840, 2160);
+        assert_eq!(scale_corrected_rect(reported, 2.0, false), reported);
+    }
+
+    #[test]
+    fn scale_corrected_rect_noop_at_unity_scale() {
+        // Wayland without HiDPI scaling: nothing to correct.
+        let reported = rect(1920, 0, 1920, 1080);
+        assert_eq!(scale_corrected_rect(reported, 1.0, true), reported);
+    }
+
+    #[test]
+    fn scale_corrected_rect_handles_fractional_scale() {
+        // 150% scaling rounds to the nearest physical pixel and never
+        // collapses a dimension to zero.
+        let r = scale_corrected_rect(rect(0, 0, 2880, 1620), 1.5, true);
+        assert_eq!(r, rect(0, 0, 1920, 1080));
     }
 
     #[test]

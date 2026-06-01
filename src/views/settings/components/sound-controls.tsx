@@ -48,6 +48,36 @@ export function SoundControls({
     previewRef.current = null;
   };
 
+  // Play the sound the user just picked, so selecting a track auditions
+  // it immediately (the common pattern) instead of behind a separate
+  // Preview button. Reads from `next` rather than the `sound` prop, since
+  // the parent's state update hasn't propagated back yet (#67).
+  const previewSound = (next: BreakSound) => {
+    stopPreview();
+    if (next.mode === "off" || volume <= 0) return;
+    if (next.sound_id === CUSTOM_SOUND_ID) {
+      const path = next.custom_path ?? "";
+      if (!path) return;
+      if (next.mode === "end_chime") {
+        void playCustomSound(path, volume);
+        return;
+      }
+      previewRef.current = previewCustomAmbient(path, volume);
+      return;
+    }
+    if (!next.sound_id) return;
+    if (next.mode === "end_chime") {
+      void playSound(next.sound_id, volume);
+      return;
+    }
+    previewRef.current = previewAmbient(next.sound_id, volume);
+  };
+
+  const apply = (next: BreakSound) => {
+    onChange(next);
+    previewSound(next);
+  };
+
   const isCustom = sound.sound_id === CUSTOM_SOUND_ID;
   const customPath = sound.custom_path ?? "";
 
@@ -65,7 +95,7 @@ export function SoundControls({
         ],
       });
       if (typeof selected !== "string") return;
-      onChange({
+      apply({
         ...sound,
         mode: sound.mode === "off" ? "end_chime" : sound.mode,
         sound_id: CUSTOM_SOUND_ID,
@@ -77,17 +107,17 @@ export function SoundControls({
   };
 
   const onModeChange = (mode: BreakSoundMode) => {
-    stopPreview();
     if (mode === "off") {
+      stopPreview();
       onChange({ ...sound, mode, sound_id: "" });
       return;
     }
     if (isCustom) {
-      onChange({ ...sound, mode });
+      apply({ ...sound, mode });
       return;
     }
     const stillValid = soundsForMode(mode).some((s) => s.id === sound.sound_id);
-    onChange({
+    apply({
       ...sound,
       mode,
       sound_id: stillValid ? sound.sound_id : defaultSoundIdFor(mode),
@@ -99,43 +129,17 @@ export function SoundControls({
       void pickCustomFile();
       return;
     }
-    stopPreview();
-    onChange({ ...sound, sound_id: id });
+    apply({ ...sound, sound_id: id });
   };
 
   const useBundled = () => {
-    stopPreview();
-    onChange({
+    apply({
       ...sound,
       sound_id: defaultSoundIdFor(sound.mode),
       custom_path: "",
     });
   };
 
-  const onPreview = () => {
-    stopPreview();
-    if (sound.mode === "off" || volume <= 0) return;
-    if (isCustom) {
-      if (!customPath) return;
-      if (sound.mode === "end_chime") {
-        playCustomSound(customPath, volume);
-        return;
-      }
-      previewRef.current = previewCustomAmbient(customPath, volume);
-      return;
-    }
-    if (!sound.sound_id) return;
-    if (sound.mode === "end_chime") {
-      playSound(sound.sound_id, volume);
-      return;
-    }
-    previewRef.current = previewAmbient(sound.sound_id, volume);
-  };
-
-  const previewDisabled =
-    sound.mode === "off" ||
-    volume <= 0 ||
-    (isCustom ? !customPath : !sound.sound_id);
   const options = sound.mode === "off" ? [] : soundsForMode(sound.mode);
 
   return (
@@ -191,17 +195,6 @@ export function SoundControls({
             </button>
           </span>
         </label>
-      )}
-      {sound.mode !== "off" && (
-        <div className="actions inline">
-          <button
-            className="secondary"
-            onClick={onPreview}
-            disabled={previewDisabled}
-          >
-            Preview
-          </button>
-        </div>
       )}
     </>
   );
