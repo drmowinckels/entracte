@@ -44,15 +44,21 @@ pub fn centered_windowed_rect(monitor: MonitorRect, fraction: f64) -> MonitorRec
     }
 }
 
+/// Pure Wayland-session test over the two relevant env signals, split out
+/// so the decision is unit-testable without mutating process env.
+fn wayland_session_from_env(session_type: Option<&str>, wayland_display: bool) -> bool {
+    session_type.is_some_and(|s| s.eq_ignore_ascii_case("wayland")) || wayland_display
+}
+
 /// Whether this is a Wayland session. Used to decide if the overlay
 /// geometry needs the HiDPI scale correction below (#67). Mirrors the
 /// probe in `video.rs`; kept local so the overlay path stays
 /// self-contained.
 fn is_wayland_session() -> bool {
-    std::env::var("XDG_SESSION_TYPE")
-        .map(|s| s.eq_ignore_ascii_case("wayland"))
-        .unwrap_or(false)
-        || std::env::var("WAYLAND_DISPLAY").is_ok()
+    wayland_session_from_env(
+        std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+        std::env::var("WAYLAND_DISPLAY").is_ok(),
+    )
 }
 
 /// Correct a monitor's reported geometry for the GNOME/Wayland HiDPI
@@ -168,13 +174,28 @@ fn primary_or_first<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
     }
 }
 
+/// Monitors to cover for the `Primary` placement. When the windowing
+/// system names a primary monitor we cover exactly it. When it can't
+/// (Wayland has no "primary" concept) we cover *every* monitor instead of
+/// just the first: "the primary screen" is meaningless there, and leaving
+/// the other monitors uncovered lets the user dodge an enforceable break
+/// by glancing at the next screen (#67, Steffi's dual-monitor setup).
+/// Generic + pure so the fallback is unit-testable without a windowing
+/// system.
+fn primary_or_all<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
+    match primary {
+        Some(m) => vec![m],
+        None => available.to_vec(),
+    }
+}
+
 fn select_overlay_monitors<R: Runtime>(
     app: &AppHandle<R>,
     placement: MonitorPlacement,
 ) -> Vec<tauri::Monitor> {
     match placement {
         MonitorPlacement::All => app.available_monitors().unwrap_or_default(),
-        MonitorPlacement::Primary => primary_or_first(
+        MonitorPlacement::Primary => primary_or_all(
             app.primary_monitor().ok().flatten(),
             &app.available_monitors().unwrap_or_default(),
         ),
@@ -380,6 +401,40 @@ mod tests {
         // The #67 case: Wayland reports no primary, but monitors exist.
         // Must fall back to the first so an overlay still appears.
         assert_eq!(primary_or_first(None, &["DP-2", "HDMI-1"]), vec!["DP-2"]);
+    }
+
+    #[test]
+    fn primary_or_all_uses_primary_when_present() {
+        // A named primary is honoured exactly — never widened.
+        assert_eq!(
+            primary_or_all(Some("HDMI-1"), &["HDMI-1", "DP-2"]),
+            vec!["HDMI-1"]
+        );
+    }
+
+    #[test]
+    fn primary_or_all_covers_every_monitor_on_wayland() {
+        // No primary (Wayland): cover all monitors so a break can't be
+        // dodged on the second screen (#67).
+        assert_eq!(
+            primary_or_all(None, &["DP-2", "HDMI-1"]),
+            vec!["DP-2", "HDMI-1"]
+        );
+    }
+
+    #[test]
+    fn primary_or_all_empty_when_no_monitors_at_all() {
+        let none: Option<&str> = None;
+        assert!(primary_or_all(none, &[] as &[&str]).is_empty());
+    }
+
+    #[test]
+    fn wayland_session_from_env_detects_session_type_and_display() {
+        assert!(wayland_session_from_env(Some("wayland"), false));
+        assert!(wayland_session_from_env(Some("WAYLAND"), false));
+        assert!(wayland_session_from_env(None, true));
+        assert!(!wayland_session_from_env(Some("x11"), false));
+        assert!(!wayland_session_from_env(None, false));
     }
 
     #[test]
