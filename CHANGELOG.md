@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Changed
+
+- **Break sounds now audition the moment you pick them.** Choosing a track (or switching the sound mode, or picking a custom file) plays it straight away, instead of hiding the preview behind a separate "Preview" button that gave no visible feedback. ([#67](https://github.com/drmowinckels/entracte/issues/67))
+
 ### Fixed
 
 - **Break overlay no longer overflows the screen on HiDPI Wayland.** With a scaled display (e.g. a 4K monitor at 200%), GNOME/Wayland reports each monitor's size already multiplied by the scale factor, so the overlay was built roughly twice the monitor size — it spilled onto the neighbouring monitor and pushed the hint text and Skip control off the bottom of the screen. The overlay geometry is now corrected back to true physical pixels on Wayland; X11 and macOS are unaffected. ([#67](https://github.com/drmowinckels/entracte/issues/67))
