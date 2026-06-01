@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Pause media while a break is showing.** A new opt-in toggle (Quiet times → During breaks) quiets whatever is playing when a break starts and resumes it when the break ends. On Linux this targets your media players precisely over MPRIS; on macOS and Windows it sends a play/pause media key as a best-effort. Off by default. ([#77](https://github.com/drmowinckels/entracte/issues/77))
+
 ### Fixed
 
 - **Idle-detection no longer floods the log on X11 servers without the screensaver extension.** When the windowing-system idle probe keeps failing (e.g. an X11 display with no `MIT-SCREEN-SAVER` extension, which made libX11 print a warning roughly once a second), Entracte now backs off exponentially — up to one attempt every five minutes — instead of re-querying the missing extension every tick. Idle detection still recovers automatically if the extension reappears. ([#67](https://github.com/drmowinckels/entracte/issues/67))

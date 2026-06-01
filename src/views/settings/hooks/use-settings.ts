@@ -43,6 +43,7 @@ export const schedulerSettingsSchema = z.object({
   pause_during_dnd: z.boolean(),
   pause_during_camera: z.boolean(),
   pause_during_video: z.boolean(),
+  pause_media_during_breaks: z.boolean(),
   work_window_enabled: z.boolean(),
   work_start_minutes: z.number(),
   work_end_minutes: z.number(),

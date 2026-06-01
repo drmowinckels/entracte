@@ -58,6 +58,16 @@ export function QuietTab({
         />
       </section>
 
+      <h2>During breaks</h2>
+      <section>
+        <CheckboxRow
+          label="Pause media while a break is showing"
+          value={settings.pause_media_during_breaks}
+          onChange={(v) => update("pause_media_during_breaks", v)}
+          tip="When a break starts, pauses whatever is playing (video or audio) and resumes it when the break ends. On Linux this targets your media players precisely; on macOS and Windows it sends a play/pause media key as a best-effort, so it works for most players but can't guarantee the exact app."
+        />
+      </section>
+
       <h2>Pause for specific apps</h2>
       <section>
         <CheckboxRow

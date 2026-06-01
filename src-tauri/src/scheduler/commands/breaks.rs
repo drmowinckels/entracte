@@ -247,6 +247,9 @@ pub async fn end_break<R: Runtime>(
     }
 
     *super::super::lock_current_break(&scheduler.current_break) = None;
+    // Resume any media `fire_break` paused for this break (#77). No-op
+    // unless something was paused.
+    crate::media::on_break_end();
     for (label, window) in app.webview_windows() {
         if label.starts_with("overlay-") {
             let _ = window.hide();

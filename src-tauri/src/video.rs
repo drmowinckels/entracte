@@ -37,6 +37,25 @@ pub fn spawn_monitor(active: Arc<AtomicBool>) {
     let _ = active;
 }
 
+/// Whether *something* is currently keeping the display awake — the
+/// assertion half of the fullscreen-video check, without the fullscreen
+/// gate. [`crate::media`] uses it on macOS / Windows as a cheap "is media
+/// likely playing?" guard before sending a best-effort play/pause media
+/// key, so it never starts media that was paused. Only defined on those
+/// two platforms — Linux media control goes through MPRIS directly and
+/// has no caller for it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn assertion_active() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::display_assertion_active()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows::display_request_active()
+    }
+}
+
 // 10-second poll interval: hot enough that a video call started
 // before a break gets caught in time, but cool enough that we're not
 // fork-bombing `pmset` / `powercfg` / `systemd-inhibit` 43k times a
@@ -254,7 +273,7 @@ mod macos {
         )
     }
 
-    fn display_assertion_active() -> bool {
+    pub(super) fn display_assertion_active() -> bool {
         let Ok(output) = Command::new(PMSET_BIN).args(["-g", "assertions"]).output() else {
             return false;
         };
@@ -392,7 +411,7 @@ mod windows {
         )
     }
 
-    fn display_request_active() -> bool {
+    pub(super) fn display_request_active() -> bool {
         let Ok(output) = Command::new(POWERCFG_BIN).arg("/requests").output() else {
             return false;
         };
