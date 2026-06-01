@@ -277,11 +277,17 @@ pub fn decide_bedtime(
 /// `false` once either the user has paused typing OR the deferral cap
 /// has been reached (so we don't postpone indefinitely).
 ///
+/// `idle_secs` is `None` when idle detection is unavailable this tick
+/// (e.g. Wayland exposes no portable HID-idle query, so the probe keeps
+/// failing). We can't tell whether the user is typing then, so we don't
+/// defer — otherwise the "is the user idle?" proxy is permanently 0 and
+/// every break stalls for the full deferral cap before appearing (#67).
+///
 /// `deferred_since` is the instant the current defer-streak started,
 /// or `None` if this is the first tick of the streak.
 pub fn should_defer_for_typing(
     enabled: bool,
-    idle_secs: u64,
+    idle_secs: Option<u64>,
     grace_secs: u64,
     deferred_since: Option<Instant>,
     max_deferral_secs: u64,
@@ -290,6 +296,9 @@ pub fn should_defer_for_typing(
     if !enabled || grace_secs == 0 {
         return false;
     }
+    let Some(idle_secs) = idle_secs else {
+        return false;
+    };
     if idle_secs >= grace_secs {
         return false;
     }
@@ -454,26 +463,44 @@ mod tests {
     #[test]
     fn typing_defer_disabled_returns_false() {
         let now = Instant::now();
-        assert!(!should_defer_for_typing(false, 0, 10, None, 60, now));
+        assert!(!should_defer_for_typing(false, Some(0), 10, None, 60, now));
     }
 
     #[test]
     fn typing_defer_zero_grace_returns_false() {
         let now = Instant::now();
-        assert!(!should_defer_for_typing(true, 0, 0, None, 60, now));
+        assert!(!should_defer_for_typing(true, Some(0), 0, None, 60, now));
+    }
+
+    #[test]
+    fn typing_defer_idle_unavailable_does_not_defer() {
+        // Wayland (#67): no idle reading this tick. We can't tell the
+        // user is typing, so we must fire rather than stall for the cap.
+        let now = Instant::now();
+        assert!(!should_defer_for_typing(true, None, 10, None, 60, now));
+        // Even mid-streak, an unavailable reading releases the defer.
+        let started = Instant::now();
+        assert!(!should_defer_for_typing(
+            true,
+            None,
+            10,
+            Some(started),
+            60,
+            started + Duration::from_secs(5)
+        ));
     }
 
     #[test]
     fn typing_defer_when_actively_typing_first_tick() {
         let now = Instant::now();
-        assert!(should_defer_for_typing(true, 1, 10, None, 60, now));
+        assert!(should_defer_for_typing(true, Some(1), 10, None, 60, now));
     }
 
     #[test]
     fn typing_defer_idle_above_grace_does_not_defer() {
         let now = Instant::now();
-        assert!(!should_defer_for_typing(true, 10, 10, None, 60, now));
-        assert!(!should_defer_for_typing(true, 30, 10, None, 60, now));
+        assert!(!should_defer_for_typing(true, Some(10), 10, None, 60, now));
+        assert!(!should_defer_for_typing(true, Some(30), 10, None, 60, now));
     }
 
     #[test]
@@ -483,7 +510,14 @@ mod tests {
         // monotonic clock is younger than the offset).
         let started = Instant::now();
         let now = started + Duration::from_secs(30);
-        assert!(should_defer_for_typing(true, 1, 10, Some(started), 60, now));
+        assert!(should_defer_for_typing(
+            true,
+            Some(1),
+            10,
+            Some(started),
+            60,
+            now
+        ));
     }
 
     #[test]
@@ -492,7 +526,7 @@ mod tests {
         let now = started + Duration::from_secs(60);
         assert!(!should_defer_for_typing(
             true,
-            1,
+            Some(1),
             10,
             Some(started),
             60,
@@ -502,7 +536,7 @@ mod tests {
         let now_later = older + Duration::from_secs(120);
         assert!(!should_defer_for_typing(
             true,
-            1,
+            Some(1),
             10,
             Some(older),
             60,

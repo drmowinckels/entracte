@@ -44,6 +44,42 @@ pub fn centered_windowed_rect(monitor: MonitorRect, fraction: f64) -> MonitorRec
     }
 }
 
+/// Whether this is a Wayland session. Used to decide if the overlay
+/// geometry needs the HiDPI scale correction below (#67). Mirrors the
+/// probe in `video.rs`; kept local so the overlay path stays
+/// self-contained.
+fn is_wayland_session() -> bool {
+    std::env::var("XDG_SESSION_TYPE")
+        .map(|s| s.eq_ignore_ascii_case("wayland"))
+        .unwrap_or(false)
+        || std::env::var("WAYLAND_DISPLAY").is_ok()
+}
+
+/// Correct a monitor's reported geometry for the GNOME/Wayland HiDPI
+/// quirk where `tao` returns `monitor.size()` and `position()` already
+/// multiplied by the scale factor. Feeding those straight into
+/// `set_size`/`set_position` (which divide by the window's scale factor
+/// again) builds an overlay `scale`× too large in each axis — it spills
+/// onto the neighbouring monitor and pushes the hint and Skip controls
+/// off the bottom of the screen (#67, Steffi's 2×4K @ 200% report). On
+/// Wayland with a >1 scale we divide back out to the true physical
+/// geometry; on X11 and macOS `monitor.size()` is already true physical,
+/// so it's a no-op. Pure so the correction is unit-testable without a
+/// windowing system.
+fn scale_corrected_rect(rect: MonitorRect, scale: f64, wayland: bool) -> MonitorRect {
+    if !wayland || scale <= 1.0 {
+        return rect;
+    }
+    let div_i = |v: i32| (v as f64 / scale).round() as i32;
+    let div_u = |v: u32| ((v as f64 / scale).round() as u32).max(1);
+    MonitorRect {
+        x: div_i(rect.x),
+        y: div_i(rect.y),
+        width: div_u(rect.width),
+        height: div_u(rect.height),
+    }
+}
+
 /// Human-friendly break duration for notifications (e.g. `"20 seconds"`,
 /// `"5 minutes"`, `"1m 30s"`). Drops the seconds part when the
 /// duration is a whole-minute multiple.
@@ -219,15 +255,20 @@ pub fn fire_break<R: Runtime>(
     let monitors = select_overlay_monitors(app, placement);
     let count = monitors.len().max(1);
     let mut shown = 0usize;
+    let wayland = is_wayland_session();
 
     for (idx, monitor) in monitors.iter().enumerate() {
         if let Some(window) = ensure_overlay(app, idx) {
-            let monitor_rect = MonitorRect {
-                x: monitor.position().x,
-                y: monitor.position().y,
-                width: monitor.size().width,
-                height: monitor.size().height,
-            };
+            let monitor_rect = scale_corrected_rect(
+                MonitorRect {
+                    x: monitor.position().x,
+                    y: monitor.position().y,
+                    width: monitor.size().width,
+                    height: monitor.size().height,
+                },
+                monitor.scale_factor(),
+                wayland,
+            );
             let rect = if windowed {
                 centered_windowed_rect(monitor_rect, 0.8)
             } else {
@@ -348,6 +389,39 @@ mod tests {
         // error rather than crashing.
         let none: Option<&str> = None;
         assert!(primary_or_first(none, &[] as &[&str]).is_empty());
+    }
+
+    #[test]
+    fn scale_corrected_rect_divides_out_doubled_wayland_geometry() {
+        // Steffi's #67 case: a 4K panel at 200% is reported as 7680×4320
+        // (physical × scale). Dividing by the scale recovers true physical
+        // 3840×2160, so the overlay covers exactly one monitor instead of
+        // 2× spilling onto the neighbour.
+        let reported = rect(7680, 0, 7680, 4320);
+        let r = scale_corrected_rect(reported, 2.0, true);
+        assert_eq!(r, rect(3840, 0, 3840, 2160));
+    }
+
+    #[test]
+    fn scale_corrected_rect_noop_off_wayland() {
+        // X11 / macOS report true physical already — never halve them.
+        let reported = rect(0, 0, 3840, 2160);
+        assert_eq!(scale_corrected_rect(reported, 2.0, false), reported);
+    }
+
+    #[test]
+    fn scale_corrected_rect_noop_at_unity_scale() {
+        // Wayland without HiDPI scaling: nothing to correct.
+        let reported = rect(1920, 0, 1920, 1080);
+        assert_eq!(scale_corrected_rect(reported, 1.0, true), reported);
+    }
+
+    #[test]
+    fn scale_corrected_rect_handles_fractional_scale() {
+        // 150% scaling rounds to the nearest physical pixel and never
+        // collapses a dimension to zero.
+        let r = scale_corrected_rect(rect(0, 0, 2880, 1620), 1.5, true);
+        assert_eq!(r, rect(0, 0, 1920, 1080));
     }
 
     #[test]

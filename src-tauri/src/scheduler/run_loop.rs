@@ -139,11 +139,15 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // reuse for screen-time, idle-suppression, and the typing-defer check.
         // The closure is the only platform-bound part; `resolve_idle_secs`
         // holds the (unit-tested) back-off / fallback decision.
-        let raw_idle_secs = resolve_idle_secs(&mut idle_backoff, || {
+        let idle_reading = resolve_idle_secs(&mut idle_backoff, || {
             UserIdle::get_time()
                 .map(|i| i.as_seconds())
                 .map_err(|e| e.to_string())
         });
+        // Unknown idle maps to 0 ("active") for screen-time and
+        // suppression; the typing-defer path below keeps the `Option` so
+        // it can tell "active" apart from "couldn't measure" (#67).
+        let raw_idle_secs = idle_reading.unwrap_or(0);
         // A locked screen is a stronger AFK signal than HIDIdleTime —
         // `caffeinate -u`, Zoom meetings, and synthetic-input utilities
         // can keep the HID counter at zero while the human is gone, but
@@ -151,7 +155,9 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // session as locked, promote `idle_secs` past both thresholds
         // so the screen-time, suppression, and typing-defer paths
         // below all treat the user as idle.
-        let idle_secs = promote_idle_for_lock(raw_idle_secs, session_lock::screen_locked(), &s);
+        let locked = session_lock::screen_locked();
+        let idle_secs = promote_idle_for_lock(raw_idle_secs, locked, &s);
+        let idle_for_typing = idle_for_typing_defer(idle_reading, idle_secs, locked);
         let is_active = idle_secs < s.micro_idle_reset_secs;
         let today_str = local_today_string();
         let budget_secs = s.daily_screen_time_budget_minutes.saturating_mul(60);
@@ -540,7 +546,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             };
             let defer = should_defer_for_typing(
                 s.delay_break_if_typing,
-                idle_secs,
+                idle_for_typing,
                 s.typing_grace_secs,
                 deferred_since,
                 s.typing_max_deferral_secs,
@@ -953,28 +959,50 @@ pub(super) fn promote_idle_for_lock_with_cell(
 /// caller keeps platform-bound is `probe` itself, so this decision logic
 /// is unit-testable without a windowing system.
 ///
-/// A failed *or* skipped (in-cooldown) probe reports `0` — i.e. "active",
-/// the conservative default that keeps screen-time and typing-defer from
-/// silently suppressing breaks rather than guessing the user is idle.
+/// A failed *or* skipped (in-cooldown) probe reports `None` — idle is
+/// unknown this tick. Callers map that to `0` ("active") for screen-time
+/// and idle-suppression (the conservative default that never silently
+/// suppresses a break), but the typing-defer path treats `None` as "can't
+/// tell" and fires rather than stalling every break for the cap (#67).
 fn resolve_idle_secs(
     backoff: &mut IdleProbeBackoff,
     probe: impl FnOnce() -> Result<u64, String>,
-) -> u64 {
+) -> Option<u64> {
     if !backoff.should_probe() {
         // In a back-off cooldown: the probe is known-broken, so skip it
         // entirely rather than re-triggering the libX11 spam.
-        return 0;
+        return None;
     }
     match probe() {
         Ok(secs) => {
             backoff.record_success();
-            secs
+            Some(secs)
         }
         Err(err) => {
             let backoff_secs = backoff.record_failure();
             warn_user_idle_failure(&err, backoff_secs);
-            0
+            None
         }
+    }
+}
+
+/// Idle seconds the typing-defer check should see. `Some` only when we
+/// can affirmatively judge activity — a real HID reading this tick, or a
+/// locked session (the user is definitely away). `None` when idle
+/// detection is unavailable *and* the lock state is unknown/unlocked, so
+/// the caller skips deferral rather than stalling every break for the
+/// full cap (#67). `promoted_idle_secs` already folds in the lock
+/// promotion, so the `Some` branch carries the value the rest of the
+/// scheduler sees. Pure so the unavailable-on-Wayland case is testable.
+pub(super) fn idle_for_typing_defer(
+    reading: Option<u64>,
+    promoted_idle_secs: u64,
+    locked: Option<bool>,
+) -> Option<u64> {
+    if reading.is_some() || matches!(locked, Some(true)) {
+        Some(promoted_idle_secs)
+    } else {
+        None
     }
 }
 
@@ -1292,19 +1320,19 @@ mod tests {
     #[test]
     fn resolve_idle_secs_returns_probe_value_on_success() {
         let mut b = IdleProbeBackoff::new();
-        assert_eq!(resolve_idle_secs(&mut b, || Ok(42)), 42);
+        assert_eq!(resolve_idle_secs(&mut b, || Ok(42)), Some(42));
         // Success keeps probing every tick.
         assert!(b.should_probe());
     }
 
     #[test]
-    fn resolve_idle_secs_failure_reports_active_and_backs_off() {
+    fn resolve_idle_secs_failure_reports_unknown_and_backs_off() {
         let mut b = IdleProbeBackoff::new();
-        // A failing probe reports 0 ("active") and arms the cooldown, so
-        // the next tick skips the probe.
+        // A failing probe reports `None` (idle unknown) and arms the
+        // cooldown, so the next tick skips the probe.
         assert_eq!(
             resolve_idle_secs(&mut b, || Err("no screensaver".into())),
-            0
+            None
         );
         assert!(!b.should_probe());
     }
@@ -1313,10 +1341,32 @@ mod tests {
     fn resolve_idle_secs_skips_probe_during_cooldown() {
         let mut b = IdleProbeBackoff::new();
         // Arm a cooldown via one failure...
-        assert_eq!(resolve_idle_secs(&mut b, || Err("boom".into())), 0);
+        assert_eq!(resolve_idle_secs(&mut b, || Err("boom".into())), None);
         // ...then the next call must NOT invoke the probe at all.
         let result = resolve_idle_secs(&mut b, || panic!("probe must not run in cooldown"));
-        assert_eq!(result, 0);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn idle_for_typing_defer_passes_real_reading_through() {
+        // A successful probe (even 0 = active) is a usable signal.
+        assert_eq!(idle_for_typing_defer(Some(0), 0, Some(false)), Some(0));
+        assert_eq!(idle_for_typing_defer(Some(5), 5, None), Some(5));
+    }
+
+    #[test]
+    fn idle_for_typing_defer_unknown_idle_is_none() {
+        // Wayland (#67): no reading and not locked → can't judge typing,
+        // so the defer check must see `None` and fire the break.
+        assert_eq!(idle_for_typing_defer(None, 0, None), None);
+        assert_eq!(idle_for_typing_defer(None, 0, Some(false)), None);
+    }
+
+    #[test]
+    fn idle_for_typing_defer_locked_session_is_known_away() {
+        // No HID reading, but the session is locked: the user is
+        // definitely away, so surface the lock-promoted idle value.
+        assert_eq!(idle_for_typing_defer(None, 900, Some(true)), Some(900));
     }
 
     #[test]
