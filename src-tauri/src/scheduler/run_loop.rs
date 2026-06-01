@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 use user_idle::UserIdle;
@@ -550,12 +550,44 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
 /// the divergence. `Sleep` goes through the bedtime path's own
 /// `overlay::fire_break` (different postpone semantics) and never reaches
 /// this helper.
-async fn deliver_scheduled_break(
-    app: &AppHandle,
+async fn deliver_scheduled_break<R: Runtime>(
+    app: &AppHandle<R>,
     sched: &Scheduler,
     s: &Settings,
     kind: BreakKind,
 ) -> BreakDelivery {
+    let intensity = sched.stats.lock().await.intensity();
+    let event = scheduled_break_event(kind, s, intensity);
+    let duration_secs = event.duration_secs;
+    let enforceable = event.enforceable;
+    let delivery = delivery_for(kind, s);
+    deliver_break(
+        app,
+        &sched.current_break,
+        event,
+        delivery,
+        s.monitor_placement,
+    );
+    hooks::run_hooks(
+        s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(kind, duration_secs),
+    );
+    sched.logger.log(EventPayload::BreakStart {
+        kind,
+        duration_secs,
+        enforceable,
+    });
+    delivery
+}
+
+/// Resolve the per-kind `BreakEvent` content for a scheduled micro/long
+/// break. Pure (no I/O) so the field resolution — which fields each kind
+/// draws, the strict-mode postpone lock, the break-health intensity gate
+/// — is unit-testable without a windowing runtime. `intensity` is the
+/// live value from the stats lock; the helper applies the
+/// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
+fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
     let (duration_secs, enforceable, manual_finish, hints) = match kind {
         BreakKind::Long => (
             s.long_duration_secs,
@@ -571,39 +603,20 @@ async fn deliver_scheduled_break(
         ),
         BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
     };
-    let intensity = sched.stats.lock().await.intensity();
-    let delivery = delivery_for(kind, s);
-    deliver_break(
-        app,
-        &sched.current_break,
-        BreakEvent {
-            kind,
-            duration_secs,
-            enforceable,
-            manual_finish,
-            postpone_available: s.postpone_enabled && !s.strict_mode,
-            hints,
-            hint_rotate_seconds: s.hint_rotate_seconds,
-            health_intensity: if s.break_health_enabled {
-                intensity
-            } else {
-                0.0
-            },
-        },
-        delivery,
-        s.monitor_placement,
-    );
-    hooks::run_hooks(
-        s,
-        HookEvent::BreakStart,
-        HookContext::with_kind_duration(kind, duration_secs),
-    );
-    sched.logger.log(EventPayload::BreakStart {
+    BreakEvent {
         kind,
         duration_secs,
         enforceable,
-    });
-    delivery
+        manual_finish,
+        postpone_available: s.postpone_enabled && !s.strict_mode,
+        hints,
+        hint_rotate_seconds: s.hint_rotate_seconds,
+        health_intensity: if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
+    }
 }
 
 /// Rate-limit window for repeated `UserIdle::get_time` failure warnings.
@@ -1050,6 +1063,89 @@ fn process_match(running: &str, target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Drives `deliver_scheduled_break` end to end through the
+    // Notification delivery path — the one branch that doesn't enumerate
+    // monitors (Tauri's MockRuntime leaves monitor APIs unimplemented, so
+    // the overlay path can't run under test). Covers the orchestration
+    // glue: stats lock, event build, delivery routing, hook + log. Gated
+    // off Windows because the mock rig is.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn deliver_scheduled_break_notification_path_runs_glue() {
+        use crate::test_support::test_scheduler;
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let mut settings = Settings::default();
+        settings.micro_break_mode = "notification".into();
+        let (_dir, sched) = test_scheduler(settings.clone());
+
+        let app = mock_builder()
+            .plugin(tauri_plugin_notification::init())
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        let delivery =
+            deliver_scheduled_break(app.handle(), &sched, &settings, BreakKind::Micro).await;
+
+        assert_eq!(delivery, BreakDelivery::Notification);
+        // Notification delivery must not stash an overlay break.
+        assert!(sched.current_break.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn scheduled_break_event_long_draws_long_fields() {
+        let s = Settings::default();
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.5);
+        assert_eq!(e.kind, BreakKind::Long);
+        assert_eq!(e.duration_secs, s.long_duration_secs);
+        assert_eq!(e.manual_finish, s.long_manual_finish);
+        assert_eq!(e.hints, effective_long_hints(&s));
+        // break_health is enabled by default → live intensity passes through.
+        assert_eq!(e.health_intensity, 0.5);
+    }
+
+    #[test]
+    fn scheduled_break_event_micro_draws_micro_fields() {
+        let s = Settings::default();
+        let e = scheduled_break_event(BreakKind::Micro, &s, 0.5);
+        assert_eq!(e.kind, BreakKind::Micro);
+        assert_eq!(e.duration_secs, s.micro_duration_secs);
+        assert_eq!(e.manual_finish, s.micro_manual_finish);
+        assert_eq!(e.hints, effective_micro_hints(&s));
+    }
+
+    #[test]
+    #[should_panic(expected = "sleep breaks use the bedtime fire path")]
+    fn scheduled_break_event_rejects_sleep() {
+        // Sleep is delivered through the bedtime path, never this helper;
+        // the invariant is enforced with a panic and asserted here.
+        let s = Settings::default();
+        let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn scheduled_break_event_health_gate_zeroes_intensity_when_disabled() {
+        let mut s = Settings::default();
+        s.break_health_enabled = false;
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.42);
+        assert_eq!(e.health_intensity, 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn scheduled_break_event_strict_mode_forces_enforceable_and_no_postpone() {
+        let mut s = Settings::default();
+        s.strict_mode = true;
+        s.postpone_enabled = true;
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        assert!(e.enforceable, "strict mode forces enforceable");
+        assert!(!e.postpone_available, "strict mode disables postpone");
+    }
 
     #[test]
     fn import_pending_returns_false_when_flag_clear() {
