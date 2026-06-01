@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 import type { BreakSound } from "../../../lib/break-sound";
 
@@ -92,6 +98,26 @@ describe("SoundControls", () => {
       target: { value: "ambient" },
     });
     expect(previewAmbient).toHaveBeenCalledTimes(1);
+  });
+
+  it("auditions a custom file right after it's picked", async () => {
+    openMock.mockResolvedValueOnce("/music/rain.mp3");
+    const onChange = vi.fn();
+    render(
+      <SoundControls
+        sound={{ mode: "ambient", sound_id: "custom", custom_path: "" }}
+        volume={0.5}
+        onChange={onChange}
+        isSupporter
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /choose file|replace/i }));
+    await waitFor(() =>
+      expect(previewCustomAmbient).toHaveBeenCalledWith("/music/rain.mp3", 0.5),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ custom_path: "/music/rain.mp3" }),
+    );
   });
 
   it("never plays while muted (volume 0) or off", () => {

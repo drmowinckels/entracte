@@ -72,6 +72,13 @@ fn is_wayland_session() -> bool {
 /// geometry; on X11 and macOS `monitor.size()` is already true physical,
 /// so it's a no-op. Pure so the correction is unit-testable without a
 /// windowing system.
+///
+/// Assumes a uniform scale across monitors: each rect's *position* is
+/// divided by that monitor's own scale, which only stays globally
+/// coherent when every monitor shares one factor (the common case). A
+/// mixed-DPI Wayland layout would need a shared coordinate basis — not
+/// handled here, since the whole correction is a workaround for the tao
+/// reporting quirk rather than a general geometry layer.
 fn scale_corrected_rect(rect: MonitorRect, scale: f64, wayland: bool) -> MonitorRect {
     if !wayland || scale <= 1.0 {
         return rect;
@@ -280,21 +287,35 @@ pub fn fire_break<R: Runtime>(
 
     for (idx, monitor) in monitors.iter().enumerate() {
         if let Some(window) = ensure_overlay(app, idx) {
-            let monitor_rect = scale_corrected_rect(
-                MonitorRect {
-                    x: monitor.position().x,
-                    y: monitor.position().y,
-                    width: monitor.size().width,
-                    height: monitor.size().height,
-                },
-                monitor.scale_factor(),
-                wayland,
-            );
+            let scale = monitor.scale_factor();
+            let reported = MonitorRect {
+                x: monitor.position().x,
+                y: monitor.position().y,
+                width: monitor.size().width,
+                height: monitor.size().height,
+            };
+            let monitor_rect = scale_corrected_rect(reported, scale, wayland);
             let rect = if windowed {
                 centered_windowed_rect(monitor_rect, 0.8)
             } else {
                 monitor_rect
             };
+            // The geometry, scale, and Wayland flag in one line so a
+            // diagnostics report can confirm the overlay was sized to the
+            // monitor (and flag the inverse of #67 — a too-small overlay
+            // if some compositor reports true physical despite scaling).
+            log::debug!(
+                "overlay-{idx}: wayland={wayland} scale={scale:.2} reported={rw}x{rh}@({rx},{ry}) \
+                 -> set {w}x{h}@({x},{y})",
+                rw = reported.width,
+                rh = reported.height,
+                rx = reported.x,
+                ry = reported.y,
+                w = rect.width,
+                h = rect.height,
+                x = rect.x,
+                y = rect.y,
+            );
             let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
             let _ = window.set_size(tauri::PhysicalSize::new(rect.width, rect.height));
             let _ = window.set_always_on_top(true);
