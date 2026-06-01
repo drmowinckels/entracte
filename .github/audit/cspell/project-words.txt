@@ -169,3 +169,4 @@ unserialisable
 keydowns
 tabpanels
 describedby
+MPRIS

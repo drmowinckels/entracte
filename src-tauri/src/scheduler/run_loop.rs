@@ -128,6 +128,10 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         sched.auto_suppress_reason.store(0, Ordering::Relaxed);
 
         let s = sched.settings.lock().await.clone();
+        // Mirror the "pause media during breaks" setting into the media
+        // module so the synchronous overlay path can read it lock-free
+        // when a break fires (#77).
+        crate::media::set_enabled(s.pause_media_during_breaks);
         let now_min = current_minutes();
 
         // `UserIdle::get_time()` round-trips to the windowing system on X11 /

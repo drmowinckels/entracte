@@ -228,6 +228,12 @@ pub struct Settings {
     pub pause_during_camera: bool,
     #[serde(default)]
     pub pause_during_video: bool,
+    /// When a break overlay opens, pause whatever media is playing and
+    /// resume it when the break ends. Distinct from the `pause_during_*`
+    /// guards above: those *suppress* breaks, this one lets the break
+    /// proceed while quieting your media. See `crate::media`.
+    #[serde(default)]
+    pub pause_media_during_breaks: bool,
     pub work_window_enabled: bool,
     pub work_start_minutes: u32,
     pub work_end_minutes: u32,
@@ -321,6 +327,7 @@ impl Default for Settings {
             pause_during_dnd: true,
             pause_during_camera: true,
             pause_during_video: false,
+            pause_media_during_breaks: false,
             work_window_enabled: false,
             work_start_minutes: 9 * 60,
             work_end_minutes: 17 * 60,

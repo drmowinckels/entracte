@@ -45,6 +45,7 @@ export type SchedulerSettings = {
   pause_during_dnd: boolean;
   pause_during_camera: boolean;
   pause_during_video: boolean;
+  pause_media_during_breaks: boolean;
   work_window_enabled: boolean;
   work_start_minutes: number;
   work_end_minutes: number;

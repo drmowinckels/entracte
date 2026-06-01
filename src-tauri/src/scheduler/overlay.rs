@@ -203,6 +203,11 @@ pub fn fire_break<R: Runtime>(
     payload.postpone_available = payload.postpone_available && !payload.enforceable;
     *super::lock_current_break(current_break) = Some(payload.clone());
 
+    // Quiet any playing media for the duration of the break (#77). No-op
+    // unless the user enabled it; `end_break` resumes. Only the overlay
+    // path reaches here — notification-only breaks don't block the screen.
+    crate::media::on_break_start();
+
     let monitors = select_overlay_monitors(app, placement);
     let count = monitors.len().max(1);
     let mut shown = 0usize;

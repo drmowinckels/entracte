@@ -12,6 +12,7 @@
   "pause_during_dnd": true,
   "pause_during_camera": true,
   "pause_during_video": false,
+  "pause_media_during_breaks": false,
   "work_window_enabled": true,
   "work_start_minutes": 540,
   "work_end_minutes": 1020,

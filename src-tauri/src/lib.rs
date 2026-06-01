@@ -6,6 +6,7 @@ mod dnd;
 mod hooks;
 mod ipc;
 mod license_redact;
+mod media;
 mod pause_store;
 mod platform;
 mod renderer_log;
