@@ -152,54 +152,185 @@ mod inner {
 #[cfg(target_os = "linux")]
 mod inner {
     use std::process::Command;
-    use std::sync::atomic::{AtomicI64, Ordering};
     use std::sync::Mutex;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant};
 
-    // `loginctl show-session` spawns a child process. The scheduler
-    // ticks at 1 Hz, so cache the answer for a few seconds — the lock
-    // state cannot change meaningfully faster than the user can react
-    // to it, and a fresh probe at most every CACHE_TTL is plenty.
-    static CACHE: Mutex<Option<(Instant, Option<bool>)>> = Mutex::new(None);
-    const CACHE_TTL: Duration = Duration::from_secs(5);
+    // `loginctl show-session` spawns a child process. While it's
+    // answering we re-probe at `HEALTHY_TTL` so a lock/unlock is noticed
+    // promptly without forking once per 1 Hz tick.
+    const HEALTHY_TTL: Duration = Duration::from_secs(5);
 
-    // Rate-limit window for repeated `loginctl` failures. Without this,
-    // a NixOS / Alpine / container host with no `loginctl` would silently
-    // dead-on-arrival the lock feature; the warn shows up once a minute
-    // so operators can see "lock detection disabled" in the journal.
-    const PROBE_WARN_INTERVAL_SECS: i64 = 60;
-    static PROBE_LAST_WARN_EPOCH: AtomicI64 = AtomicI64::new(0);
+    // Once `loginctl` is *persistently* failing (no systemd session,
+    // missing binary, container), keep retrying — a session could still
+    // appear — but back the interval off so we stop forking every few
+    // seconds, settling at this cap. The matching warning is logged once,
+    // on the transition into the failed state, not on every probe.
+    const FAILED_BACKOFF_MAX: Duration = Duration::from_secs(300);
+
+    static STATE: Mutex<ProbeState> = Mutex::new(ProbeState {
+        next_probe_at: None,
+        last_value: None,
+        consecutive_failures: 0,
+        disabled_logged: false,
+    });
+
+    struct ProbeState {
+        /// Earliest instant we're allowed to spawn `loginctl` again.
+        next_probe_at: Option<Instant>,
+        /// Last determined value, served while inside the interval.
+        last_value: Option<bool>,
+        /// Failures since the last healthy probe, driving the back-off.
+        consecutive_failures: u32,
+        /// Whether we've already logged the current failed streak, so the
+        /// "disabled" warning fires once rather than on every probe.
+        disabled_logged: bool,
+    }
+
+    /// What a single `loginctl` probe told us.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ProbeOutcome {
+        /// Definite lock state (`LockedHint` = yes/no).
+        Determined(bool),
+        /// `loginctl` ran but the hint was unset/unparseable — not a
+        /// failure, just "can't say this time".
+        Unknown,
+        /// `loginctl` couldn't be spawned or exited non-zero. Carries the
+        /// detail for the one-time log line.
+        Failed(String),
+    }
+
+    /// A probe-health transition worth logging exactly once.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum HealthLog {
+        Disabled,
+        Restored,
+    }
 
     pub fn screen_locked() -> Option<bool> {
         let now = Instant::now();
-        let snapshot = CACHE.lock().ok().and_then(|g| *g);
-        if let Some(cached) = cache_lookup(snapshot, now, CACHE_TTL) {
-            return cached;
+        {
+            let st = lock_state();
+            if let Some(at) = st.next_probe_at {
+                if now < at {
+                    return st.last_value;
+                }
+            }
         }
-        let measured = probe();
-        if let Ok(mut g) = CACHE.lock() {
-            *g = Some((now, measured));
+        let outcome = probe();
+        let prev = {
+            let st = lock_state();
+            (st.consecutive_failures, st.disabled_logged)
+        };
+        let (next, health) = plan(prev, &outcome);
+        match health {
+            Some(HealthLog::Disabled) => {
+                let detail = match &outcome {
+                    ProbeOutcome::Failed(d) => d.as_str(),
+                    _ => "unknown",
+                };
+                log::warn!(
+                    "session_lock: loginctl probe failed ({detail}); lock detection disabled \
+                     (retrying quietly until it recovers)"
+                );
+            }
+            Some(HealthLog::Restored) => {
+                log::info!("session_lock: loginctl probe recovered; lock detection re-enabled")
+            }
+            None => {}
         }
-        measured
+        let mut st = lock_state();
+        st.consecutive_failures = next.consecutive_failures;
+        st.disabled_logged = next.disabled_logged;
+        st.last_value = next.value;
+        st.next_probe_at = Some(now + next.ttl);
+        st.last_value
     }
 
-    /// Pure cache decision: given the cache contents, the current
-    /// instant, and the TTL, return `Some(value)` if the cached value
-    /// is still fresh and should be served, or `None` if the caller
-    /// must re-probe. Pulled out as a pure function so the cache logic
-    /// is testable without touching a real `loginctl` or `static`.
-    pub(super) fn cache_lookup(
-        cache: Option<(Instant, Option<bool>)>,
-        now: Instant,
-        ttl: Duration,
-    ) -> Option<Option<bool>> {
-        match cache {
-            Some((at, v)) if now.duration_since(at) < ttl => Some(v),
-            _ => None,
+    fn lock_state() -> std::sync::MutexGuard<'static, ProbeState> {
+        STATE.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The state changes a probe outcome implies. Returned by [`plan`].
+    pub(super) struct Plan {
+        pub consecutive_failures: u32,
+        pub disabled_logged: bool,
+        pub ttl: Duration,
+        pub value: Option<bool>,
+    }
+
+    /// Pure decision: from the prior `(failure streak, already-logged)`
+    /// and a fresh probe outcome, compute the next state, the re-probe
+    /// interval, and whether to emit a one-time health-transition log.
+    /// Split out so the back-off growth and log-once behaviour are
+    /// unit-testable without a real `loginctl`.
+    pub(super) fn plan(
+        (prev_failures, prev_disabled_logged): (u32, bool),
+        outcome: &ProbeOutcome,
+    ) -> (Plan, Option<HealthLog>) {
+        match outcome {
+            ProbeOutcome::Failed(_) => {
+                let consecutive_failures = prev_failures.saturating_add(1);
+                let health = if prev_disabled_logged {
+                    None
+                } else {
+                    Some(HealthLog::Disabled)
+                };
+                (
+                    Plan {
+                        consecutive_failures,
+                        disabled_logged: true,
+                        ttl: probe_backoff_ttl(consecutive_failures),
+                        value: None,
+                    },
+                    health,
+                )
+            }
+            // `loginctl` answered (even if "unknown"), so the probe is
+            // healthy again: reset the streak and, if we'd announced it
+            // disabled, announce recovery once.
+            ProbeOutcome::Determined(b) => (
+                healthy_plan(Some(*b)),
+                restored_if_was_disabled(prev_disabled_logged),
+            ),
+            ProbeOutcome::Unknown => (
+                healthy_plan(None),
+                restored_if_was_disabled(prev_disabled_logged),
+            ),
         }
     }
 
-    fn probe() -> Option<bool> {
+    fn healthy_plan(value: Option<bool>) -> Plan {
+        Plan {
+            consecutive_failures: 0,
+            disabled_logged: false,
+            ttl: HEALTHY_TTL,
+            value,
+        }
+    }
+
+    fn restored_if_was_disabled(prev_disabled_logged: bool) -> Option<HealthLog> {
+        if prev_disabled_logged {
+            Some(HealthLog::Restored)
+        } else {
+            None
+        }
+    }
+
+    /// Re-probe interval after `consecutive_failures` failures. `0` (a
+    /// healthy probe) uses `HEALTHY_TTL`; failures grow it exponentially
+    /// from 30 s, capped at `FAILED_BACKOFF_MAX`, so a permanently-broken
+    /// probe settles at one attempt every five minutes instead of every
+    /// five seconds.
+    pub(super) fn probe_backoff_ttl(consecutive_failures: u32) -> Duration {
+        if consecutive_failures == 0 {
+            return HEALTHY_TTL;
+        }
+        let shift = (consecutive_failures - 1).min(u32::BITS - 1);
+        let secs = 30u64.saturating_mul(1u64 << shift);
+        Duration::from_secs(secs).min(FAILED_BACKOFF_MAX)
+    }
+
+    fn probe() -> ProbeOutcome {
         // systemd-logind exposes `LockedHint` on every session,
         // regardless of compositor or desktop environment (GNOME, KDE,
         // sway, X11, Wayland). Shelling out to `loginctl` keeps the
@@ -214,48 +345,15 @@ mod inner {
             .output()
         {
             Ok(o) => o,
-            Err(e) => {
-                warn_probe_failure(&format!("spawn failed: {e}"));
-                return None;
-            }
+            Err(e) => return ProbeOutcome::Failed(format!("spawn failed: {e}")),
         };
         if !out.status.success() {
-            warn_probe_failure(&format!("loginctl exited {:?}", out.status.code()));
-            return None;
+            return ProbeOutcome::Failed(format!("loginctl exited {:?}", out.status.code()));
         }
-        parse_locked_hint(&String::from_utf8_lossy(&out.stdout))
-    }
-
-    /// Surface a probe failure once per `PROBE_WARN_INTERVAL_SECS` so
-    /// the failure is visible to operators (NixOS, Alpine, containers
-    /// without systemd) instead of silently dead-on-arrival. Mirrors
-    /// the rate-limit pattern in `run_loop::warn_user_idle_failure`.
-    fn warn_probe_failure(detail: &str) {
-        if warn_throttle(
-            &PROBE_LAST_WARN_EPOCH,
-            now_epoch_secs(),
-            PROBE_WARN_INTERVAL_SECS,
-        ) {
-            log::warn!("session_lock: loginctl probe failed ({detail}); lock detection disabled");
+        match parse_locked_hint(&String::from_utf8_lossy(&out.stdout)) {
+            Some(b) => ProbeOutcome::Determined(b),
+            None => ProbeOutcome::Unknown,
         }
-    }
-
-    /// Rate-limit gate shared with the probe warner. Pure (modulo the
-    /// atomic) so the throttle window is unit-testable.
-    pub(super) fn warn_throttle(cell: &AtomicI64, now_epoch: i64, min_interval_secs: i64) -> bool {
-        let prev = cell.load(Ordering::Relaxed);
-        if prev != 0 && now_epoch.saturating_sub(prev) < min_interval_secs {
-            return false;
-        }
-        cell.store(now_epoch, Ordering::Relaxed);
-        true
-    }
-
-    fn now_epoch_secs() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
     }
 
     pub(super) fn parse_locked_hint(text: &str) -> Option<bool> {
@@ -295,63 +393,88 @@ mod inner {
         }
 
         #[test]
-        fn cache_lookup_returns_none_when_unset() {
-            assert_eq!(cache_lookup(None, Instant::now(), CACHE_TTL), None);
+        fn backoff_ttl_is_healthy_interval_when_not_failing() {
+            assert_eq!(probe_backoff_ttl(0), HEALTHY_TTL);
         }
 
         #[test]
-        fn cache_lookup_serves_fresh_value() {
-            let now = Instant::now();
-            assert_eq!(
-                cache_lookup(Some((now, Some(true))), now, CACHE_TTL),
-                Some(Some(true)),
+        fn backoff_ttl_grows_then_caps() {
+            assert_eq!(probe_backoff_ttl(1), Duration::from_secs(30));
+            assert_eq!(probe_backoff_ttl(2), Duration::from_secs(60));
+            assert_eq!(probe_backoff_ttl(3), Duration::from_secs(120));
+            assert_eq!(probe_backoff_ttl(4), Duration::from_secs(240));
+            // 30 * 2^4 = 480 > cap → clamped.
+            assert_eq!(probe_backoff_ttl(5), FAILED_BACKOFF_MAX);
+            // Extreme streak must not overflow the shift or multiply.
+            assert_eq!(probe_backoff_ttl(u32::MAX), FAILED_BACKOFF_MAX);
+        }
+
+        #[test]
+        fn plan_first_failure_logs_disabled_once_and_backs_off() {
+            let (plan, log) = plan(
+                (0, false),
+                &ProbeOutcome::Failed("loginctl exited Some(1)".into()),
             );
+            assert_eq!(plan.consecutive_failures, 1);
+            assert!(plan.disabled_logged);
+            assert_eq!(plan.ttl, Duration::from_secs(30));
+            assert_eq!(plan.value, None);
+            assert_eq!(log, Some(HealthLog::Disabled));
         }
 
         #[test]
-        fn cache_lookup_treats_expired_as_miss() {
-            // Past-the-TTL must re-probe, not serve the stale value.
-            let stale = Instant::now() - Duration::from_secs(10);
-            assert_eq!(
-                cache_lookup(Some((stale, Some(true))), Instant::now(), CACHE_TTL),
-                None,
-            );
+        fn plan_repeated_failure_is_silent_and_grows_backoff() {
+            // Already announced disabled: don't log again, keep backing off.
+            let (plan, log) = plan((1, true), &ProbeOutcome::Failed("spawn failed".into()));
+            assert_eq!(plan.consecutive_failures, 2);
+            assert!(plan.disabled_logged);
+            assert_eq!(plan.ttl, Duration::from_secs(60));
+            assert_eq!(log, None);
         }
 
         #[test]
-        fn cache_lookup_preserves_none_measurement() {
-            // A cached `None` (probe couldn't determine) is itself a
-            // valid answer to serve — we mustn't re-spawn loginctl
-            // every tick when it's failing.
-            let now = Instant::now();
-            assert_eq!(cache_lookup(Some((now, None)), now, CACHE_TTL), Some(None),);
+        fn plan_recovery_logs_restored_once() {
+            // Determined after a logged-disabled streak: reset, log once.
+            let (plan, log) = plan((4, true), &ProbeOutcome::Determined(true));
+            assert_eq!(plan.consecutive_failures, 0);
+            assert!(!plan.disabled_logged);
+            assert_eq!(plan.ttl, HEALTHY_TTL);
+            assert_eq!(plan.value, Some(true));
+            assert_eq!(log, Some(HealthLog::Restored));
         }
 
         #[test]
-        fn warn_throttle_fires_first_then_suppresses_within_window() {
-            let cell = AtomicI64::new(0);
-            assert!(warn_throttle(&cell, 1000, 60));
-            assert_eq!(cell.load(Ordering::Relaxed), 1000);
-            assert!(!warn_throttle(&cell, 1030, 60));
-            assert_eq!(cell.load(Ordering::Relaxed), 1000);
+        fn plan_healthy_determined_is_silent() {
+            let (plan, log) = plan((0, false), &ProbeOutcome::Determined(false));
+            assert_eq!(plan.value, Some(false));
+            assert_eq!(plan.ttl, HEALTHY_TTL);
+            assert_eq!(log, None);
         }
 
         #[test]
-        fn warn_throttle_refires_after_window() {
-            let cell = AtomicI64::new(1000);
-            assert!(warn_throttle(&cell, 1060, 60));
-            assert_eq!(cell.load(Ordering::Relaxed), 1060);
+        fn plan_unknown_is_healthy_with_no_value() {
+            // loginctl answered but the hint was unset: not a failure, no
+            // value, healthy interval, and it clears a prior disabled log.
+            let (after_disabled, log) = plan((3, true), &ProbeOutcome::Unknown);
+            assert_eq!(after_disabled.consecutive_failures, 0);
+            assert_eq!(after_disabled.value, None);
+            assert_eq!(after_disabled.ttl, HEALTHY_TTL);
+            assert_eq!(log, Some(HealthLog::Restored));
+
+            let (healthy, log) = plan((0, false), &ProbeOutcome::Unknown);
+            assert_eq!(healthy.value, None);
+            assert_eq!(log, None);
         }
 
         #[test]
         fn does_not_panic_on_host() {
-            // End-to-end smoke: exercise the cache + probe + loginctl
-            // round-trip without asserting the result. On CI the
-            // calling process has no logind session, so loginctl
-            // returns non-zero and we fall back to None — the value of
-            // the test is purely that we don't crash on the FFI path.
+            // End-to-end smoke: exercise the state + probe + loginctl
+            // round-trip without asserting the result. On CI the calling
+            // process has no logind session, so loginctl returns non-zero
+            // and we fall back to None — the value of the test is purely
+            // that we don't crash on the FFI path.
             let _ = screen_locked();
-            // Call again to hit the cache-hit branch.
+            // Call again to hit the within-interval (cached) branch.
             let _ = screen_locked();
         }
     }
