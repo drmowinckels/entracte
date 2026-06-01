@@ -5,6 +5,10 @@ accept = ["200", "206", "429"]
 max_concurrency = 8
 timeout = 20
 retry_wait_time = 2
+# Retry transient failures (connection resets, momentary 5xx) a few times
+# before failing the merge-blocking gate, so a single network blip on one
+# of ~300 external links doesn't red the whole run.
+max_retries = 5
 fallback_extensions = ["md", "html"]
 
 exclude_loopback = true
@@ -21,6 +25,16 @@ exclude = [
   # rationale as the publishers above — exclude rather than accept 403
   # globally, which would mask real auth failures elsewhere.
   '^https?://(.*\.)?freesound\.org',
+  # Canonical attribution / boilerplate links that are stable in a browser
+  # but intermittently 5xx or reset the connection against the checker:
+  #   - claude.com/claude-code: the Claude Code attribution in README / PR
+  #     bodies — returned HTTP 500 on consecutive runs (likely rejecting the
+  #     runner IP).
+  #   - contributor-covenant.org: the CoC source links — reset mid-request.
+  # Same rationale as the publishers above: exclude these canonical URLs
+  # rather than accept 500 globally, which would mask real failures.
+  '^https?://(www\.)?claude\.com',
+  '^https?://(www\.)?contributor-covenant\.org',
   # rustdoc / TypeDoc output: generated into the built site at /api/{rust,ts}/,
   # not present in source.
   '/api/(rust|ts)/',
