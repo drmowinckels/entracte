@@ -117,18 +117,31 @@ fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::W
     }
 }
 
+/// Pick the monitor(s) to cover for a `Primary`/`Active`-fallback break,
+/// given what the windowing system reports as the primary monitor and the
+/// full available list. Wayland has no concept of a "primary" monitor, so
+/// `tao`/Tauri returns `None` there even when `available_monitors()` lists
+/// several — without a fallback that produces an *empty* target list, so
+/// no overlay window is ever built and the break is invisible (#67). Fall
+/// back to the first available monitor in that case. Generic + pure so the
+/// fallback is unit-testable without a windowing system.
+fn primary_or_first<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
+    match primary {
+        Some(m) => vec![m],
+        None => available.first().cloned().into_iter().collect(),
+    }
+}
+
 fn select_overlay_monitors<R: Runtime>(
     app: &AppHandle<R>,
     placement: MonitorPlacement,
 ) -> Vec<tauri::Monitor> {
     match placement {
         MonitorPlacement::All => app.available_monitors().unwrap_or_default(),
-        MonitorPlacement::Primary => app
-            .primary_monitor()
-            .ok()
-            .flatten()
-            .into_iter()
-            .collect::<Vec<_>>(),
+        MonitorPlacement::Primary => primary_or_first(
+            app.primary_monitor().ok().flatten(),
+            &app.available_monitors().unwrap_or_default(),
+        ),
         MonitorPlacement::Active => {
             let all = app.available_monitors().unwrap_or_default();
             if all.is_empty() {
@@ -149,12 +162,7 @@ fn select_overlay_monitors<R: Runtime>(
             };
             match idx {
                 Some(i) => vec![all[i].clone()],
-                None => app
-                    .primary_monitor()
-                    .ok()
-                    .flatten()
-                    .into_iter()
-                    .collect::<Vec<_>>(),
+                None => primary_or_first(app.primary_monitor().ok().flatten(), &all),
             }
         }
     }
@@ -314,6 +322,32 @@ mod tests {
     #[test]
     fn pick_active_monitor_returns_none_for_empty_list() {
         assert_eq!(pick_active_monitor(0.0, 0.0, &[]), None);
+    }
+
+    #[test]
+    fn primary_or_first_uses_primary_when_present() {
+        // When the platform reports a primary monitor, target exactly it
+        // — never widen to the whole list.
+        assert_eq!(
+            primary_or_first(Some("HDMI-1"), &["HDMI-1", "DP-2"]),
+            vec!["HDMI-1"]
+        );
+    }
+
+    #[test]
+    fn primary_or_first_falls_back_to_first_available_on_wayland() {
+        // The #67 case: Wayland reports no primary, but monitors exist.
+        // Must fall back to the first so an overlay still appears.
+        assert_eq!(primary_or_first(None, &["DP-2", "HDMI-1"]), vec!["DP-2"]);
+    }
+
+    #[test]
+    fn primary_or_first_empty_when_no_monitors_at_all() {
+        // No primary and no available monitors (headless / all unplugged)
+        // — nothing to target, and the caller logs the invisible-break
+        // error rather than crashing.
+        let none: Option<&str> = None;
+        assert!(primary_or_first(none, &[] as &[&str]).is_empty());
     }
 
     #[test]
