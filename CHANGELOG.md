@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+## [0.0.4] — 2026-06-01
+
+Follow-up Linux/Wayland beta from Steffi's dual-4K @ 200% testing (#67): the break overlay now sizes and places itself correctly on scaled Wayland displays, breaks fire on time when idle detection isn't available, and choosing a sound plays it straight away.
+
 ### Changed
 
 - **Break sounds now audition the moment you pick them.** Choosing a track (or switching the sound mode, or picking a custom file) plays it straight away, instead of hiding the preview behind a separate "Preview" button that gave no visible feedback. ([#67](https://github.com/drmowinckels/entracte/issues/67))
