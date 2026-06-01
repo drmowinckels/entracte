@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+## [0.0.3] — 2026-06-01
+
+Linux-focused beta: breaks now show on Wayland, the logs are far quieter, and an optional "pause media during breaks" lands on every platform.
+
 ### Added
 
 - **Pause media while a break is showing.** A new opt-in toggle (Quiet times → During breaks) quiets whatever is playing when a break starts and resumes it when the break ends. On Linux this targets your media players precisely over MPRIS; on macOS and Windows it sends a play/pause media key as a best-effort. Off by default. ([#77](https://github.com/drmowinckels/entracte/issues/77))
