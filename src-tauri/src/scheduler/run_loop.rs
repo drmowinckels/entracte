@@ -133,32 +133,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // `UserIdle::get_time()` round-trips to the windowing system on X11 /
         // Wayland and isn't free on macOS either, so fetch once per tick and
         // reuse for screen-time, idle-suppression, and the typing-defer check.
-        // When the platform call is persistently broken — e.g. an X11 server
-        // with no MIT-SCREEN-SAVER extension, where libX11 prints a warning to
-        // stderr on *every* probe — `idle_backoff` stops us re-probing each
-        // tick so we don't hammer (and re-spam) a missing extension.
-        let raw_idle_secs = if idle_backoff.should_probe() {
-            match UserIdle::get_time() {
-                Ok(i) => {
-                    idle_backoff.record_success();
-                    i.as_seconds()
-                }
-                Err(e) => {
-                    let backoff_secs = idle_backoff.record_failure();
-                    warn_user_idle_failure(&e, backoff_secs);
-                    // Falling back to 0 means "active" so screen-time and
-                    // typing-defer behave conservatively rather than silently
-                    // suppressing breaks. The rate-limited warning above
-                    // surfaces the failure to operators.
-                    0
-                }
-            }
-        } else {
-            // In a back-off cooldown: the probe is known-broken, so skip it
-            // entirely and keep treating the user as active (0), exactly as a
-            // failed probe would, but without re-triggering the libX11 spam.
-            0
-        };
+        // The closure is the only platform-bound part; `resolve_idle_secs`
+        // holds the (unit-tested) back-off / fallback decision.
+        let raw_idle_secs = resolve_idle_secs(&mut idle_backoff, || {
+            UserIdle::get_time()
+                .map(|i| i.as_seconds())
+                .map_err(|e| e.to_string())
+        });
         // A locked screen is a stronger AFK signal than HIDIdleTime —
         // `caffeinate -u`, Zoom meetings, and synthetic-input utilities
         // can keep the HID counter at zero while the human is gone, but
@@ -961,14 +942,46 @@ pub(super) fn promote_idle_for_lock_with_cell(
     idle_secs_with_lock(raw_idle_secs, locked, s)
 }
 
-/// Surface a `UserIdle::get_time` error to the log, at most once per
+/// Resolve this tick's raw idle seconds, driving the probe back-off.
+/// `probe` performs the platform `UserIdle` call, yielding the idle
+/// seconds on success or a display-error string on failure. The back-off
+/// state and the throttled warning are handled here; the only thing the
+/// caller keeps platform-bound is `probe` itself, so this decision logic
+/// is unit-testable without a windowing system.
+///
+/// A failed *or* skipped (in-cooldown) probe reports `0` — i.e. "active",
+/// the conservative default that keeps screen-time and typing-defer from
+/// silently suppressing breaks rather than guessing the user is idle.
+fn resolve_idle_secs(
+    backoff: &mut IdleProbeBackoff,
+    probe: impl FnOnce() -> Result<u64, String>,
+) -> u64 {
+    if !backoff.should_probe() {
+        // In a back-off cooldown: the probe is known-broken, so skip it
+        // entirely rather than re-triggering the libX11 spam.
+        return 0;
+    }
+    match probe() {
+        Ok(secs) => {
+            backoff.record_success();
+            secs
+        }
+        Err(err) => {
+            let backoff_secs = backoff.record_failure();
+            warn_user_idle_failure(&err, backoff_secs);
+            0
+        }
+    }
+}
+
+/// Surface a `UserIdle::get_time` failure to the log, at most once per
 /// `USER_IDLE_WARN_INTERVAL_SECS`. Without this gate the production
 /// code silently fell back to "0 = active" forever, so a broken
 /// platform call (X11 down, macOS API change, Wayland portal denied)
 /// would invisibly break idle suppression and screen-time tracking.
 /// `backoff_secs` is how long the probe is now suppressed for, so the
 /// log explains why the per-second errors stop.
-fn warn_user_idle_failure(err: &user_idle::Error, backoff_secs: u64) {
+fn warn_user_idle_failure(err: &str, backoff_secs: u64) {
     if user_idle_warn_throttle(
         &USER_IDLE_LAST_WARN_EPOCH,
         now_epoch_secs_for_warn(),
@@ -1270,6 +1283,36 @@ mod tests {
         assert!(!b.should_probe());
         // Cooldown exhausted: probe again.
         assert!(b.should_probe());
+    }
+
+    #[test]
+    fn resolve_idle_secs_returns_probe_value_on_success() {
+        let mut b = IdleProbeBackoff::new();
+        assert_eq!(resolve_idle_secs(&mut b, || Ok(42)), 42);
+        // Success keeps probing every tick.
+        assert!(b.should_probe());
+    }
+
+    #[test]
+    fn resolve_idle_secs_failure_reports_active_and_backs_off() {
+        let mut b = IdleProbeBackoff::new();
+        // A failing probe reports 0 ("active") and arms the cooldown, so
+        // the next tick skips the probe.
+        assert_eq!(
+            resolve_idle_secs(&mut b, || Err("no screensaver".into())),
+            0
+        );
+        assert!(!b.should_probe());
+    }
+
+    #[test]
+    fn resolve_idle_secs_skips_probe_during_cooldown() {
+        let mut b = IdleProbeBackoff::new();
+        // Arm a cooldown via one failure...
+        assert_eq!(resolve_idle_secs(&mut b, || Err("boom".into())), 0);
+        // ...then the next call must NOT invoke the probe at all.
+        let result = resolve_idle_secs(&mut b, || panic!("probe must not run in cooldown"));
+        assert_eq!(result, 0);
     }
 
     #[test]
