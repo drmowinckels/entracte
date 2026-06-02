@@ -33,5 +33,7 @@ export function formatClockList(
   format: "12h" | "24h" = "24h",
 ): string {
   if (format === "24h") return times.join(", ");
-  return times.map((t) => formatMinutesOfDay(timeToMinutes(t), "12h")).join(", ");
+  return times
+    .map((t) => formatMinutesOfDay(timeToMinutes(t), "12h"))
+    .join(", ");
 }
