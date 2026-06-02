@@ -1,6 +1,6 @@
 import { useId, useState, type KeyboardEvent } from "react";
 
-export function InfoTip({ text }: { text: string }) {
+export function InfoTip({ text, warn }: { text: string; warn?: boolean }) {
   const [open, setOpen] = useState(false);
   const popupId = useId();
 
@@ -16,19 +16,23 @@ export function InfoTip({ text }: { text: string }) {
     }
   };
 
+  const classes = ["info-tip"];
+  if (warn) classes.push("info-tip-warn");
+  if (open) classes.push("info-tip-open");
+
   return (
     <span
-      className={open ? "info-tip info-tip-open" : "info-tip"}
+      className={classes.join(" ")}
       tabIndex={0}
       role="button"
-      aria-label="More information"
+      aria-label={warn ? "Warning" : "More information"}
       aria-expanded={open}
       aria-describedby={popupId}
       onKeyDown={onKeyDown}
       onClick={toggle}
       onBlur={() => setOpen(false)}
     >
-      <span aria-hidden="true">i</span>
+      <span aria-hidden="true">{warn ? "!" : "i"}</span>
       <span id={popupId} className="info-tip-popup" role="tooltip">
         {text}
       </span>
