@@ -18,8 +18,8 @@ use super::session_lock;
 use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
-    prebreak_warn_due, should_defer_for_typing, should_fire_fixed_now, BedtimeAction,
-    BedtimeWindow, PrebreakGate,
+    prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
+    BedtimeAction, BedtimeWindow, PrebreakGate,
 };
 use super::types::{BreakDelivery, BreakEvent, BreakKind, SuppressReason};
 use super::Scheduler;
@@ -358,30 +358,27 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             };
             // Fixed-time fires bypass the idle gate: the clock is the signal, not user activity.
             if fire_long {
-                let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Long).await;
-                let mut t = sched.timers.lock().await;
-                t.last_long = Instant::now();
-                t.last_micro = Instant::now();
-                t.long_warned = false;
-                t.micro_warned = false;
-                t.long_deferred_since = None;
-                t.micro_deferred_since = None;
-                if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                    t.active_break = Some(BreakKind::Long);
-                }
-                t.last_long_fixed_fire = Some((today_str.clone(), now_min));
+                fire_scheduled_break(
+                    &app,
+                    &sched,
+                    &s,
+                    BreakKind::Long,
+                    Instant::now(),
+                    Some((today_str.clone(), now_min)),
+                )
+                .await;
                 continue;
             }
             if fire_micro {
-                let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Micro).await;
-                let mut t = sched.timers.lock().await;
-                t.last_micro = Instant::now();
-                t.micro_warned = false;
-                t.micro_deferred_since = None;
-                if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                    t.active_break = Some(BreakKind::Micro);
-                }
-                t.last_micro_fixed_fire = Some((today_str.clone(), now_min));
+                fire_scheduled_break(
+                    &app,
+                    &sched,
+                    &s,
+                    BreakKind::Micro,
+                    Instant::now(),
+                    Some((today_str.clone(), now_min)),
+                )
+                .await;
                 continue;
             }
         }
@@ -516,28 +513,30 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
 
         if should_fire_long {
-            let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Long).await;
-            let mut t = sched.timers.lock().await;
-            t.last_long = Instant::now();
-            t.last_micro = Instant::now();
-            t.long_warned = false;
-            t.micro_warned = false;
-            t.long_deferred_since = None;
-            t.micro_deferred_since = None;
-            if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                t.active_break = Some(BreakKind::Long);
-            }
+            fire_scheduled_break(&app, &sched, &s, BreakKind::Long, Instant::now(), None).await;
         } else if should_fire_micro {
-            let delivery = deliver_scheduled_break(&app, &sched, &s, BreakKind::Micro).await;
-            let mut t = sched.timers.lock().await;
-            t.last_micro = Instant::now();
-            t.micro_warned = false;
-            t.micro_deferred_since = None;
-            if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                t.active_break = Some(BreakKind::Micro);
-            }
+            fire_scheduled_break(&app, &sched, &s, BreakKind::Micro, Instant::now(), None).await;
         }
     }
+}
+
+/// Fire a scheduled micro/long break end to end: deliver it (see
+/// [`deliver_scheduled_break`]) and apply the post-fire timer bookkeeping
+/// under the timers lock (see [`record_scheduled_fire`]). `now` and
+/// `fixed_key` are threaded straight through to the bookkeeping — the live
+/// call sites pass `Instant::now()` and `Some((today, minute))` for a
+/// fixed-time fire or `None` for an interval fire.
+async fn fire_scheduled_break<R: Runtime>(
+    app: &AppHandle<R>,
+    sched: &Scheduler,
+    s: &Settings,
+    kind: BreakKind,
+    now: Instant,
+    fixed_key: Option<(String, u32)>,
+) {
+    let delivery = deliver_scheduled_break(app, sched, s, kind).await;
+    let mut t = sched.timers.lock().await;
+    record_scheduled_fire(&mut t, kind, delivery, now, fixed_key);
 }
 
 /// Build and surface a scheduled micro/long break: resolve the per-kind
@@ -545,11 +544,11 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
 /// `BreakStart` hook, and log the event. Returns the resolved delivery so
 /// the caller can decide whether to mark an `active_break`.
 ///
-/// Timer bookkeeping stays with the caller: fixed-time and interval fires
-/// reset different timer fields, so folding them in here would just move
-/// the divergence. `Sleep` goes through the bedtime path's own
-/// `overlay::fire_break` (different postpone semantics) and never reaches
-/// this helper.
+/// Timer bookkeeping stays with the caller ([`fire_scheduled_break`]):
+/// fixed-time and interval fires reset different timer fields, so folding
+/// them in here would just move the divergence. `Sleep` goes through the
+/// bedtime path's own `overlay::fire_break` (different postpone semantics)
+/// and never reaches this helper.
 async fn deliver_scheduled_break<R: Runtime>(
     app: &AppHandle<R>,
     sched: &Scheduler,
@@ -1094,6 +1093,52 @@ mod tests {
         assert_eq!(delivery, BreakDelivery::Notification);
         // Notification delivery must not stash an overlay break.
         assert!(sched.current_break.lock().unwrap().is_none());
+    }
+
+    // Drives `fire_scheduled_break` end to end: the notification delivery
+    // plus the post-fire timer bookkeeping it applies under the lock.
+    // Gated off Windows for the same mock-rig reason as the glue test above.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn fire_scheduled_break_delivers_then_records_timers() {
+        use crate::test_support::test_scheduler;
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let mut settings = Settings::default();
+        settings.micro_break_mode = "notification".into();
+        let (_dir, sched) = test_scheduler(settings.clone());
+        {
+            let mut t = sched.timers.lock().await;
+            t.micro_warned = true;
+            t.micro_deferred_since = Some(Instant::now());
+        }
+
+        let app = mock_builder()
+            .plugin(tauri_plugin_notification::init())
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        let now = Instant::now();
+        fire_scheduled_break(
+            app.handle(),
+            &sched,
+            &settings,
+            BreakKind::Micro,
+            now,
+            Some(("2026-06-02".into(), 600)),
+        )
+        .await;
+
+        let t = sched.timers.lock().await;
+        assert_eq!(t.last_micro, now);
+        assert!(!t.micro_warned);
+        assert_eq!(t.micro_deferred_since, None);
+        assert_eq!(t.last_micro_fixed_fire, Some(("2026-06-02".into(), 600)));
+        // Notification delivery must not stash an active break.
+        assert_eq!(t.active_break, None);
     }
 
     #[test]
