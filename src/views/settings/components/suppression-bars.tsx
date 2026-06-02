@@ -1,4 +1,7 @@
-import { groupSuppressionsByReason } from "../../../lib/stats-format";
+import {
+  KIND_ORDER,
+  groupSuppressionsByReason,
+} from "../../../lib/stats-format";
 import type { SuppressionByKind } from "../types";
 
 const KIND_LABEL: Record<string, string> = {
@@ -13,11 +16,7 @@ export function SuppressionBars({ rows }: { rows: SuppressionByKind[] }) {
   const max = Math.max(1, ...grouped.map((g) => g.total));
   const kindsPresent = Array.from(
     new Set(grouped.flatMap((g) => g.segments.map((s) => s.kind))),
-  ).sort(
-    (a, b) =>
-      ["micro", "long", "sleep"].indexOf(a) -
-      ["micro", "long", "sleep"].indexOf(b),
-  );
+  ).sort((a, b) => KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b));
   return (
     <div
       className="suppression-bars"

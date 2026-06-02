@@ -35,6 +35,10 @@ export type SuppressionRowInput = {
   count: number;
 };
 
+/** Canonical break-kind ordering for stable colour/segment layout
+ * across the Insights views. */
+export const KIND_ORDER = ["micro", "long", "sleep"];
+
 export type SuppressionByReason = {
   reason: string;
   label: string;
@@ -62,7 +66,6 @@ export function groupSuppressionsByReason(
     }
     bucket.segments.set(r.kind, (bucket.segments.get(r.kind) ?? 0) + r.count);
   }
-  const KIND_ORDER = ["micro", "long", "sleep"];
   return [...byReason.values()]
     .map((b) => {
       const segments = [...b.segments.entries()]

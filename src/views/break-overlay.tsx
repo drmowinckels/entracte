@@ -23,6 +23,7 @@ import { derivePostpone } from "./break-overlay/postpone";
 import { breakSoundFor, labelFor } from "./break-overlay/types";
 import {
   RING_RADIUS,
+  clamp01,
   systemPrefersContrast,
   systemPrefersReducedTransparency,
 } from "./break-overlay/visual";
@@ -105,7 +106,7 @@ export default function BreakOverlay() {
   const seconds = remaining % 60;
   const label = labelFor(active.kind);
   const hintText = active.hints[hintIndex] ?? "";
-  const intensity = Math.max(0, Math.min(1, active.health_intensity));
+  const intensity = clamp01(active.health_intensity);
   const dismissable = !active.enforceable;
   const showPostpone = active.postpone_available && !finished;
   const showSkip = dismissable && !finished;
