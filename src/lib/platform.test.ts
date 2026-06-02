@@ -221,6 +221,27 @@ describe("usePlatformCapabilities", () => {
     expect(result.current.mediaPauseGranular).toBe(true);
   });
 
+  it("falls back to UA-derived capabilities when the invoke resolves null", async () => {
+    // The a11y audit shim answers unknown commands with `null` — a
+    // resolved value, not a rejection — so the hook must treat it as a
+    // fallback rather than publishing `null` to consumers.
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64)",
+    });
+    invokeMock.mockResolvedValueOnce(null);
+
+    const { usePlatformCapabilities } = await import("./platform");
+    const { result } = renderHook(() => usePlatformCapabilities());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.supportsDndRead).toBe(true);
+    expect(result.current.mediaPauseGranular).toBe(true);
+    expect(result.current.installerUnsignedWarning).toBe(false);
+  });
+
   it("invokes get_platform_capabilities only once even when many components subscribe", async () => {
     invokeMock.mockResolvedValueOnce({
       supportsDndRead: true,

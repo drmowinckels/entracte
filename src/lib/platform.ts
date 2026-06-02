@@ -124,10 +124,17 @@ let pendingCaps: Promise<PlatformCapabilities> | null = null;
 function getPlatformCapabilities(): Promise<PlatformCapabilities> {
   if (cachedCaps) return Promise.resolve(cachedCaps);
   if (!pendingCaps) {
-    pendingCaps = invoke<PlatformCapabilities>("get_platform_capabilities")
+    pendingCaps = invoke<PlatformCapabilities | null>(
+      "get_platform_capabilities",
+    )
       .then((caps) => {
-        cachedCaps = caps;
-        return caps;
+        // A shim or stale backend can resolve `null` (e.g. the a11y audit
+        // harness answers unknown commands with null). That's not a
+        // rejection, so `.catch` won't fire — guard it here or every
+        // consumer reads flags off `null` and crashes.
+        const resolved = caps ?? fallbackCapabilities(detectPlatform());
+        cachedCaps = resolved;
+        return resolved;
       })
       .catch(() => {
         const caps = fallbackCapabilities(detectPlatform());
