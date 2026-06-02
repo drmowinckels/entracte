@@ -24,6 +24,11 @@ pub struct DerivedCaches {
     pub micro_fixed_minutes: Vec<u32>,
     /// `long_fixed_times` parsed the same way.
     pub long_fixed_minutes: Vec<u32>,
+    /// `app_pause_list` targets pre-lowercased so the per-refresh process
+    /// scan only has to lowercase the live process name once, instead of
+    /// re-lowercasing every configured target for every running process.
+    /// Empty targets are dropped (they never match).
+    pub app_pause_targets_lower: Vec<String>,
 }
 
 impl DerivedCaches {
@@ -42,6 +47,12 @@ impl DerivedCaches {
                 .long_fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
+                .collect(),
+            app_pause_targets_lower: s
+                .app_pause_list
+                .iter()
+                .map(|t| t.to_lowercase())
+                .filter(|t| !t.is_empty())
                 .collect(),
         }
     }
@@ -1448,6 +1459,33 @@ mod tests {
         assert_eq!(s.derived.micro_fixed_minutes, vec![540, 810]);
         // "7:05" → 425; "24:00" out of range, dropped.
         assert_eq!(s.derived.long_fixed_minutes, vec![425]);
+    }
+
+    #[test]
+    fn rebuild_derived_lowercases_app_pause_targets_dropping_empties() {
+        let mut s = Settings {
+            app_pause_list: vec!["Zoom".into(), "OBS Studio".into(), "".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        assert_eq!(
+            s.derived.app_pause_targets_lower,
+            vec!["zoom", "obs studio"]
+        );
+    }
+
+    #[test]
+    fn rebuild_derived_refreshes_app_pause_cache_after_change() {
+        let mut s = Settings {
+            app_pause_list: vec!["Zoom".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        assert_eq!(s.derived.app_pause_targets_lower, vec!["zoom"]);
+
+        s.app_pause_list = vec!["Slack".into()];
+        s.rebuild_derived();
+        assert_eq!(s.derived.app_pause_targets_lower, vec!["slack"]);
     }
 
     #[test]

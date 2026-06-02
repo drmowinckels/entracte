@@ -291,10 +291,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 let sys = sysinfo_system.get_or_insert_with(System::new);
                 sys.refresh_processes(ProcessesToUpdate::All, false);
                 app_pause_active = sys.processes().values().any(|p| {
-                    let proc_name = p.name().to_string_lossy().to_string();
-                    s.app_pause_list
+                    // Lowercase the live process name once per process; the
+                    // targets are pre-lowercased at settings load/update.
+                    let proc_lower = p.name().to_string_lossy().to_lowercase();
+                    s.derived
+                        .app_pause_targets_lower
                         .iter()
-                        .any(|target| process_match(&proc_name, target))
+                        .any(|target| process_match_lower(&proc_lower, target))
                 });
                 last_app_refresh = Instant::now();
             }
@@ -1029,26 +1032,31 @@ fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
 // rejecting `zoominfo` and `azoomatic`. Multi-token targets (e.g.
 // `osascript -e`) fall back to substring so power-users can still
 // match a distinctive snippet.
-fn process_match(running: &str, target: &str) -> bool {
-    let r = running.to_lowercase();
-    let t = target.to_lowercase();
-    if t.is_empty() {
+/// Case-insensitive token match assuming both arguments are already
+/// lowercased. The run loop pre-lowercases the target list once at
+/// settings load/update (`derived.app_pause_targets_lower`) and only
+/// lowercases the live process name per scan, so the hot path avoids
+/// re-lowercasing every configured target for every running process.
+fn process_match_lower(running_lower: &str, target_lower: &str) -> bool {
+    if target_lower.is_empty() {
         return false;
     }
-    let target_is_single_token = t.chars().all(|c| c.is_alphanumeric());
+    let target_is_single_token = target_lower.chars().all(|c| c.is_alphanumeric());
     if !target_is_single_token {
-        return r.contains(&t);
+        return running_lower.contains(target_lower);
     }
-    r.split(|c: char| !c.is_alphanumeric()).any(|tok| {
-        if tok == t {
-            return true;
-        }
-        if let Some(suffix) = tok.strip_prefix(t.as_str()) {
-            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
-        } else {
-            false
-        }
-    })
+    running_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|tok| {
+            if tok == target_lower {
+                return true;
+            }
+            if let Some(suffix) = tok.strip_prefix(target_lower) {
+                !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+            } else {
+                false
+            }
+        })
 }
 
 #[cfg(test)]
@@ -1059,6 +1067,14 @@ mod tests {
     // so a Windows build doesn't trip `-D unused-imports`.
     #[cfg(not(target_os = "windows"))]
     use super::super::settings::BreakMode;
+
+    /// Test-only convenience wrapper: lowercases both sides then defers to
+    /// the production `process_match_lower`. Lets the existing match tests
+    /// keep their raw (mixed-case) inputs while production stays on the
+    /// pre-lowercased hot path.
+    fn process_match(running: &str, target: &str) -> bool {
+        process_match_lower(&running.to_lowercase(), &target.to_lowercase())
+    }
 
     // Drives `deliver_scheduled_break` end to end through the
     // Notification delivery path — the one branch that doesn't enumerate
@@ -1291,6 +1307,32 @@ mod tests {
         s.rebuild_derived();
         assert!(!fixed_break_due(BreakKind::Micro, &s, 480));
         assert!(fixed_break_due(BreakKind::Micro, &s, 945));
+    }
+
+    #[test]
+    fn process_match_lower_equals_process_match_for_prelowercased_input() {
+        // The hot path calls `process_match_lower` with both sides already
+        // lowercased; it must return the same answer as the public wrapper
+        // for every case the wrapper covers.
+        let cases = [
+            ("zoom.us", "zoom", true),
+            ("OBS Studio", "obs", true),
+            ("zoominfo.exe", "zoom", false),
+            ("obs64.exe", "obs", true),
+            ("firefoxnightly.exe", "firefox", false),
+            ("/usr/bin/osascript -e foo", "osascript -e", true),
+            ("safari", "zoom", false),
+            ("zoom.us", "", false),
+        ];
+        for (running, target, expected) in cases {
+            assert_eq!(
+                process_match_lower(&running.to_lowercase(), &target.to_lowercase()),
+                expected,
+                "process_match_lower({running:?}, {target:?})"
+            );
+            // And the wrapper agrees, since the run loop relies on parity.
+            assert_eq!(process_match(running, target), expected);
+        }
     }
 
     #[test]
