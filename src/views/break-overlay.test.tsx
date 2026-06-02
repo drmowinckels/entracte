@@ -345,6 +345,52 @@ describe("BreakOverlay ARIA contract", () => {
     expect(note.textContent).toBe("Look 20 feet away.");
   });
 
+  it("explains the missing Skip on an enforceable long break", async () => {
+    const { getByTestId } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 300,
+      enforceable: true,
+      postpone_available: false,
+    });
+    const hint = getByTestId("overlay-enforceable-hint");
+    expect(hint.getAttribute("role")).toBe("note");
+    expect(hint.tagName).toBe("P");
+    expect(hint.textContent).toMatch(/enforceable/i);
+    expect(hint.textContent).toMatch(/settings/i);
+  });
+
+  it("omits the enforceable hint when Skip is available", async () => {
+    const { queryByTestId, getByRole } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 300,
+      enforceable: false,
+      postpone_available: false,
+    });
+    getByRole("button", { name: "Skip break" });
+    expect(queryByTestId("overlay-enforceable-hint")).toBeNull();
+  });
+
+  it("omits the enforceable hint when Postpone is available", async () => {
+    const { queryByTestId, getByRole } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 300,
+      enforceable: true,
+      postpone_available: true,
+    });
+    getByRole("button", { name: "Postpone break" });
+    expect(queryByTestId("overlay-enforceable-hint")).toBeNull();
+  });
+
+  it("omits the enforceable hint for an enforceable micro break", async () => {
+    const { queryByTestId } = await startBreak(false, {
+      kind: "micro",
+      duration_secs: 20,
+      enforceable: true,
+      postpone_available: false,
+    });
+    expect(queryByTestId("overlay-enforceable-hint")).toBeNull();
+  });
+
   it("fires the start milestone immediately on a short break", async () => {
     // 20-second micro break: at remaining=20 we're already ≤ the
     // ten-second window once the countdown ticks one cycle. Drive

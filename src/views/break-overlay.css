@@ -178,6 +178,14 @@
   letter-spacing: 0.03em;
 }
 
+.overlay-enforceable-hint {
+  font-size: calc(0.85rem * var(--entracte-overlay-font-scale, 1));
+  opacity: 0.55;
+  margin: 0.25rem 0 0;
+  max-width: 30ch;
+  letter-spacing: 0.02em;
+}
+
 .overlay-credit {
   position: absolute;
   bottom: 1.25rem;
@@ -226,6 +234,7 @@
 .overlay-root.high-contrast .overlay-clock,
 .overlay-root.high-contrast .overlay-hint,
 .overlay-root.high-contrast .overlay-dismiss,
+.overlay-root.high-contrast .overlay-enforceable-hint,
 .overlay-root.high-contrast .overlay-paused {
   opacity: 1;
   color: #fff;
