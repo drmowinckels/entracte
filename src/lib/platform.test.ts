@@ -156,3 +156,104 @@ describe("usePlatform", () => {
     await waitFor(() => expect(result.current).toBe("other"));
   });
 });
+
+// usePlatformCapabilities mirrors usePlatform: the UA-derived fallback
+// renders synchronously, then the authoritative Rust flags land once
+// `get_platform_capabilities` resolves. Same module-level cache, so each
+// test resets modules + the invoke mock.
+
+describe("usePlatformCapabilities", () => {
+  const invokeMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    invokeMock.mockReset();
+    vi.doMock("@tauri-apps/api/core", () => ({
+      invoke: (cmd: string) => invokeMock(cmd),
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock("@tauri-apps/api/core");
+  });
+
+  it("returns the UA-derived fallback synchronously, then upgrades to the Rust flags", async () => {
+    // UA says Windows (fallback flips installerUnsignedWarning on), but
+    // Rust reports a Linux-shaped capability set — the hook should publish
+    // the Rust answer once it lands.
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    });
+    invokeMock.mockResolvedValueOnce({
+      supportsDndRead: true,
+      mediaPauseGranular: true,
+      installerUnsignedWarning: false,
+    });
+
+    const { usePlatformCapabilities } = await import("./platform");
+    const { result } = renderHook(() => usePlatformCapabilities());
+
+    expect(result.current.installerUnsignedWarning).toBe(true); // UA fallback
+    expect(result.current.mediaPauseGranular).toBe(false);
+    await waitFor(() => expect(result.current.mediaPauseGranular).toBe(true));
+    expect(result.current.installerUnsignedWarning).toBe(false);
+    expect(invokeMock).toHaveBeenCalledWith("get_platform_capabilities");
+  });
+
+  it("falls back to UA-derived capabilities when the Tauri invoke fails", async () => {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64)",
+    });
+    invokeMock.mockRejectedValueOnce(new Error("tauri unavailable"));
+
+    const { usePlatformCapabilities } = await import("./platform");
+    const { result } = renderHook(() => usePlatformCapabilities());
+
+    // Linux fallback: DnD read + granular media pause, no installer warning.
+    expect(result.current.supportsDndRead).toBe(true);
+    expect(result.current.mediaPauseGranular).toBe(true);
+    expect(result.current.installerUnsignedWarning).toBe(false);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.mediaPauseGranular).toBe(true);
+  });
+
+  it("invokes get_platform_capabilities only once even when many components subscribe", async () => {
+    invokeMock.mockResolvedValueOnce({
+      supportsDndRead: true,
+      mediaPauseGranular: false,
+      installerUnsignedWarning: false,
+    });
+    const { usePlatformCapabilities } = await import("./platform");
+
+    renderHook(() => usePlatformCapabilities());
+    renderHook(() => usePlatformCapabilities());
+    renderHook(() => usePlatformCapabilities());
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("re-renders pick up the cached flags without re-invoking", async () => {
+    invokeMock.mockResolvedValueOnce({
+      supportsDndRead: true,
+      mediaPauseGranular: true,
+      installerUnsignedWarning: false,
+    });
+    const { usePlatformCapabilities } = await import("./platform");
+
+    const first = renderHook(() => usePlatformCapabilities());
+    await waitFor(() =>
+      expect(first.result.current.mediaPauseGranular).toBe(true),
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    const second = renderHook(() => usePlatformCapabilities());
+    expect(second.result.current.mediaPauseGranular).toBe(true); // from cache
+    expect(invokeMock).toHaveBeenCalledTimes(1); // not invoked again
+  });
+});

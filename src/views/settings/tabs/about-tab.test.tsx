@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import type { Platform } from "../../../lib/platform";
+import type { PlatformCapabilities } from "../../../lib/platform";
 import type { UseSupporter } from "../hooks/use-supporter";
 import type { UseUpdateCheck } from "../hooks/use-update-check";
 import type { UpdateInfo, SupporterStatus } from "../types";
@@ -29,14 +29,18 @@ vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => getVersionMock(),
 }));
 
-let currentPlatform: Platform = "macos";
+let currentCaps: PlatformCapabilities = {
+  supportsDndRead: true,
+  mediaPauseGranular: false,
+  installerUnsignedWarning: false,
+};
 vi.mock("../../../lib/platform", async () => {
   const actual = await vi.importActual<typeof import("../../../lib/platform")>(
     "../../../lib/platform",
   );
   return {
     ...actual,
-    usePlatform: () => currentPlatform,
+    usePlatformCapabilities: () => currentCaps,
   };
 });
 
@@ -80,7 +84,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
-  currentPlatform = "macos";
+  currentCaps = {
+    supportsDndRead: true,
+    mediaPauseGranular: false,
+    installerUnsignedWarning: false,
+  };
   mockUpdate = {
     info: null,
     checking: false,
@@ -90,29 +98,22 @@ afterEach(() => {
 });
 
 describe("AboutTab — Windows SmartScreen advisory", () => {
-  it("shows the SmartScreen warning paragraph only when platform is windows AND an update is available", () => {
-    currentPlatform = "windows";
+  it("shows the SmartScreen warning paragraph only when installerUnsignedWarning is set AND an update is available", () => {
+    currentCaps = { ...currentCaps, installerUnsignedWarning: true };
     mockUpdate = { ...mockUpdate, info: updateAvailable };
     render(<AboutTab supporter={supporterStub()} />);
     expect(screen.getByText(/SmartScreen will warn/i)).toBeTruthy();
   });
 
-  it("hides the SmartScreen warning on macOS even when an update is available", () => {
-    currentPlatform = "macos";
+  it("hides the SmartScreen warning when the installer is signed even with an update available", () => {
+    currentCaps = { ...currentCaps, installerUnsignedWarning: false };
     mockUpdate = { ...mockUpdate, info: updateAvailable };
     render(<AboutTab supporter={supporterStub()} />);
     expect(screen.queryByText(/SmartScreen will warn/i)).toBeNull();
   });
 
-  it("hides the SmartScreen warning on linux even when an update is available", () => {
-    currentPlatform = "linux";
-    mockUpdate = { ...mockUpdate, info: updateAvailable };
-    render(<AboutTab supporter={supporterStub()} />);
-    expect(screen.queryByText(/SmartScreen will warn/i)).toBeNull();
-  });
-
-  it("hides the SmartScreen warning on windows when no update is available", () => {
-    currentPlatform = "windows";
+  it("hides the SmartScreen warning when installerUnsignedWarning is set but no update is available", () => {
+    currentCaps = { ...currentCaps, installerUnsignedWarning: true };
     mockUpdate = {
       ...mockUpdate,
       info: {
