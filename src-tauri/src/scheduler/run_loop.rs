@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 use user_idle::UserIdle;
@@ -18,8 +18,8 @@ use super::session_lock;
 use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
-    prebreak_warn_due, should_defer_for_typing, should_fire_fixed_now, BedtimeAction,
-    BedtimeWindow, PrebreakGate,
+    prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
+    BedtimeAction, BedtimeWindow, PrebreakGate,
 };
 use super::types::{BreakDelivery, BreakEvent, BreakKind, SuppressReason};
 use super::Scheduler;
@@ -326,13 +326,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
 
         let long_fixed_due = s.long_enabled
-            && matches!(s.long_schedule_mode.as_str(), "fixed" | "both")
+            && s.fixed_active(BreakKind::Long)
             && s.long_fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
                 .any(|m| m == now_min);
         let micro_fixed_due = s.micro_enabled
-            && matches!(s.micro_schedule_mode.as_str(), "fixed" | "both")
+            && s.fixed_active(BreakKind::Micro)
             && s.micro_fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
@@ -357,101 +357,19 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 )
             };
             // Fixed-time fires bypass the idle gate: the clock is the signal, not user activity.
+            let fixed_key = Some((today_str.clone(), now_min));
             if fire_long {
-                let enforceable = s.long_enforceable || s.strict_mode;
-                let intensity = sched.stats.lock().await.intensity();
-                let delivery = delivery_for(BreakKind::Long, &s);
-                deliver_break(
-                    &app,
-                    &sched.current_break,
-                    BreakEvent {
-                        kind: BreakKind::Long,
-                        duration_secs: s.long_duration_secs,
-                        enforceable,
-                        manual_finish: s.long_manual_finish,
-                        postpone_available: s.postpone_enabled && !s.strict_mode,
-                        hints: effective_long_hints(&s),
-                        hint_rotate_seconds: s.hint_rotate_seconds,
-                        health_intensity: if s.break_health_enabled {
-                            intensity
-                        } else {
-                            0.0
-                        },
-                    },
-                    delivery,
-                    s.monitor_placement,
-                );
-                hooks::run_hooks(
-                    &s,
-                    HookEvent::BreakStart,
-                    HookContext::with_kind_duration(BreakKind::Long, s.long_duration_secs),
-                );
-                sched.logger.log(EventPayload::BreakStart {
-                    kind: BreakKind::Long,
-                    duration_secs: s.long_duration_secs,
-                    enforceable,
-                });
-                let mut t = sched.timers.lock().await;
-                t.last_long = Instant::now();
-                t.last_micro = Instant::now();
-                t.long_warned = false;
-                t.micro_warned = false;
-                t.long_deferred_since = None;
-                t.micro_deferred_since = None;
-                if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                    t.active_break = Some(BreakKind::Long);
-                }
-                t.last_long_fixed_fire = Some((today_str.clone(), now_min));
+                fire_scheduled_break(&app, &sched, &s, BreakKind::Long, fixed_key).await;
                 continue;
             }
             if fire_micro {
-                let enforceable = s.micro_enforceable || s.strict_mode;
-                let intensity = sched.stats.lock().await.intensity();
-                let delivery = delivery_for(BreakKind::Micro, &s);
-                deliver_break(
-                    &app,
-                    &sched.current_break,
-                    BreakEvent {
-                        kind: BreakKind::Micro,
-                        duration_secs: s.micro_duration_secs,
-                        enforceable,
-                        manual_finish: s.micro_manual_finish,
-                        postpone_available: s.postpone_enabled && !s.strict_mode,
-                        hints: effective_micro_hints(&s),
-                        hint_rotate_seconds: s.hint_rotate_seconds,
-                        health_intensity: if s.break_health_enabled {
-                            intensity
-                        } else {
-                            0.0
-                        },
-                    },
-                    delivery,
-                    s.monitor_placement,
-                );
-                hooks::run_hooks(
-                    &s,
-                    HookEvent::BreakStart,
-                    HookContext::with_kind_duration(BreakKind::Micro, s.micro_duration_secs),
-                );
-                sched.logger.log(EventPayload::BreakStart {
-                    kind: BreakKind::Micro,
-                    duration_secs: s.micro_duration_secs,
-                    enforceable,
-                });
-                let mut t = sched.timers.lock().await;
-                t.last_micro = Instant::now();
-                t.micro_warned = false;
-                t.micro_deferred_since = None;
-                if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                    t.active_break = Some(BreakKind::Micro);
-                }
-                t.last_micro_fixed_fire = Some((today_str.clone(), now_min));
+                fire_scheduled_break(&app, &sched, &s, BreakKind::Micro, fixed_key).await;
                 continue;
             }
         }
 
-        let micro_interval_active = matches!(s.micro_schedule_mode.as_str(), "interval" | "both");
-        let long_interval_active = matches!(s.long_schedule_mode.as_str(), "interval" | "both");
+        let micro_interval_active = s.interval_active(BreakKind::Micro);
+        let long_interval_active = s.interval_active(BreakKind::Long);
 
         let (micro_idle_suppressed, long_idle_suppressed) = (
             idle_secs >= s.micro_idle_reset_secs,
@@ -580,91 +498,106 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
 
         if should_fire_long {
-            let enforceable = s.long_enforceable || s.strict_mode;
-            let intensity = sched.stats.lock().await.intensity();
-            let delivery = delivery_for(BreakKind::Long, &s);
-            deliver_break(
-                &app,
-                &sched.current_break,
-                BreakEvent {
-                    kind: BreakKind::Long,
-                    duration_secs: s.long_duration_secs,
-                    enforceable,
-                    manual_finish: s.long_manual_finish,
-                    postpone_available: s.postpone_enabled && !s.strict_mode,
-                    hints: effective_long_hints(&s),
-                    hint_rotate_seconds: s.hint_rotate_seconds,
-                    health_intensity: if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
-                    },
-                },
-                delivery,
-                s.monitor_placement,
-            );
-            hooks::run_hooks(
-                &s,
-                HookEvent::BreakStart,
-                HookContext::with_kind_duration(BreakKind::Long, s.long_duration_secs),
-            );
-            sched.logger.log(EventPayload::BreakStart {
-                kind: BreakKind::Long,
-                duration_secs: s.long_duration_secs,
-                enforceable,
-            });
-            let mut t = sched.timers.lock().await;
-            t.last_long = Instant::now();
-            t.last_micro = Instant::now();
-            t.long_warned = false;
-            t.micro_warned = false;
-            t.long_deferred_since = None;
-            t.micro_deferred_since = None;
-            if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                t.active_break = Some(BreakKind::Long);
-            }
+            fire_scheduled_break(&app, &sched, &s, BreakKind::Long, None).await;
         } else if should_fire_micro {
-            let enforceable = s.micro_enforceable || s.strict_mode;
-            let intensity = sched.stats.lock().await.intensity();
-            let delivery = delivery_for(BreakKind::Micro, &s);
-            deliver_break(
-                &app,
-                &sched.current_break,
-                BreakEvent {
-                    kind: BreakKind::Micro,
-                    duration_secs: s.micro_duration_secs,
-                    enforceable,
-                    manual_finish: s.micro_manual_finish,
-                    postpone_available: s.postpone_enabled && !s.strict_mode,
-                    hints: effective_micro_hints(&s),
-                    hint_rotate_seconds: s.hint_rotate_seconds,
-                    health_intensity: if s.break_health_enabled {
-                        intensity
-                    } else {
-                        0.0
-                    },
-                },
-                delivery,
-                s.monitor_placement,
-            );
-            hooks::run_hooks(
-                &s,
-                HookEvent::BreakStart,
-                HookContext::with_kind_duration(BreakKind::Micro, s.micro_duration_secs),
-            );
-            sched.logger.log(EventPayload::BreakStart {
-                kind: BreakKind::Micro,
-                duration_secs: s.micro_duration_secs,
-                enforceable,
-            });
-            let mut t = sched.timers.lock().await;
-            t.last_micro = Instant::now();
-            t.micro_warned = false;
-            t.micro_deferred_since = None;
-            if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
-                t.active_break = Some(BreakKind::Micro);
-            }
+            fire_scheduled_break(&app, &sched, &s, BreakKind::Micro, None).await;
         }
+    }
+}
+
+/// Fire a scheduled micro/long break end to end: deliver it (see
+/// [`deliver_scheduled_break`]) and apply the post-fire timer bookkeeping
+/// under the timers lock (see [`record_scheduled_fire`]). `fixed_key` is
+/// `Some((today, minute))` for a fixed-time fire (recording the dedupe
+/// key) or `None` for an interval fire; the fire `Instant` is stamped here.
+async fn fire_scheduled_break<R: Runtime>(
+    app: &AppHandle<R>,
+    sched: &Scheduler,
+    s: &Settings,
+    kind: BreakKind,
+    fixed_key: Option<(String, u32)>,
+) {
+    let delivery = deliver_scheduled_break(app, sched, s, kind).await;
+    let mut t = sched.timers.lock().await;
+    record_scheduled_fire(&mut t, kind, delivery, Instant::now(), fixed_key);
+}
+
+/// Build and surface a scheduled micro/long break: resolve the per-kind
+/// content from `s`, deliver it through the configured channel, fire the
+/// `BreakStart` hook, and log the event. Returns the resolved delivery so
+/// the caller can decide whether to mark an `active_break`.
+///
+/// Timer bookkeeping stays with the caller ([`fire_scheduled_break`]):
+/// fixed-time and interval fires reset different timer fields, so folding
+/// them in here would just move the divergence. `Sleep` goes through the
+/// bedtime path's own `overlay::fire_break` (different postpone semantics)
+/// and never reaches this helper.
+async fn deliver_scheduled_break<R: Runtime>(
+    app: &AppHandle<R>,
+    sched: &Scheduler,
+    s: &Settings,
+    kind: BreakKind,
+) -> BreakDelivery {
+    let intensity = sched.stats.lock().await.intensity();
+    let event = scheduled_break_event(kind, s, intensity);
+    let duration_secs = event.duration_secs;
+    let enforceable = event.enforceable;
+    let delivery = delivery_for(kind, s);
+    deliver_break(
+        app,
+        &sched.current_break,
+        event,
+        delivery,
+        s.monitor_placement,
+    );
+    hooks::run_hooks(
+        s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(kind, duration_secs),
+    );
+    sched.logger.log(EventPayload::BreakStart {
+        kind,
+        duration_secs,
+        enforceable,
+    });
+    delivery
+}
+
+/// Resolve the per-kind `BreakEvent` content for a scheduled micro/long
+/// break. Pure (no I/O) so the field resolution — which fields each kind
+/// draws, the strict-mode postpone lock, the break-health intensity gate
+/// — is unit-testable without a windowing runtime. `intensity` is the
+/// live value from the stats lock; the helper applies the
+/// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
+fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
+    let (duration_secs, enforceable, manual_finish, hints) = match kind {
+        BreakKind::Long => (
+            s.long_duration_secs,
+            s.long_enforceable || s.strict_mode,
+            s.long_manual_finish,
+            effective_long_hints(s),
+        ),
+        BreakKind::Micro => (
+            s.micro_duration_secs,
+            s.micro_enforceable || s.strict_mode,
+            s.micro_manual_finish,
+            effective_micro_hints(s),
+        ),
+        BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
+    };
+    BreakEvent {
+        kind,
+        duration_secs,
+        enforceable,
+        manual_finish,
+        postpone_available: s.postpone_enabled && !s.strict_mode,
+        hints,
+        hint_rotate_seconds: s.hint_rotate_seconds,
+        health_intensity: if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
     }
 }
 
@@ -1112,6 +1045,134 @@ fn process_match(running: &str, target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Drives `deliver_scheduled_break` end to end through the
+    // Notification delivery path — the one branch that doesn't enumerate
+    // monitors (Tauri's MockRuntime leaves monitor APIs unimplemented, so
+    // the overlay path can't run under test). Covers the orchestration
+    // glue: stats lock, event build, delivery routing, hook + log. Gated
+    // off Windows because the mock rig is.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn deliver_scheduled_break_notification_path_runs_glue() {
+        use crate::test_support::test_scheduler;
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let mut settings = Settings::default();
+        settings.micro_break_mode = "notification".into();
+        let (_dir, sched) = test_scheduler(settings.clone());
+
+        let app = mock_builder()
+            .plugin(tauri_plugin_notification::init())
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        let delivery =
+            deliver_scheduled_break(app.handle(), &sched, &settings, BreakKind::Micro).await;
+
+        assert_eq!(delivery, BreakDelivery::Notification);
+        // Notification delivery must not stash an overlay break.
+        assert!(sched.current_break.lock().unwrap().is_none());
+    }
+
+    // Drives `fire_scheduled_break` end to end: the notification delivery
+    // plus the post-fire timer bookkeeping it applies under the lock.
+    // Gated off Windows for the same mock-rig reason as the glue test above.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn fire_scheduled_break_delivers_then_records_timers() {
+        use crate::test_support::test_scheduler;
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let mut settings = Settings::default();
+        settings.micro_break_mode = "notification".into();
+        let (_dir, sched) = test_scheduler(settings.clone());
+        {
+            let mut t = sched.timers.lock().await;
+            t.micro_warned = true;
+            t.micro_deferred_since = Some(Instant::now());
+        }
+
+        let app = mock_builder()
+            .plugin(tauri_plugin_notification::init())
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        let before = Instant::now();
+        fire_scheduled_break(
+            app.handle(),
+            &sched,
+            &settings,
+            BreakKind::Micro,
+            Some(("2026-06-02".into(), 600)),
+        )
+        .await;
+
+        let t = sched.timers.lock().await;
+        assert!(t.last_micro >= before);
+        assert!(!t.micro_warned);
+        assert_eq!(t.micro_deferred_since, None);
+        assert_eq!(t.last_micro_fixed_fire, Some(("2026-06-02".into(), 600)));
+        // Notification delivery must not stash an active break.
+        assert_eq!(t.active_break, None);
+    }
+
+    #[test]
+    fn scheduled_break_event_long_draws_long_fields() {
+        let s = Settings::default();
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.5);
+        assert_eq!(e.kind, BreakKind::Long);
+        assert_eq!(e.duration_secs, s.long_duration_secs);
+        assert_eq!(e.manual_finish, s.long_manual_finish);
+        assert_eq!(e.hints, effective_long_hints(&s));
+        // break_health is enabled by default → live intensity passes through.
+        assert_eq!(e.health_intensity, 0.5);
+    }
+
+    #[test]
+    fn scheduled_break_event_micro_draws_micro_fields() {
+        let s = Settings::default();
+        let e = scheduled_break_event(BreakKind::Micro, &s, 0.5);
+        assert_eq!(e.kind, BreakKind::Micro);
+        assert_eq!(e.duration_secs, s.micro_duration_secs);
+        assert_eq!(e.manual_finish, s.micro_manual_finish);
+        assert_eq!(e.hints, effective_micro_hints(&s));
+    }
+
+    #[test]
+    #[should_panic(expected = "sleep breaks use the bedtime fire path")]
+    fn scheduled_break_event_rejects_sleep() {
+        // Sleep is delivered through the bedtime path, never this helper;
+        // the invariant is enforced with a panic and asserted here.
+        let s = Settings::default();
+        let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn scheduled_break_event_health_gate_zeroes_intensity_when_disabled() {
+        let mut s = Settings::default();
+        s.break_health_enabled = false;
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.42);
+        assert_eq!(e.health_intensity, 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn scheduled_break_event_strict_mode_forces_enforceable_and_no_postpone() {
+        let mut s = Settings::default();
+        s.strict_mode = true;
+        s.postpone_enabled = true;
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        assert!(e.enforceable, "strict mode forces enforceable");
+        assert!(!e.postpone_available, "strict mode disables postpone");
+    }
 
     #[test]
     fn import_pending_returns_false_when_flag_clear() {

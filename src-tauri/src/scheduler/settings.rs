@@ -393,6 +393,29 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// The raw `*_schedule_mode` string for the given break kind. Sleep
+    /// has no interval/fixed split, so it reports an empty mode.
+    fn schedule_mode_for(&self, kind: BreakKind) -> &str {
+        match kind {
+            BreakKind::Micro => self.micro_schedule_mode.as_str(),
+            BreakKind::Long => self.long_schedule_mode.as_str(),
+            BreakKind::Sleep => "",
+        }
+    }
+
+    /// True iff this break kind's schedule fires on a repeating interval
+    /// (`"interval"` or `"both"`). Centralises the mode string-matching
+    /// the run loop would otherwise duplicate at every call site.
+    pub fn interval_active(&self, kind: BreakKind) -> bool {
+        matches!(self.schedule_mode_for(kind), "interval" | "both")
+    }
+
+    /// True iff this break kind's schedule fires at fixed clock times
+    /// (`"fixed"` or `"both"`).
+    pub fn fixed_active(&self, kind: BreakKind) -> bool {
+        matches!(self.schedule_mode_for(kind), "fixed" | "both")
+    }
+
     /// Clamp every numeric field to a safe range. Called on every load
     /// (post-deserialise) and on every write (post-merge) so that a
     /// hand-edited or corrupted `settings.json` can't make the
@@ -925,6 +948,40 @@ mod tests {
         assert!(s.long_fixed_times.is_empty());
         assert_eq!(s.micro_schedule_mode, "interval");
         assert_eq!(s.long_schedule_mode, "interval");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn schedule_mode_helpers_match_interval_fixed_and_both() {
+        let mut s = Settings::default();
+
+        s.micro_schedule_mode = "interval".into();
+        assert!(s.interval_active(BreakKind::Micro));
+        assert!(!s.fixed_active(BreakKind::Micro));
+
+        s.micro_schedule_mode = "fixed".into();
+        assert!(!s.interval_active(BreakKind::Micro));
+        assert!(s.fixed_active(BreakKind::Micro));
+
+        s.micro_schedule_mode = "both".into();
+        assert!(s.interval_active(BreakKind::Micro));
+        assert!(s.fixed_active(BreakKind::Micro));
+
+        s.long_schedule_mode = "interval".into();
+        assert!(s.interval_active(BreakKind::Long));
+        assert!(!s.fixed_active(BreakKind::Long));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn schedule_mode_helpers_reject_unknown_and_sleep() {
+        let mut s = Settings::default();
+        s.micro_schedule_mode = "garbage".into();
+        assert!(!s.interval_active(BreakKind::Micro));
+        assert!(!s.fixed_active(BreakKind::Micro));
+        // Sleep has no interval/fixed split: both helpers report false.
+        assert!(!s.interval_active(BreakKind::Sleep));
+        assert!(!s.fixed_active(BreakKind::Sleep));
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{Local, Timelike};
 
-use super::types::BreakKind;
+use super::types::{BreakDelivery, BreakKind};
 
 /// All of the scheduler's per-tick mutable timing state.
 ///
@@ -68,6 +68,57 @@ pub fn reset_timers_keep_sleep(t: &mut BreakTimers) {
     t.long_deferred_since = None;
     t.micro_postpone_count = 0;
     t.long_postpone_count = 0;
+}
+
+/// Apply the timer bookkeeping for a scheduled micro/long break that has
+/// just fired. Pure analogue of the inline resets in `run_loop`'s
+/// fixed-time and interval fire paths, so the field-by-field divergence
+/// between the two break kinds (and between a fixed vs interval fire) is
+/// unit-testable without a windowing runtime or a live clock.
+///
+/// - A `Long` fire resets *both* interval clocks (a long break implies a
+///   micro break just happened) and clears both warn/deferral flags; a
+///   `Micro` fire touches only the micro fields.
+/// - `now` is injected (the live call site passes `Instant::now()`).
+/// - `fixed_key` is `Some((local-date, minute-of-day))` for a fixed-time
+///   fire — recording the dedupe key — and `None` for an interval fire.
+/// - `active_break` is only stashed for deliveries that hold the screen
+///   (`Overlay` / `Windowed`); a `Notification` leaves it unset.
+///
+/// `Sleep` never reaches here (it uses the bedtime fire path) and is a
+/// no-op for the per-kind resets.
+pub fn record_scheduled_fire(
+    t: &mut BreakTimers,
+    kind: BreakKind,
+    delivery: BreakDelivery,
+    now: Instant,
+    fixed_key: Option<(String, u32)>,
+) {
+    match kind {
+        BreakKind::Long => {
+            t.last_long = now;
+            t.last_micro = now;
+            t.long_warned = false;
+            t.micro_warned = false;
+            t.long_deferred_since = None;
+            t.micro_deferred_since = None;
+            if let Some(key) = fixed_key {
+                t.last_long_fixed_fire = Some(key);
+            }
+        }
+        BreakKind::Micro => {
+            t.last_micro = now;
+            t.micro_warned = false;
+            t.micro_deferred_since = None;
+            if let Some(key) = fixed_key {
+                t.last_micro_fixed_fire = Some(key);
+            }
+        }
+        BreakKind::Sleep => {}
+    }
+    if matches!(delivery, BreakDelivery::Overlay | BreakDelivery::Windowed) {
+        t.active_break = Some(kind);
+    }
 }
 
 /// Clear the "resume last skipped break" slot. Returns `true` iff a
@@ -921,5 +972,121 @@ mod tests {
             decide_bedtime(window_2209(), 12 * 60, Some(now), now, true),
             BedtimeAction::NotInWindow
         );
+    }
+
+    fn dirty_timers() -> BreakTimers {
+        let mut t = BreakTimers::new();
+        t.micro_warned = true;
+        t.long_warned = true;
+        t.micro_deferred_since = Some(Instant::now());
+        t.long_deferred_since = Some(Instant::now());
+        t
+    }
+
+    #[test]
+    fn record_scheduled_fire_long_resets_both_clocks_and_records_fixed_key() {
+        let mut t = dirty_timers();
+        let now = Instant::now();
+        record_scheduled_fire(
+            &mut t,
+            BreakKind::Long,
+            BreakDelivery::Overlay,
+            now,
+            Some(("2026-06-02".into(), 540)),
+        );
+        assert_eq!(t.last_long, now);
+        assert_eq!(t.last_micro, now);
+        assert!(!t.long_warned);
+        assert!(!t.micro_warned);
+        assert_eq!(t.long_deferred_since, None);
+        assert_eq!(t.micro_deferred_since, None);
+        assert_eq!(t.active_break, Some(BreakKind::Long));
+        assert_eq!(t.last_long_fixed_fire, Some(("2026-06-02".into(), 540)));
+        assert_eq!(t.last_micro_fixed_fire, None);
+    }
+
+    #[test]
+    fn record_scheduled_fire_micro_touches_only_micro_fields() {
+        let mut t = dirty_timers();
+        let before_long = t.last_long;
+        let now = Instant::now();
+        record_scheduled_fire(
+            &mut t,
+            BreakKind::Micro,
+            BreakDelivery::Overlay,
+            now,
+            Some(("2026-06-02".into(), 600)),
+        );
+        assert_eq!(t.last_micro, now);
+        assert_eq!(t.last_long, before_long);
+        assert!(!t.micro_warned);
+        assert!(
+            t.long_warned,
+            "micro fire must not clear the long warn flag"
+        );
+        assert_eq!(t.micro_deferred_since, None);
+        assert!(t.long_deferred_since.is_some());
+        assert_eq!(t.active_break, Some(BreakKind::Micro));
+        assert_eq!(t.last_micro_fixed_fire, Some(("2026-06-02".into(), 600)));
+        assert_eq!(t.last_long_fixed_fire, None);
+    }
+
+    #[test]
+    fn record_scheduled_fire_interval_leaves_fixed_keys_untouched() {
+        let mut t = BreakTimers::new();
+        t.last_long_fixed_fire = Some(("2026-06-01".into(), 100));
+        record_scheduled_fire(
+            &mut t,
+            BreakKind::Long,
+            BreakDelivery::Overlay,
+            Instant::now(),
+            None,
+        );
+        assert_eq!(t.last_long_fixed_fire, Some(("2026-06-01".into(), 100)));
+    }
+
+    #[test]
+    fn record_scheduled_fire_notification_does_not_stash_active_break() {
+        let mut t = BreakTimers::new();
+        record_scheduled_fire(
+            &mut t,
+            BreakKind::Micro,
+            BreakDelivery::Notification,
+            Instant::now(),
+            None,
+        );
+        assert_eq!(t.active_break, None);
+    }
+
+    #[test]
+    fn record_scheduled_fire_windowed_stashes_active_break() {
+        let mut t = BreakTimers::new();
+        record_scheduled_fire(
+            &mut t,
+            BreakKind::Long,
+            BreakDelivery::Windowed,
+            Instant::now(),
+            None,
+        );
+        assert_eq!(t.active_break, Some(BreakKind::Long));
+    }
+
+    #[test]
+    fn record_scheduled_fire_sleep_is_a_noop_for_per_kind_state() {
+        let mut t = dirty_timers();
+        let before_micro = t.last_micro;
+        let before_long = t.last_long;
+        record_scheduled_fire(
+            &mut t,
+            BreakKind::Sleep,
+            BreakDelivery::Notification,
+            Instant::now(),
+            None,
+        );
+        assert_eq!(t.last_micro, before_micro);
+        assert_eq!(t.last_long, before_long);
+        assert!(t.micro_warned);
+        assert!(t.long_warned);
+        assert_eq!(t.active_break, None);
     }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pickRotationTheme } from "../../../lib/color";
@@ -52,6 +52,13 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
   );
   const [resolvedTheme, setResolvedTheme] = useState<string>("dark");
   const startedAtRef = useRef<number>(0);
+
+  const clearBreak = useCallback(() => {
+    setActive(null);
+    setRemaining(0);
+    setFinished(false);
+    setPostponeState(null);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,10 +127,7 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
     });
     listenFn("break:end", () => {
       console.info("[overlay] break:end");
-      setActive(null);
-      setRemaining(0);
-      setFinished(false);
-      setPostponeState(null);
+      clearBreak();
     }).then((fn) => {
       if (cancelled) fn();
       else unlistenEndFn = fn;
@@ -140,14 +144,7 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
       unlistenStartFn?.();
       unlistenEndFn?.();
     };
-  }, [invokeFn, listenFn, stopAllSoundsFn]);
-
-  const clearBreak = () => {
-    setActive(null);
-    setRemaining(0);
-    setFinished(false);
-    setPostponeState(null);
-  };
+  }, [invokeFn, listenFn, stopAllSoundsFn, clearBreak]);
 
   return {
     active,
