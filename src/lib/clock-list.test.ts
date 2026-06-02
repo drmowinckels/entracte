@@ -7,7 +7,11 @@ describe("parseClockList", () => {
   });
 
   it("sorts entries chronologically", () => {
-    expect(parseClockList("17:00, 09:15, 12:30")).toEqual(["09:15", "12:30", "17:00"]);
+    expect(parseClockList("17:00, 09:15, 12:30")).toEqual([
+      "09:15",
+      "12:30",
+      "17:00",
+    ]);
   });
 
   it("pads single-digit hours to two digits", () => {
@@ -52,7 +56,9 @@ describe("parseClockList", () => {
 
 describe("formatClockList", () => {
   it("joins with comma-space in 24h by default", () => {
-    expect(formatClockList(["09:15", "12:30", "17:00"])).toBe("09:15, 12:30, 17:00");
+    expect(formatClockList(["09:15", "12:30", "17:00"])).toBe(
+      "09:15, 12:30, 17:00",
+    );
   });
 
   it("renders the list in 12h when asked", () => {
@@ -73,9 +79,8 @@ describe("clock-list round-trip", () => {
   });
 
   it("normalizes through parse → format → parse", () => {
-    expect(parseClockList(formatClockList(parseClockList("8:05, 17:0a, 12:30")))).toEqual([
-      "08:05",
-      "12:30",
-    ]);
+    expect(
+      parseClockList(formatClockList(parseClockList("8:05, 17:0a, 12:30"))),
+    ).toEqual(["08:05", "12:30"]);
   });
 });

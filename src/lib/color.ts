@@ -39,7 +39,11 @@ export function perceivedLuminance(r: number, g: number, b: number): number {
  * below `MAX_OVERLAY_LUMINANCE`. Returns the input unchanged when
  * already dark enough.
  */
-export function clampRgbToDark(r: number, g: number, b: number): [number, number, number] {
+export function clampRgbToDark(
+  r: number,
+  g: number,
+  b: number,
+): [number, number, number] {
   const lum = perceivedLuminance(r, g, b);
   if (lum <= MAX_OVERLAY_LUMINANCE) return [r, g, b];
   const scale = MAX_OVERLAY_LUMINANCE / lum;
@@ -53,7 +57,10 @@ export function clampRgbToDark(r: number, g: number, b: number): [number, number
  */
 export function clampCsvToDark(csv: string): string | null {
   const parts = csv.split(",").map((s) => Number.parseInt(s.trim(), 10));
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) {
+  if (
+    parts.length !== 3 ||
+    parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)
+  ) {
     return null;
   }
   const [r, g, b] = clampRgbToDark(parts[0], parts[1], parts[2]);
@@ -63,7 +70,10 @@ export function clampCsvToDark(csv: string): string | null {
 /** Convert a 6-digit `#rrggbb` (with or without `#`) into `"R, G, B"`,
  * or `null` if not a 6-digit hex. */
 export function hexToRgbCsv(hex: string): string | null {
-  const m = hex.trim().replace(/^#/, "").match(/^([0-9a-fA-F]{6})$/);
+  const m = hex
+    .trim()
+    .replace(/^#/, "")
+    .match(/^([0-9a-fA-F]{6})$/);
   if (!m) return null;
   const n = parseInt(m[1], 16);
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
@@ -73,13 +83,13 @@ export function hexToRgbCsv(hex: string): string | null {
  * malformed input so the `<input type="color">` always has a value. */
 export function rgbCsvToHex(rgb: string): string {
   const parts = rgb.split(",").map((s) => Number.parseInt(s.trim(), 10));
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) {
+  if (
+    parts.length !== 3 ||
+    parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)
+  ) {
     return "#000000";
   }
-  return (
-    "#" +
-    parts.map((n) => n.toString(16).padStart(2, "0")).join("")
-  );
+  return "#" + parts.map((n) => n.toString(16).padStart(2, "0")).join("");
 }
 
 /**

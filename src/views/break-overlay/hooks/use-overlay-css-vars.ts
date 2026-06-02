@@ -1,10 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
-import {
-  RING_CIRCUMFERENCE,
-  progressColor,
-  rgbFor,
-} from "../visual";
+import { RING_CIRCUMFERENCE, progressColor, rgbFor } from "../visual";
 import type { BreakEvent, OverlaySettings } from "../types";
 
 export type OverlayCssVarsRefs = {

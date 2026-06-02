@@ -15,7 +15,10 @@ export function timeToMinutes(t: string): number {
  * 12h (`"2:30 PM"`) form. Used by `TimeRow` so the rendered time matches
  * the user's `clock_format` setting instead of the OS locale that
  * `<input type="time">` picks. */
-export function formatMinutesOfDay(minutes: number, format: "12h" | "24h"): string {
+export function formatMinutesOfDay(
+  minutes: number,
+  format: "12h" | "24h",
+): string {
   const h24 = Math.floor(minutes / 60);
   const mm = minutes % 60;
   const padMM = String(mm).padStart(2, "0");

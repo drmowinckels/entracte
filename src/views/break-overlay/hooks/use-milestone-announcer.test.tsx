@@ -86,7 +86,9 @@ describe("useMilestoneAnnouncer", () => {
     const { getByTestId } = render(<Harness initial={baseLong} />);
     expect(getByTestId("message").textContent).toBe("");
     fireEvent.click(getByTestId("set-remaining-300"));
-    expect(getByTestId("message").textContent).toBe("Halfway through your break.");
+    expect(getByTestId("message").textContent).toBe(
+      "Halfway through your break.",
+    );
     fireEvent.click(getByTestId("set-remaining-60"));
     expect(getByTestId("message").textContent).toBe("About a minute left.");
     fireEvent.click(getByTestId("set-remaining-10"));
@@ -100,7 +102,9 @@ describe("useMilestoneAnnouncer", () => {
       <Harness initial={{ ...baseLong, kind: "sleep" }} />,
     );
     fireEvent.click(getByTestId("set-remaining-300"));
-    expect(getByTestId("message").textContent).toBe("Halfway through your bedtime.");
+    expect(getByTestId("message").textContent).toBe(
+      "Halfway through your bedtime.",
+    );
     fireEvent.click(getByTestId("set-finished"));
     expect(getByTestId("message").textContent).toBe("Bedtime complete.");
   });
@@ -127,7 +131,9 @@ describe("useMilestoneAnnouncer", () => {
   it("clears the message when the kind is cleared mid-break", () => {
     const { getByTestId } = render(<Harness initial={baseLong} />);
     fireEvent.click(getByTestId("set-remaining-300"));
-    expect(getByTestId("message").textContent).toBe("Halfway through your break.");
+    expect(getByTestId("message").textContent).toBe(
+      "Halfway through your break.",
+    );
     fireEvent.click(getByTestId("clear-kind"));
     expect(getByTestId("message").textContent).toBe("");
   });
@@ -135,8 +141,12 @@ describe("useMilestoneAnnouncer", () => {
   it("switches the phrasing when the kind changes mid-break", () => {
     const { getByTestId } = render(<Harness initial={baseLong} />);
     fireEvent.click(getByTestId("set-remaining-300"));
-    expect(getByTestId("message").textContent).toBe("Halfway through your break.");
+    expect(getByTestId("message").textContent).toBe(
+      "Halfway through your break.",
+    );
     fireEvent.click(getByTestId("set-kind-sleep"));
-    expect(getByTestId("message").textContent).toBe("Halfway through your bedtime.");
+    expect(getByTestId("message").textContent).toBe(
+      "Halfway through your bedtime.",
+    );
   });
 });

@@ -31,7 +31,10 @@ function extractTsTypeFields(source: string, typeName: string): Set<string> {
   return keys;
 }
 
-function extractRustStructFields(source: string, structName: string): Set<string> {
+function extractRustStructFields(
+  source: string,
+  structName: string,
+): Set<string> {
   const decl = `pub struct ${structName} {`;
   const start = source.indexOf(decl);
   if (start === -1) {
@@ -170,8 +173,14 @@ describe("Shared IPC type parity (TS ↔ Rust)", () => {
     describe(pair.name, () => {
       const tsPath = resolve(here, "..", pair.ts.file);
       const rustPath = resolve(RUST_DIR, pair.rust.file);
-      const tsKeys = extractTsTypeFields(readFileSync(tsPath, "utf8"), pair.ts.type);
-      const rustKeys = extractRustStructFields(readFileSync(rustPath, "utf8"), pair.rust.struct);
+      const tsKeys = extractTsTypeFields(
+        readFileSync(tsPath, "utf8"),
+        pair.ts.type,
+      );
+      const rustKeys = extractRustStructFields(
+        readFileSync(rustPath, "utf8"),
+        pair.rust.struct,
+      );
 
       it("extracts a non-empty field set from each side", () => {
         // Sanity check: a regex that silently returns empty would let

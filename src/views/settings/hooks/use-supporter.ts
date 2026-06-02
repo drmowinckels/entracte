@@ -40,7 +40,11 @@ export function useSupporter(): UseSupporter {
 
   const refresh = useCallback(async () => {
     try {
-      const next = await invoke("get_supporter_status", undefined, supporterStatusSchema);
+      const next = await invoke(
+        "get_supporter_status",
+        undefined,
+        supporterStatusSchema,
+      );
       if (!cancelledRef.current) setStatus(next);
     } catch (e) {
       console.error("supporter fetch failed", e);
@@ -81,7 +85,11 @@ export function useSupporter(): UseSupporter {
     setPending(true);
     setMessage("");
     try {
-      const next = await invoke("remove_supporter", undefined, supporterStatusSchema);
+      const next = await invoke(
+        "remove_supporter",
+        undefined,
+        supporterStatusSchema,
+      );
       if (!cancelledRef.current) {
         setStatus(next);
         setMessage("License removed.");

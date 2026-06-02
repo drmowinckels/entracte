@@ -43,7 +43,11 @@ for (const [path, loader] of Object.entries(urlLoaders)) {
 const END_CHIME_CATEGORIES: readonly SoundCategory[] = ["chime", "bowl"];
 
 /** Longer tracks that loop well during a break. */
-const AMBIENT_CATEGORIES: readonly SoundCategory[] = ["ambient", "noise", "music"];
+const AMBIENT_CATEGORIES: readonly SoundCategory[] = [
+  "ambient",
+  "noise",
+  "music",
+];
 
 /** Catalogue subset appropriate for `mode`. */
 export function soundsForMode(mode: "end_chime" | "ambient"): Sound[] {
@@ -115,11 +119,9 @@ async function playUrlOnce(url: string, volume: number): Promise<void> {
     audio.addEventListener("ended", () => finish(false), { once: true });
     audio.addEventListener("error", () => finish(false), { once: true });
     const timeoutId = setTimeout(() => finish(true), PLAYBACK_TIMEOUT_MS);
-    audio.addEventListener(
-      "ended",
-      () => clearTimeout(timeoutId),
-      { once: true },
-    );
+    audio.addEventListener("ended", () => clearTimeout(timeoutId), {
+      once: true,
+    });
     audio.play().catch(() => finish(true));
   });
 }

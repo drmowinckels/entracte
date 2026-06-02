@@ -19,6 +19,9 @@ export function useMilestoneAnnouncer(
 ): string {
   return useMemo(() => {
     if (!kind) return "";
-    return milestoneMessage(kind, milestoneFor(durationSecs, remaining, finished));
+    return milestoneMessage(
+      kind,
+      milestoneFor(durationSecs, remaining, finished),
+    );
   }, [kind, durationSecs, remaining, finished]);
 }

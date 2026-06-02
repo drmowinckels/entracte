@@ -46,7 +46,9 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
     try {
       const report = await invoke<string>("build_diagnostics_report");
       const ok = await writeToClipboard(report);
-      flashDiagnostics(ok ? "Report copied to clipboard" : "Clipboard copy failed");
+      flashDiagnostics(
+        ok ? "Report copied to clipboard" : "Clipboard copy failed",
+      );
     } catch (e) {
       console.error("copy diagnostics report failed", e);
       flashDiagnostics("Could not build report");
@@ -69,8 +71,8 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
         {update.info && update.info.has_update && update.info.release_url && (
           <>
             <p className="about-meta">
-              Update available: <strong>{update.info.latest}</strong> (you
-              have {update.info.current}).{" "}
+              Update available: <strong>{update.info.latest}</strong> (you have{" "}
+              {update.info.current}).{" "}
               <button
                 className="link"
                 onClick={() => openUrl(update.info!.release_url!)}
@@ -81,8 +83,8 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
             {platform === "windows" && (
               <p className="about-meta">
                 The Windows installer isn't Authenticode-signed yet, so
-                SmartScreen will warn — click{" "}
-                <em>More info → Run anyway</em> to proceed.
+                SmartScreen will warn — click <em>More info → Run anyway</em> to
+                proceed.
               </p>
             )}
           </>
@@ -92,7 +94,9 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
             You're on the latest version ({update.info.current}).
           </p>
         )}
-        {update.error && <p className="about-meta">Check failed: {update.error}</p>}
+        {update.error && (
+          <p className="about-meta">Check failed: {update.error}</p>
+        )}
       </section>
 
       <h2>Supporter{supporter.status.is_supporter ? " ✓" : ""}</h2>
@@ -160,7 +164,9 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
 
       <div className="section-heading">
         <h2>Author</h2>
-        <button onClick={() => openUrl("https://buymeacoffee.com/drmowinckels")}>
+        <button
+          onClick={() => openUrl("https://buymeacoffee.com/drmowinckels")}
+        >
           ☕ Buy me a coffee
         </button>
       </div>
@@ -176,7 +182,9 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
 
       <div className="section-heading">
         <h2>Diagnostics</h2>
-        <button onClick={onCopyDiagnosticsReport}>Copy diagnostics report</button>
+        <button onClick={onCopyDiagnosticsReport}>
+          Copy diagnostics report
+        </button>
       </div>
       <section>
         {diagnosticsStatus && (

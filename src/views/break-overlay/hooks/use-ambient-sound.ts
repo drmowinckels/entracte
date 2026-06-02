@@ -5,11 +5,7 @@ import {
   type AmbientHandle,
 } from "../../../lib/sounds";
 import { CUSTOM_SOUND_ID } from "../../../lib/break-sound";
-import {
-  breakSoundFor,
-  type BreakEvent,
-  type OverlaySettings,
-} from "../types";
+import { breakSoundFor, type BreakEvent, type OverlaySettings } from "../types";
 
 export type AmbientSoundDeps = {
   startAmbient?: typeof defaultStartAmbient;
@@ -29,7 +25,7 @@ export function useAmbientSound(
   const ambient = cfg && cfg.mode === "ambient" ? cfg : null;
   const isCustom = ambient?.sound_id === CUSTOM_SOUND_ID;
   const id = ambient && !isCustom ? ambient.sound_id : "";
-  const customPath = isCustom ? ambient?.custom_path ?? "" : "";
+  const customPath = isCustom ? (ambient?.custom_path ?? "") : "";
   const volume = appearance.sound_volume;
 
   const handleRef = useRef<AmbientHandle | null>(null);

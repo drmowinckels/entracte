@@ -14,14 +14,24 @@ type Segment = {
 
 function segmentsFrom(data: PostponeFollowThrough): Segment[] {
   return [
-    { key: "taken", label: "Eventually taken", value: data.taken, cssVar: "--primary-color" },
+    {
+      key: "taken",
+      label: "Eventually taken",
+      value: data.taken,
+      cssVar: "--primary-color",
+    },
     {
       key: "dismissed",
       label: "Dismissed instead",
       value: data.dismissed,
       cssVar: "--secondary-color",
     },
-    { key: "skipped", label: "Skipped instead", value: data.skipped, cssVar: "--accent-color" },
+    {
+      key: "skipped",
+      label: "Skipped instead",
+      value: data.skipped,
+      cssVar: "--accent-color",
+    },
     {
       key: "unresolved",
       label: "Still pending",

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { announceBreak, dialogLabel, remainingAriaLabel } from "../lib/a11y";
 import { DEFAULT_OVERLAY_SETTINGS } from "./break-overlay/types";
 import type { AnnouncedKind } from "../lib/a11y";
@@ -52,7 +58,10 @@ const sampleBreak: BreakEvent = {
   health_intensity: 0.2,
 };
 
-async function startBreak(strict: boolean, breakOverride?: Partial<BreakEvent>) {
+async function startBreak(
+  strict: boolean,
+  breakOverride?: Partial<BreakEvent>,
+) {
   currentSettings = { ...DEFAULT_OVERLAY_SETTINGS, strict_mode: strict };
   currentBreak = null;
   const utils = render(<BreakOverlay />);
@@ -167,7 +176,9 @@ describe("BreakOverlay action handlers", () => {
     const { getByRole } = await startBreak(false);
     invokeMock.mockClear();
     fireEvent.click(getByRole("button", { name: "Skip break" }));
-    expect(invokeMock).toHaveBeenCalledWith("end_break", { reason: "dismissed" });
+    expect(invokeMock).toHaveBeenCalledWith("end_break", {
+      reason: "dismissed",
+    });
   });
 
   it("clicking 'Skip' tears down the overlay (renderer-side clearBreak)", async () => {
@@ -188,7 +199,9 @@ describe("BreakOverlay action handlers", () => {
   it("'Postpone' is disabled once the user has exhausted their postpones", async () => {
     currentPostpone = { count: 3, max: 3, remaining: 0 };
     const { getByRole } = await startBreak(false);
-    const btn = getByRole("button", { name: "Postpone break" }) as HTMLButtonElement;
+    const btn = getByRole("button", {
+      name: "Postpone break",
+    }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     invokeMock.mockClear();
     fireEvent.click(btn);
@@ -222,7 +235,9 @@ describe("BreakOverlay action handlers", () => {
     await startBreak(false);
     invokeMock.mockClear();
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(invokeMock).toHaveBeenCalledWith("end_break", { reason: "dismissed" });
+    expect(invokeMock).toHaveBeenCalledWith("end_break", {
+      reason: "dismissed",
+    });
   });
 });
 
@@ -281,7 +296,9 @@ describe("BreakOverlay ARIA contract", () => {
         enforceable: true,
         postpone_available: false,
       });
-      expect(getByRole("alert").textContent).toBe(announceBreak(kind, duration));
+      expect(getByRole("alert").textContent).toBe(
+        announceBreak(kind, duration),
+      );
     },
   );
 

@@ -201,7 +201,10 @@ export function useSettings(): UseSettings {
   }, []);
 
   const update = useCallback(
-    <K extends keyof SchedulerSettings>(key: K, value: SchedulerSettings[K]) => {
+    <K extends keyof SchedulerSettings>(
+      key: K,
+      value: SchedulerSettings[K],
+    ) => {
       setSettings((prev) => {
         if (!prev) return prev;
         const next = { ...prev, [key]: value };

@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 
 import type { Platform } from "../../../lib/platform";
 
@@ -36,7 +42,9 @@ describe("NumberRow", () => {
     // The label is the only text that should render — also confirms
     // the input is associated with the label (RTL gets the input by
     // role + name).
-    const input = screen.getByRole("spinbutton", { name: "Micro break interval" });
+    const input = screen.getByRole("spinbutton", {
+      name: "Micro break interval",
+    });
     expect(input.tagName).toBe("INPUT");
     expect(input.getAttribute("type")).toBe("number");
   });
@@ -134,8 +142,12 @@ describe("NumberRow", () => {
     // The InfoTip is a button labelled "More information"; its tooltip
     // body is the tip text. If a future refactor drops the tip from the
     // tree, the user loses the explanation.
-    expect(screen.getByRole("button", { name: /more information/i })).toBeTruthy();
-    expect(screen.getByRole("tooltip").textContent).toBe("How often the break fires.");
+    expect(
+      screen.getByRole("button", { name: /more information/i }),
+    ).toBeTruthy();
+    expect(screen.getByRole("tooltip").textContent).toBe(
+      "How often the break fires.",
+    );
   });
 });
 
@@ -151,7 +163,9 @@ describe("TimeRow", () => {
   });
 
   it("renders in 12h form (`9:30 AM`) when `format='12h'` is passed", () => {
-    render(<TimeRow label="Start" value={570} onChange={() => {}} format="12h" />);
+    render(
+      <TimeRow label="Start" value={570} onChange={() => {}} format="12h" />,
+    );
     const input = screen.getByLabelText("Start") as HTMLInputElement;
     expect(input.value).toBe("9:30 AM");
   });
@@ -199,8 +213,12 @@ describe("TimeRow", () => {
 describe("CheckboxRow", () => {
   it("renders a checkbox bound to `value` and toggles via onChange", () => {
     const onChange = vi.fn();
-    render(<CheckboxRow label="Pause during DnD" value={true} onChange={onChange} />);
-    const cb = screen.getByRole("checkbox", { name: /pause during dnd/i }) as HTMLInputElement;
+    render(
+      <CheckboxRow label="Pause during DnD" value={true} onChange={onChange} />,
+    );
+    const cb = screen.getByRole("checkbox", {
+      name: /pause during dnd/i,
+    }) as HTMLInputElement;
     expect(cb.checked).toBe(true);
     fireEvent.click(cb);
     expect(onChange).toHaveBeenCalledWith(false);

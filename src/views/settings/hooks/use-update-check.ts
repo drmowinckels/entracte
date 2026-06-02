@@ -38,7 +38,11 @@ export function useUpdateCheck(): UseUpdateCheck {
     setError("");
     setInfo(null);
     try {
-      const next = await invoke("check_for_update", undefined, updateInfoSchema);
+      const next = await invoke(
+        "check_for_update",
+        undefined,
+        updateInfoSchema,
+      );
       if (!cancelledRef.current) setInfo(next);
     } catch (e) {
       if (!cancelledRef.current) setError(String(e));

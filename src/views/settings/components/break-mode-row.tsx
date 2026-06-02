@@ -10,7 +10,9 @@ export type BreakModeRowProps = {
   mode: string;
   enabledKey: EnabledKey;
   modeKey: ModeKey;
-  onChange: (patch: Partial<Record<EnabledKey | ModeKey, boolean | string>>) => void;
+  onChange: (
+    patch: Partial<Record<EnabledKey | ModeKey, boolean | string>>,
+  ) => void;
   tip?: string;
 };
 

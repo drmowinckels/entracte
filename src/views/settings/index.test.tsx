@@ -103,13 +103,19 @@ describe("Settings shell ARIA + keyboard", () => {
     mockSettings = hydratedSettings;
     render(<Settings />);
     expect(
-      screen.getByRole("link", { name: "Skip to settings content" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Skip to settings content" })
+        .getAttribute("href"),
     ).toBe("#settings-tabpanel-schedule");
-    const breaksTab = screen.getAllByRole("tab").find((t) => t.id === "settings-tab-breaks");
+    const breaksTab = screen
+      .getAllByRole("tab")
+      .find((t) => t.id === "settings-tab-breaks");
     if (!breaksTab) throw new Error("breaks tab not found");
     await user.click(breaksTab);
     expect(
-      screen.getByRole("link", { name: "Skip to settings content" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Skip to settings content" })
+        .getAttribute("href"),
     ).toBe("#settings-tabpanel-breaks");
   });
 

@@ -49,7 +49,11 @@ export default function Settings() {
       </a>
       <main className="settings">
         <header className="settings-header">
-          <div className="tabs" aria-label="Settings sections" {...tablistProps}>
+          <div
+            className="tabs"
+            aria-label="Settings sections"
+            {...tablistProps}
+          >
             {TABS.map((t) => (
               <button
                 key={t.id}

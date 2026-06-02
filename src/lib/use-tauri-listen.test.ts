@@ -39,9 +39,7 @@ describe("useTauriListen", () => {
     listenMock.mockReturnValue(pending);
 
     const unlisten = vi.fn();
-    const { unmount } = renderHook(() =>
-      useTauriListen("evt", () => {}, []),
-    );
+    const { unmount } = renderHook(() => useTauriListen("evt", () => {}, []));
 
     unmount();
 
@@ -56,9 +54,7 @@ describe("useTauriListen", () => {
     listenMock.mockRejectedValue(new Error("ipc down"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const { unmount } = renderHook(() =>
-        useTauriListen("evt", () => {}, []),
-      );
+      const { unmount } = renderHook(() => useTauriListen("evt", () => {}, []));
       await Promise.resolve();
       await Promise.resolve();
       expect(errSpy).toHaveBeenCalled();

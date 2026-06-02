@@ -10,7 +10,8 @@ export function useEscapeToDismiss(
   onDismiss: () => void,
   deps: EscapeToDismissDeps = {},
 ): void {
-  const target = deps.target ?? (typeof window !== "undefined" ? window : undefined);
+  const target =
+    deps.target ?? (typeof window !== "undefined" ? window : undefined);
   const dismissable = active !== null && !active.enforceable;
   useEffect(() => {
     if (!dismissable || !target) return;

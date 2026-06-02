@@ -27,7 +27,10 @@ const {
 
 describe("soundDisplayName", () => {
   it("returns display_name when present", () => {
-    const s = { display_name: "Wind Chimes", title: "wind chimes - single 04" } as Sound;
+    const s = {
+      display_name: "Wind Chimes",
+      title: "wind chimes - single 04",
+    } as Sound;
     expect(soundDisplayName(s)).toBe("Wind Chimes");
   });
 
@@ -92,6 +95,8 @@ class FakeAudio {
     this.src = url;
     this.play = vi.fn(FakeAudio.playBehavior);
     createdAudios.push(this);
+    // Test fake tracks its own latest instance so assertions can reach it.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     lastAudio = this;
   }
 
@@ -116,7 +121,9 @@ class FakeAudio {
 let lastAudio: FakeAudio | null = null;
 const createdAudios: FakeAudio[] = [];
 
-function installFakeAudio(playBehavior: () => Promise<void> = async () => undefined) {
+function installFakeAudio(
+  playBehavior: () => Promise<void> = async () => undefined,
+) {
   createdAudios.length = 0;
   lastAudio = null;
   FakeAudio.playBehavior = playBehavior;
@@ -215,7 +222,12 @@ describe("playSound", () => {
     await expect(
       Promise.race([
         promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("playSound hung past safety timeout")), 3500)),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("playSound hung past safety timeout")),
+            3500,
+          ),
+        ),
       ]),
     ).resolves.toBeUndefined();
     // The safety timeout must also tear the element down — a chime that

@@ -16,7 +16,10 @@ import type {
 } from "../types";
 
 function newUiId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `hook-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -137,7 +140,10 @@ export function SystemTab({
             value={settings.tray_countdown_target}
             disabled={!settings.tray_countdown_enabled}
             onChange={(e) =>
-              update("tray_countdown_target", e.target.value as TrayCountdownTarget)
+              update(
+                "tray_countdown_target",
+                e.target.value as TrayCountdownTarget,
+              )
             }
           >
             {TRAY_COUNTDOWN_TARGETS.map((t) => (
@@ -188,7 +194,9 @@ export function SystemTab({
                   className="hook-command"
                   placeholder={`e.g. sh -c "osascript -e 'tell app \\"Spotify\\" to pause'"`}
                   value={hook.command}
-                  onChange={(e) => updateHookAt(idx, { command: e.target.value })}
+                  onChange={(e) =>
+                    updateHookAt(idx, { command: e.target.value })
+                  }
                 />
                 <label className="hook-toggle">
                   <input

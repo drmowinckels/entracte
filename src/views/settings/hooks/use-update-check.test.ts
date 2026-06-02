@@ -47,7 +47,8 @@ describe("useUpdateCheck", () => {
       current: "0.0.1",
       latest: "0.0.2",
       has_update: true,
-      release_url: "https://github.com/drmowinckels/entracte/releases/tag/v0.0.2",
+      release_url:
+        "https://github.com/drmowinckels/entracte/releases/tag/v0.0.2",
     });
     const { result } = renderHook(() => useUpdateCheck());
     await act(async () => {

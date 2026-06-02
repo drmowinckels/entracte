@@ -10,6 +10,7 @@ import type { UpdateInfo, SupporterStatus } from "../types";
 const invokeMock = vi.fn();
 const openUrlMock = vi.fn();
 const getVersionMock = vi.fn();
+const writeToClipboardMock = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -17,6 +18,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: (...args: unknown[]) => openUrlMock(...args),
 }));
+vi.mock("../utils", async () => {
+  const actual = await vi.importActual<typeof import("../utils")>("../utils");
+  return {
+    ...actual,
+    writeToClipboard: (...args: unknown[]) => writeToClipboardMock(...args),
+  };
+});
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => getVersionMock(),
 }));
@@ -86,9 +94,7 @@ describe("AboutTab — Windows SmartScreen advisory", () => {
     currentPlatform = "windows";
     mockUpdate = { ...mockUpdate, info: updateAvailable };
     render(<AboutTab supporter={supporterStub()} />);
-    expect(
-      screen.getByText(/SmartScreen will warn/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/SmartScreen will warn/i)).toBeTruthy();
   });
 
   it("hides the SmartScreen warning on macOS even when an update is available", () => {
@@ -109,7 +115,12 @@ describe("AboutTab — Windows SmartScreen advisory", () => {
     currentPlatform = "windows";
     mockUpdate = {
       ...mockUpdate,
-      info: { current: "0.0.1", latest: "0.0.1", has_update: false, release_url: null },
+      info: {
+        current: "0.0.1",
+        latest: "0.0.1",
+        has_update: false,
+        release_url: null,
+      },
     };
     render(<AboutTab supporter={supporterStub()} />);
     expect(screen.queryByText(/SmartScreen will warn/i)).toBeNull();
@@ -133,7 +144,9 @@ describe("AboutTab — update banner", () => {
       info: { ...updateAvailable, release_url: null },
     };
     render(<AboutTab supporter={supporterStub()} />);
-    expect(screen.queryByRole("button", { name: /open release page/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /open release page/i }),
+    ).toBeNull();
   });
 
   it("renders the 'Check for updates' button and dispatches on click", async () => {
@@ -141,14 +154,18 @@ describe("AboutTab — update banner", () => {
     const check = vi.fn(async () => undefined);
     mockUpdate = { ...mockUpdate, check };
     render(<AboutTab supporter={supporterStub()} />);
-    await user.click(screen.getByRole("button", { name: /check for updates/i }));
+    await user.click(
+      screen.getByRole("button", { name: /check for updates/i }),
+    );
     expect(check).toHaveBeenCalledTimes(1);
   });
 
   it("disables and relabels the check button while checking", () => {
     mockUpdate = { ...mockUpdate, checking: true };
     render(<AboutTab supporter={supporterStub()} />);
-    const btn = screen.getByRole("button", { name: /checking/i }) as HTMLButtonElement;
+    const btn = screen.getByRole("button", {
+      name: /checking/i,
+    }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
@@ -156,5 +173,39 @@ describe("AboutTab — update banner", () => {
     mockUpdate = { ...mockUpdate, error: "network unreachable" };
     render(<AboutTab supporter={supporterStub()} />);
     expect(screen.getByText(/Check failed: network unreachable/)).toBeTruthy();
+  });
+});
+
+describe("AboutTab — diagnostics & author links", () => {
+  it("copies the diagnostics report and flashes success", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValue("diagnostics-report-body");
+    writeToClipboardMock.mockResolvedValue(true);
+    render(<AboutTab supporter={supporterStub()} />);
+    await user.click(
+      screen.getByRole("button", { name: /copy diagnostics report/i }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("build_diagnostics_report");
+    expect(await screen.findByText(/Report copied to clipboard/i)).toBeTruthy();
+  });
+
+  it("flashes a failure message when the clipboard write fails", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValue("diagnostics-report-body");
+    writeToClipboardMock.mockResolvedValue(false);
+    render(<AboutTab supporter={supporterStub()} />);
+    await user.click(
+      screen.getByRole("button", { name: /copy diagnostics report/i }),
+    );
+    expect(await screen.findByText(/Clipboard copy failed/i)).toBeTruthy();
+  });
+
+  it("opens the buy-me-a-coffee link", async () => {
+    const user = userEvent.setup();
+    render(<AboutTab supporter={supporterStub()} />);
+    await user.click(screen.getByRole("button", { name: /buy me a coffee/i }));
+    expect(openUrlMock).toHaveBeenCalledWith(
+      "https://buymeacoffee.com/drmowinckels",
+    );
   });
 });

@@ -1,6 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { formatMinutesOfDay, parseMinutesOfDay } from "../../../lib/time";
-import { PLATFORM_LABELS, type Platform, usePlatform } from "../../../lib/platform";
+import {
+  PLATFORM_LABELS,
+  type Platform,
+  usePlatform,
+} from "../../../lib/platform";
 import { InfoTip } from "./info-tip";
 import type { ClockFormat } from "../types";
 

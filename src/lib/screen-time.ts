@@ -11,7 +11,10 @@ export function formatScreenTime(secs: number): string {
 
 /** Integer percent for the progress bar's `aria-valuenow` + width,
  * clamped to `[0, 100]`. Returns 0 if the budget is missing/invalid. */
-export function progressPercent(seconds: number, budgetMinutes: number): number {
+export function progressPercent(
+  seconds: number,
+  budgetMinutes: number,
+): number {
   const budgetSecs = budgetMinutes * 60;
   if (budgetSecs <= 0) return 0;
   if (seconds <= 0) return 0;

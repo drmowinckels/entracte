@@ -27,9 +27,9 @@ describe("ipc.invoke", () => {
     invokeMock.mockResolvedValue({ ok: true });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      await expect(invoke("some_cmd", undefined, schema)).rejects.toBeInstanceOf(
-        IpcError,
-      );
+      await expect(
+        invoke("some_cmd", undefined, schema),
+      ).rejects.toBeInstanceOf(IpcError);
     } finally {
       errSpy.mockRestore();
     }

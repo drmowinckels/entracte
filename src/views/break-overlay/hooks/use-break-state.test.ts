@@ -37,35 +37,45 @@ describe("useBreakState", () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
       if (cmd === "get_current_break") return sampleBreak;
-      if (cmd === "get_postpone_state") return { count: 0, max: 3, remaining: 3 };
+      if (cmd === "get_postpone_state")
+        return { count: 0, max: 3, remaining: 3 };
       return null;
     });
     const { listen } = makeListener();
     const { result } = renderHook(() =>
       useBreakState({
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
-        listen: listen as unknown as typeof import("@tauri-apps/api/event").listen,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
       }),
     );
     await waitFor(() => {
       expect(result.current.active).not.toBeNull();
     });
     expect(result.current.remaining).toBe(30);
-    expect(result.current.postponeState).toEqual({ count: 0, max: 3, remaining: 3 });
+    expect(result.current.postponeState).toEqual({
+      count: 0,
+      max: 3,
+      remaining: 3,
+    });
   });
 
   it("starts a break when a break:start event arrives", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_current_break") return null;
       if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
-      if (cmd === "get_postpone_state") return { count: 1, max: 5, remaining: 4 };
+      if (cmd === "get_postpone_state")
+        return { count: 1, max: 5, remaining: 4 };
       return null;
     });
     const { listen, emit } = makeListener();
     const { result } = renderHook(() =>
       useBreakState({
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
-        listen: listen as unknown as typeof import("@tauri-apps/api/event").listen,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
       }),
     );
     await waitFor(() => expect(listen).toHaveBeenCalledTimes(2));
@@ -81,15 +91,18 @@ describe("useBreakState", () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_current_break") return null;
       if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
-      if (cmd === "get_postpone_state") return { count: 0, max: 3, remaining: 3 };
+      if (cmd === "get_postpone_state")
+        return { count: 0, max: 3, remaining: 3 };
       return null;
     });
     const stopAllSounds = vi.fn();
     const { listen, emit } = makeListener();
     const { result } = renderHook(() =>
       useBreakState({
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
-        listen: listen as unknown as typeof import("@tauri-apps/api/event").listen,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
         stopAllSounds,
       }),
     );
@@ -105,14 +118,17 @@ describe("useBreakState", () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
       if (cmd === "get_current_break") return sampleBreak;
-      if (cmd === "get_postpone_state") return { count: 0, max: 0, remaining: 0 };
+      if (cmd === "get_postpone_state")
+        return { count: 0, max: 0, remaining: 0 };
       return null;
     });
     const { listen, emit } = makeListener();
     const { result } = renderHook(() =>
       useBreakState({
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
-        listen: listen as unknown as typeof import("@tauri-apps/api/event").listen,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
       }),
     );
     await waitFor(() => expect(result.current.active).not.toBeNull());
@@ -129,8 +145,10 @@ describe("useBreakState", () => {
     const { listen, unlistens } = makeListener();
     const { unmount } = renderHook(() =>
       useBreakState({
-        invoke: invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
-        listen: listen as unknown as typeof import("@tauri-apps/api/event").listen,
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
       }),
     );
     await waitFor(() => expect(listen).toHaveBeenCalledTimes(2));

@@ -443,8 +443,16 @@ jobs:
         run: |
           cd assets
           # Checksum every artifact except updater signatures and any
-          # pre-existing checksum files from a prior re-run.
-          mapfile -t files < <(ls -1 | grep -vE '\.(sig|sha256)$|^SHA256SUMS')
+          # pre-existing checksum files from a prior re-run. Glob loop
+          # rather than `ls | grep` so odd filenames can't break parsing.
+          shopt -s nullglob
+          files=()
+          for f in *; do
+            case "$f" in
+              *.sig | *.sha256 | SHA256SUMS*) continue ;;
+            esac
+            files+=("$f")
+          done
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::no artifacts found on draft release"
             exit 1

@@ -1,10 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { formatClockList, parseClockList } from "../../../lib/clock-list";
-import {
-  formatScreenTime,
-  progressPercent,
-} from "../../../lib/screen-time";
+import { formatScreenTime, progressPercent } from "../../../lib/screen-time";
 import { Advanced } from "../components/advanced";
 import { BreakModeRow } from "../components/break-mode-row";
 import { CheckboxRow, NumberRow, TimeRow } from "../components/rows";
@@ -147,7 +144,10 @@ export function ScheduleTab({
             <div className="actions inline">
               <button
                 onClick={() =>
-                  invoke("trigger_test_break", { kind: "micro", durationSecs: 10 })
+                  invoke("trigger_test_break", {
+                    kind: "micro",
+                    durationSecs: 10,
+                  })
                 }
               >
                 Test now (10s)
@@ -255,7 +255,10 @@ export function ScheduleTab({
             <div className="actions inline">
               <button
                 onClick={() =>
-                  invoke("trigger_test_break", { kind: "long", durationSecs: 15 })
+                  invoke("trigger_test_break", {
+                    kind: "long",
+                    durationSecs: 15,
+                  })
                 }
               >
                 Test now (15s)
@@ -326,7 +329,10 @@ export function ScheduleTab({
             <div className="actions inline">
               <button
                 onClick={() =>
-                  invoke("trigger_test_break", { kind: "sleep", durationSecs: 15 })
+                  invoke("trigger_test_break", {
+                    kind: "sleep",
+                    durationSecs: 15,
+                  })
                 }
               >
                 Test now (15s)
@@ -366,7 +372,9 @@ export function ScheduleTab({
               <span className="screen-time-label">Today</span>
               <span className="screen-time-value">
                 {formatScreenTime(screenTime?.seconds ?? 0)} /{" "}
-                {formatScreenTime(settings.daily_screen_time_budget_minutes * 60)}
+                {formatScreenTime(
+                  settings.daily_screen_time_budget_minutes * 60,
+                )}
               </span>
               <div
                 className="screen-time-bar"

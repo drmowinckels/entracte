@@ -1,0 +1,7 @@
+dist
+coverage
+node_modules
+src-tauri/target
+package-lock.json
+docs/.vitepress/cache
+docs/.vitepress/dist
