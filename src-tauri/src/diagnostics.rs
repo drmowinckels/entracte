@@ -539,8 +539,20 @@ fn redact_sensitive(mut value: serde_json::Value) -> serde_json::Value {
                 ));
             }
         }
+        for (key, field) in obj.iter_mut() {
+            if key.ends_with("_hints") {
+                collapse_hint_pool(field);
+            }
+        }
     }
     value
+}
+
+fn collapse_hint_pool(field: &mut serde_json::Value) {
+    if let Some(arr) = field.as_array() {
+        let count = arr.len();
+        *field = serde_json::json!(format!("<{count} hint(s); omitted from report>"));
+    }
 }
 
 #[cfg(test)]
@@ -627,6 +639,58 @@ mod tests {
         let input = "[INFO bug] reproducer ABCD-1111-22!2-3333-4444 oh no\n";
         let out = redact_log_tail(input);
         assert!(!out.contains("[REDACTED-LS-KEY]"), "got: {out}");
+    }
+
+    #[test]
+    fn redact_sensitive_collapses_hint_pools_into_count_markers() {
+        let value = serde_json::json!({
+            "micro_interval_secs": 1500,
+            "micro_physical_hints": ["Stretch", "Blink", "Stand up"],
+            "micro_psychological_hints": ["Breathe"],
+            "long_hints": ["Walk", "Hydrate"],
+            "long_social_hints": [],
+            "sleep_hints": ["Dim the lights", "Put the phone down"],
+        });
+        let redacted = redact_sensitive(value);
+        let serialized = serde_json::to_string(&redacted).unwrap();
+        assert!(!serialized.contains("Stretch"));
+        assert!(!serialized.contains("Hydrate"));
+        assert!(!serialized.contains("Dim the lights"));
+        assert!(
+            serialized.contains("\"micro_physical_hints\":\"<3 hint(s); omitted from report>\"")
+        );
+        assert!(serialized
+            .contains("\"micro_psychological_hints\":\"<1 hint(s); omitted from report>\""));
+        assert!(serialized.contains("\"long_hints\":\"<2 hint(s); omitted from report>\""));
+        assert!(serialized.contains("\"long_social_hints\":\"<0 hint(s); omitted from report>\""));
+        assert!(serialized.contains("\"sleep_hints\":\"<2 hint(s); omitted from report>\""));
+        assert!(serialized.contains("\"micro_interval_secs\":1500"));
+    }
+
+    #[test]
+    fn redact_sensitive_handles_missing_hint_fields() {
+        let value = serde_json::json!({"micro_interval_secs": 1500, "long_enabled": true});
+        let redacted = redact_sensitive(value);
+        assert_eq!(
+            redacted,
+            serde_json::json!({"micro_interval_secs": 1500, "long_enabled": true})
+        );
+    }
+
+    #[test]
+    fn redact_sensitive_leaves_non_hint_fields_untouched() {
+        let value = serde_json::json!({
+            "micro_physical_hints": ["Stretch"],
+            "active_hours": [9, 17],
+            "overlay_theme": "calm",
+        });
+        let redacted = redact_sensitive(value);
+        assert_eq!(redacted["active_hours"], serde_json::json!([9, 17]));
+        assert_eq!(redacted["overlay_theme"], serde_json::json!("calm"));
+        assert_eq!(
+            redacted["micro_physical_hints"],
+            serde_json::json!("<1 hint(s); omitted from report>")
+        );
     }
 
     #[test]
