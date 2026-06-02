@@ -820,19 +820,19 @@ fn resolve_long_hints(s: &Settings) -> Vec<String> {
     }
 }
 
-/// Borrow the resolved micro-break hint pool from the cache.
+/// The resolved micro-break hint pool.
 ///
-/// Resolved once at settings load/update (see [`DerivedCaches`]); callers
-/// that need ownership (the `BreakEvent` build) clone the returned slice,
-/// which is a single allocation rather than the per-fire concatenation
-/// the old `effective_micro_hints` did.
-pub fn effective_micro_hints(s: &Settings) -> &[String] {
-    &s.derived.micro_hints_resolved
+/// The hint *mix* is resolved (and its two pools concatenated) once at
+/// settings load/update into the cache; this accessor just clones the
+/// finished vector, so the per-fire cost is a single allocation rather
+/// than the re-concatenation the pre-cache version did on every break.
+pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
+    s.derived.micro_hints_resolved.clone()
 }
 
-/// Borrow the resolved long-break hint pool from the cache.
-pub fn effective_long_hints(s: &Settings) -> &[String] {
-    &s.derived.long_hints_resolved
+/// The resolved long-break hint pool. See [`effective_micro_hints`].
+pub fn effective_long_hints(s: &Settings) -> Vec<String> {
+    s.derived.long_hints_resolved.clone()
 }
 
 /// Resolve the delivery mode for the given break kind.

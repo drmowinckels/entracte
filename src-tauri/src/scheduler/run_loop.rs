@@ -572,13 +572,13 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
             s.long_duration_secs,
             s.long_enforceable || s.strict_mode,
             s.long_manual_finish,
-            effective_long_hints(s).to_vec(),
+            effective_long_hints(s),
         ),
         BreakKind::Micro => (
             s.micro_duration_secs,
             s.micro_enforceable || s.strict_mode,
             s.micro_manual_finish,
-            effective_micro_hints(s).to_vec(),
+            effective_micro_hints(s),
         ),
         BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
     };

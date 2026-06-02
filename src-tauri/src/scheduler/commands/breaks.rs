@@ -137,8 +137,8 @@ pub async fn trigger_break_from_cli<R: Runtime>(
 ) {
     let s = scheduler.settings.lock().await.clone();
     let hints = match kind {
-        BreakKind::Micro => effective_micro_hints(&s).to_vec(),
-        BreakKind::Long => effective_long_hints(&s).to_vec(),
+        BreakKind::Micro => effective_micro_hints(&s),
+        BreakKind::Long => effective_long_hints(&s),
         BreakKind::Sleep => s.sleep_hints.clone(),
     };
     let manual_finish = match kind {
@@ -523,13 +523,13 @@ pub async fn resume_last_break_impl<R: Runtime>(
             s.micro_duration_secs,
             s.micro_enforceable || s.strict_mode,
             s.micro_manual_finish,
-            effective_micro_hints(&s).to_vec(),
+            effective_micro_hints(&s),
         ),
         BreakKind::Long => (
             s.long_duration_secs,
             s.long_enforceable || s.strict_mode,
             s.long_manual_finish,
-            effective_long_hints(&s).to_vec(),
+            effective_long_hints(&s),
         ),
         BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
     };
