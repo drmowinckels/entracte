@@ -30,6 +30,61 @@ pub fn should_hide_on_close(window_label: &str) -> bool {
     window_label == "main"
 }
 
+/// Extract the executable path an autostart LaunchAgent will launch — the
+/// first `<string>` inside its `ProgramArguments` array.
+#[cfg(any(target_os = "macos", test))]
+fn launch_agent_program_path(plist: &str) -> Option<String> {
+    let after_key = plist.split("ProgramArguments").nth(1)?;
+    let open = after_key.find("<string>")? + "<string>".len();
+    let rest = &after_key[open..];
+    let close = rest.find("</string>")?;
+    Some(rest[..close].trim().to_string())
+}
+
+/// True when an existing autostart LaunchAgent points at a different
+/// executable than the running one. The `auto-launch` crate's
+/// `is_enabled()` only checks that the plist exists — never that its path
+/// is current — and it keys the plist by product name, so a plist written
+/// by another build sharing that name (e.g. a dev binary) silently keeps
+/// launching the wrong executable. Detecting the mismatch lets us rewrite it.
+#[cfg(any(target_os = "macos", test))]
+fn autostart_agent_is_stale(plist: &str, current_exe: &str) -> bool {
+    launch_agent_program_path(plist).is_some_and(|p| p != current_exe)
+}
+
+/// Repoint the autostart LaunchAgent at the running executable when it was
+/// written by a different build. Only the path-mismatch decision carries
+/// logic ([`autostart_agent_is_stale`]); the rest is filesystem/plugin glue.
+#[cfg(target_os = "macos")]
+fn repoint_stale_autostart_agent(app: &tauri::App) {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if !manager.is_enabled().unwrap_or(false) {
+        return;
+    }
+    let Ok(home) = app.path().home_dir() else {
+        return;
+    };
+    let plist = home
+        .join("Library/LaunchAgents")
+        .join(format!("{}.plist", app.package_info().name));
+    let Ok(contents) = std::fs::read_to_string(&plist) else {
+        return;
+    };
+    let Ok(exe) = std::env::current_exe().and_then(|p| p.canonicalize()) else {
+        return;
+    };
+    if autostart_agent_is_stale(&contents, &exe.display().to_string()) {
+        log::warn!(
+            "autostart: LaunchAgent points at a stale executable; repointing to current binary"
+        );
+        let _ = manager.disable();
+        if let Err(e) = manager.enable() {
+            log::warn!("autostart: failed to repoint LaunchAgent: {e}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let log_level = if cfg!(debug_assertions) {
@@ -117,7 +172,10 @@ pub fn run() {
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                repoint_stale_autostart_agent(app);
+            }
 
             let config_dir = app
                 .path()
@@ -295,5 +353,45 @@ mod tests {
         assert!(!should_hide_on_close(" main"));
         assert!(!should_hide_on_close("settings"));
         assert!(!should_hide_on_close("preferences"));
+    }
+
+    const EXE: &str = "/Applications/Entracte.app/Contents/MacOS/entracte";
+
+    fn plist_for(program: &str) -> String {
+        format!(
+            "<?xml version=\"1.0\"?>\n<plist version=\"1.0\"><dict>\
+             <key>Label</key><string>Entracte</string>\
+             <key>ProgramArguments</key><array><string>{program}</string></array>\
+             <key>RunAtLoad</key><true/></dict></plist>"
+        )
+    }
+
+    #[test]
+    fn program_path_extracts_first_argument() {
+        assert_eq!(
+            super::launch_agent_program_path(&plist_for(EXE)).as_deref(),
+            Some(EXE)
+        );
+    }
+
+    #[test]
+    fn program_path_is_none_without_program_arguments() {
+        assert_eq!(super::launch_agent_program_path("<plist></plist>"), None);
+    }
+
+    #[test]
+    fn agent_is_stale_when_path_differs() {
+        let plist = plist_for("/Users/dev/workspace/breakly/target/debug/entracte");
+        assert!(super::autostart_agent_is_stale(&plist, EXE));
+    }
+
+    #[test]
+    fn agent_is_not_stale_when_path_matches() {
+        assert!(!super::autostart_agent_is_stale(&plist_for(EXE), EXE));
+    }
+
+    #[test]
+    fn agent_is_not_stale_without_program_arguments() {
+        assert!(!super::autostart_agent_is_stale("<plist/>", EXE));
     }
 }
