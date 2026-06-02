@@ -204,4 +204,17 @@ describe("ErrorBoundary class component", () => {
     fireEvent.click(screen.getByText("Reload"));
     expect(reloadSpy).toHaveBeenCalled();
   });
+
+  it("reports null componentStack when React supplies none", () => {
+    const boundary = new ErrorBoundary({ children: null });
+    boundary.componentDidCatch(new Error("no stack here"), {
+      componentStack: "",
+    });
+    expect(invokeMock).toHaveBeenCalled();
+    const call = invokeMock.mock.calls[0];
+    if (!call) throw new Error("expected invoke");
+    expect((call[1] as { componentStack: string | null }).componentStack).toBe(
+      null,
+    );
+  });
 });
