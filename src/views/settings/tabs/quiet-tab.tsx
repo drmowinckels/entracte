@@ -5,7 +5,7 @@ import {
   suggestionsForPlatform,
   tokenFor,
 } from "../../../lib/app-suggestions";
-import { usePlatform } from "../../../lib/platform";
+import { usePlatform, usePlatformCapabilities } from "../../../lib/platform";
 import { formatRemaining } from "../../../lib/time";
 import { CheckboxRow } from "../components/rows";
 import type { UseSettings } from "../hooks/use-settings";
@@ -22,6 +22,7 @@ export function QuietTab({
   pauseInfo: PauseInfo;
 }) {
   const platform = usePlatform();
+  const caps = usePlatformCapabilities();
   const [appPauseText, setAppPauseText] = useState(
     listToLines(settings.app_pause_list),
   );
@@ -42,7 +43,11 @@ export function QuietTab({
           label="Do Not Disturb is on"
           value={settings.pause_during_dnd}
           onChange={(v) => update("pause_during_dnd", v)}
-          tip="Reads your OS-level DnD / Focus state (macOS, Windows, and GNOME/KDE on Linux). When on, scheduled breaks are suppressed until DnD turns off."
+          tip={
+            caps.supportsDndRead
+              ? "Reads your OS-level DnD / Focus state (macOS, Windows, and GNOME/KDE on Linux). When on, scheduled breaks are suppressed until DnD turns off."
+              : "Reads your OS-level DnD / Focus state where available. When on, scheduled breaks are suppressed until DnD turns off."
+          }
         />
         <CheckboxRow
           label="Camera is in use"
@@ -64,7 +69,11 @@ export function QuietTab({
           label="Pause media while a break is showing"
           value={settings.pause_media_during_breaks}
           onChange={(v) => update("pause_media_during_breaks", v)}
-          tip="When a break starts, pauses whatever is playing (video or audio) and resumes it when the break ends. On Linux this targets your media players precisely; on macOS and Windows it sends a play/pause media key as a best-effort, so it works for most players but can't guarantee the exact app."
+          tip={
+            caps.mediaPauseGranular
+              ? "When a break starts, pauses whatever is playing (video or audio) and resumes it when the break ends. This targets your media players precisely."
+              : "When a break starts, pauses whatever is playing (video or audio) and resumes it when the break ends. This sends a play/pause media key as a best-effort, so it works for most players but can't guarantee the exact app."
+          }
         />
       </section>
 

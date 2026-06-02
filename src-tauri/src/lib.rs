@@ -165,6 +165,7 @@ pub fn run() {
             updater::check_for_update,
             diagnostics::build_diagnostics_report,
             platform::get_platform,
+            platform::get_platform_capabilities,
             renderer_log::report_renderer_error,
             get_supporter_status,
             verify_supporter_key,

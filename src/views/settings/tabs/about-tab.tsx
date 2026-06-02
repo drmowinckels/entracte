@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import { useUpdateCheck } from "../hooks/use-update-check";
 import type { UseSupporter } from "../hooks/use-supporter";
-import { usePlatform } from "../../../lib/platform";
+import { usePlatformCapabilities } from "../../../lib/platform";
 import { writeToClipboard } from "../utils";
 
 const TOAST_MS = 3000;
@@ -16,7 +16,7 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [licenseInput, setLicenseInput] = useState("");
   const update = useUpdateCheck();
-  const platform = usePlatform();
+  const caps = usePlatformCapabilities();
 
   const onVerify = async () => {
     const trimmed = licenseInput.trim();
@@ -80,7 +80,7 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
                 Open release page
               </button>
             </p>
-            {platform === "windows" && (
+            {caps.installerUnsignedWarning && (
               <p className="about-meta">
                 The Windows installer isn't Authenticode-signed yet, so
                 SmartScreen will warn — click <em>More info → Run anyway</em> to

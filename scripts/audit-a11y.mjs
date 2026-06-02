@@ -40,10 +40,7 @@ const SCHEMES = ["light", "dark"];
 
 const CONSOLE_LEVELS = new Set(["error", "warning"]);
 // Patterns that match known-benign messages we don't want to fail on.
-const CONSOLE_IGNORE = [
-  /react-devtools/i,
-  /download the react devtools/i,
-];
+const CONSOLE_IGNORE = [/react-devtools/i, /download the react devtools/i];
 
 const TAURI_SHIM = `
 (() => {
@@ -107,6 +104,11 @@ const TAURI_SHIM = `
     get_settings: DEFAULT_SETTINGS,
     update_settings: null,
     get_platform: "macos",
+    get_platform_capabilities: {
+      supportsDndRead: true,
+      mediaPauseGranular: false,
+      installerUnsignedWarning: false,
+    },
     get_pause_info: { paused: false, remaining_secs: null },
     get_break_stats: { taken: 8, skipped: 1, postponed: 2 },
     list_profiles: ["Default", "Deep work", "Light day"],
@@ -223,7 +225,11 @@ async function auditTab(page, tab) {
         target: n.target,
         html: n.html.slice(0, 240),
         failureSummary: n.failureSummary,
-        any: n.any?.map((a) => ({ id: a.id, message: a.message, data: a.data })),
+        any: n.any?.map((a) => ({
+          id: a.id,
+          message: a.message,
+          data: a.data,
+        })),
       })),
     }));
   });
@@ -286,14 +292,18 @@ async function main() {
   const totalTabs = TABS.length * SCHEMES.length;
 
   if (consoleNoise.length > 0) {
-    console.error(`\n✗ renderer console: ${consoleNoise.length} message(s) across ${totalTabs} audits`);
+    console.error(
+      `\n✗ renderer console: ${consoleNoise.length} message(s) across ${totalTabs} audits`,
+    );
     for (const m of consoleNoise) {
       console.error(`  [${m.scheme}] ${m.tab} (${m.type}): ${m.text}`);
     }
   }
 
   if (allViolations.length === 0 && consoleNoise.length === 0) {
-    console.log(`\n✓ axe a11y: clean across ${totalTabs} (tab × scheme) audits`);
+    console.log(
+      `\n✓ axe a11y: clean across ${totalTabs} (tab × scheme) audits`,
+    );
     console.log(`✓ renderer console: clean across ${totalTabs} audits`);
     process.exit(0);
   }
@@ -302,12 +312,16 @@ async function main() {
     process.exit(1);
   }
 
-  console.error(`\n✗ axe a11y: ${allViolations.length} violation(s) across ${totalTabs} audits\n`);
+  console.error(
+    `\n✗ axe a11y: ${allViolations.length} violation(s) across ${totalTabs} audits\n`,
+  );
   const grouped = new Map();
   for (const v of allViolations) {
     const key = `${v.id}|${v.impact}`;
     if (!grouped.has(key)) grouped.set(key, { ...v, occurrences: [] });
-    grouped.get(key).occurrences.push({ scheme: v.scheme, tab: v.tab, nodes: v.nodes });
+    grouped
+      .get(key)
+      .occurrences.push({ scheme: v.scheme, tab: v.tab, nodes: v.nodes });
   }
   for (const [, v] of grouped) {
     console.error(`  ▸ ${v.id} (${v.impact ?? "n/a"}): ${v.help}`);
@@ -324,10 +338,14 @@ async function main() {
               d.fgColor ? `fg=${d.fgColor}` : null,
               d.bgColor ? `bg=${d.bgColor}` : null,
               d.contrastRatio ? `ratio=${d.contrastRatio}` : null,
-              d.expectedContrastRatio ? `need=${d.expectedContrastRatio}` : null,
+              d.expectedContrastRatio
+                ? `need=${d.expectedContrastRatio}`
+                : null,
               d.fontSize ? `size=${d.fontSize}` : null,
               d.fontWeight ? `weight=${d.fontWeight}` : null,
-            ].filter(Boolean).join(" ");
+            ]
+              .filter(Boolean)
+              .join(" ");
             if (summary) console.error(`          ↳ ${summary}`);
           }
         }
