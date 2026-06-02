@@ -68,9 +68,27 @@ function extractRustKeys(source: string): Set<string> {
   }
   const block = source.slice(blockStart, blockEnd);
   const keys = new Set<string>();
-  for (const line of block.split("\n")) {
+  const lines = block.split("\n");
+  // A `#[serde(skip)]` field never crosses the IPC wire, so it has no TS
+  // counterpart by design — skip it when scanning. We only treat the bare
+  // `skip` (full skip) this way; `skip_serializing_if` etc. still serialise
+  // conditionally and remain part of the parity surface.
+  const isFullSkipAttr = (line: string): boolean =>
+    /^\s*#\[serde\([^)]*\bskip\b[^)]*\)\]/.test(line) &&
+    !/skip_serializing_if|skip_serializing|skip_deserializing/.test(line);
+  let skipNext = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    if (trimmed.startsWith("#[")) {
+      if (isFullSkipAttr(line)) skipNext = true;
+      continue;
+    }
     const m = /^\s*pub\s+(\w+):\s/.exec(line);
-    if (m) keys.add(m[1]);
+    if (m) {
+      if (!skipNext) keys.add(m[1]);
+      skipNext = false;
+    }
   }
   return keys;
 }

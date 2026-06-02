@@ -521,7 +521,10 @@ mod tests {
 
     // Profile carrying fixed times + app-pause targets so a switch onto it
     // can prove the `derived` cache is rebuilt from its (deserialised,
-    // cache-less) source fields rather than left stale/empty.
+    // cache-less) source fields rather than left stale/empty. Only the
+    // mock-AppHandle test below consumes it, so it's gated the same way to
+    // keep the Windows clippy build (which drops that test) dead-code clean.
+    #[cfg(not(target_os = "windows"))]
     fn profiles_with_derived_source() -> Vec<Profile> {
         vec![
             Profile {
