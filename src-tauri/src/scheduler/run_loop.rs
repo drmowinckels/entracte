@@ -1254,17 +1254,21 @@ mod tests {
     //       old per-tick parse, but reads pre-parsed minutes -----
 
     fn settings_with_fixed(kind: BreakKind, mode: &str, times: Vec<&str>) -> Settings {
+        // Set the requested kind's fixed schedule. We touch only the
+        // matching pair so each test asserts the per-kind cache in
+        // isolation; `kind == Micro` leaves the long fields default and
+        // vice-versa. (No `Sleep` arm — `fixed_break_due` already returns
+        // `false` for it and `fixed_break_due_sleep_never_fires` covers
+        // that, so the fixture never needs to build a Sleep case.)
+        let is_micro = matches!(kind, BreakKind::Micro);
+        let parsed: Vec<String> = times.into_iter().map(String::from).collect();
         let mut s = Settings::default();
-        match kind {
-            BreakKind::Micro => {
-                s.micro_schedule_mode = mode.into();
-                s.micro_fixed_times = times.into_iter().map(String::from).collect();
-            }
-            BreakKind::Long => {
-                s.long_schedule_mode = mode.into();
-                s.long_fixed_times = times.into_iter().map(String::from).collect();
-            }
-            BreakKind::Sleep => unreachable!(),
+        if is_micro {
+            s.micro_schedule_mode = mode.into();
+            s.micro_fixed_times = parsed;
+        } else {
+            s.long_schedule_mode = mode.into();
+            s.long_fixed_times = parsed;
         }
         s.rebuild_derived();
         s
