@@ -1,4 +1,8 @@
-/** Delivery mode for a break — mirrors Rust's `BreakDelivery`. */
+/**
+ * Delivery mode for a break — mirrors Rust's `BreakMode` serde enum in
+ * `src-tauri/src/scheduler/settings.rs` (which projects onto the runtime
+ * `BreakDelivery`). Values are the lowercase on-disk strings.
+ */
 export type BreakMode = "overlay" | "windowed" | "notification";
 
 /** Options for the Schedule tab's per-kind Mode dropdown. */

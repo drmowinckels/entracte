@@ -7,11 +7,14 @@ export type MonitorPlacement = "primary" | "active" | "all";
 
 export type ClockFormat = "12h" | "24h";
 
-// Mirrors the Rust enum vocabularies for the four `*_schedule_mode` /
-// `*_break_mode` / `*_hint_mix` fields. The Rust side stores these as
-// `String` and matches on `.as_str()`; the values here are the canonical
-// strings the renderer is allowed to send back. Module-local so knip
-// stays happy — re-export if a consumer outside this file needs them.
+// Mirrors the Rust serde enums for the four `*_schedule_mode` /
+// `*_break_mode` / `*_hint_mix` fields: `ScheduleMode`, `BreakMode`, and
+// `HintMix` in `src-tauri/src/scheduler/settings.rs`, each
+// `#[serde(rename_all = "lowercase")]`. The string literals below are the
+// canonical on-disk values; the `*_values_match_ts_union` parity tests in
+// settings.rs assert these stay byte-for-byte in sync with the Rust
+// variants. Module-local so knip stays happy — re-export if a consumer
+// outside this file needs them.
 type ScheduleMode = "interval" | "fixed" | "both";
 type BreakDeliveryMode = "overlay" | "windowed" | "notification";
 type MicroHintMix = "both" | "physical" | "psychological";
