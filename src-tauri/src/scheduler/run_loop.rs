@@ -1044,8 +1044,12 @@ fn process_match(running: &str, target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::settings::BreakMode;
     use super::*;
+    // Only referenced by the notification-delivery tests below, which are
+    // gated off Windows (the Tauri mock rig is) — gate the import to match
+    // so a Windows build doesn't trip `-D unused-imports`.
+    #[cfg(not(target_os = "windows"))]
+    use super::super::settings::BreakMode;
 
     // Drives `deliver_scheduled_break` end to end through the
     // Notification delivery path — the one branch that doesn't enumerate
