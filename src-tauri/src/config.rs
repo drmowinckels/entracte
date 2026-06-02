@@ -105,12 +105,18 @@ impl ProfilesFile {
     }
 
     pub fn active_settings(&self) -> Settings {
-        self.profiles
+        let mut settings = self
+            .profiles
             .iter()
             .find(|p| p.name == self.active)
             .map(|p| p.settings.clone())
             .or_else(|| self.profiles.first().map(|p| p.settings.clone()))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Profiles are deserialised, so each one's `#[serde(skip)]`
+        // `derived` cache arrives empty. Rebuild it here so every caller
+        // (scheduler construction, backup import) gets a populated cache.
+        settings.rebuild_derived();
+        settings
     }
 }
 

@@ -55,7 +55,14 @@ pub async fn set_active_profile_impl<R: Runtime>(
             return Ok(());
         }
     }
-    *scheduler.settings.lock().await = next_settings;
+    {
+        let mut s = scheduler.settings.lock().await;
+        *s = next_settings;
+        // Profile settings are stored clamped, but the `derived` cache is
+        // `#[serde(skip)]` and arrives default-empty from the profile clone,
+        // so rebuild it from the new source fields before the run loop reads it.
+        s.rebuild_derived();
+    }
     *scheduler.active_profile_name.lock().await = name.clone();
     {
         let mut t = scheduler.timers.lock().await;
@@ -347,7 +354,9 @@ pub async fn reset_profile_to_defaults_impl(
         }
     }
     if active == name {
-        *scheduler.settings.lock().await = defaults;
+        let mut s = scheduler.settings.lock().await;
+        *s = defaults;
+        s.rebuild_derived();
     }
     super::super::persist_profiles(scheduler).await;
     Ok(())

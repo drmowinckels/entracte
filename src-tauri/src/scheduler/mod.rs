@@ -217,11 +217,12 @@ impl Scheduler {
     /// production construction.
     #[cfg(test)]
     pub(crate) fn for_test(profiles: Vec<Profile>, active: &str, dir: &std::path::Path) -> Self {
-        let active_settings = profiles
+        let mut active_settings = profiles
             .iter()
             .find(|p| p.name == active)
             .map(|p| p.settings.clone())
             .unwrap_or_default();
+        active_settings.rebuild_derived();
         let events_path = dir.join("events.jsonl");
         Self {
             settings: Arc::new(Mutex::new(active_settings)),

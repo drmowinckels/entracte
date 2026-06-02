@@ -3,7 +3,49 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::hooks::Hook;
 
+use super::timers::parse_hhmm;
 use super::types::{BreakDelivery, BreakKind};
+
+/// Stable, per-settings-load derivations resolved once at load/update
+/// time instead of being recomputed on every 1Hz scheduler tick or
+/// break fire.
+///
+/// These are pure functions of the owning `Settings`' source fields:
+/// `rebuild` re-derives the whole struct from a `Settings`, and the
+/// run loop / fire path read the cached vectors directly. The cache is
+/// `#[serde(skip)]` on `Settings` (it never hits disk and is rebuilt on
+/// deserialise via the `Default` it picks up), so adding it doesn't
+/// change the on-disk shape or the Rust↔TS parity surface.
+#[derive(Debug, Clone, Default)]
+pub struct DerivedCaches {
+    /// `micro_fixed_times` parsed to minutes-since-midnight, with
+    /// unparseable entries dropped — the per-tick compare becomes a plain
+    /// `== now_min` instead of re-running `parse_hhmm` on every string.
+    pub micro_fixed_minutes: Vec<u32>,
+    /// `long_fixed_times` parsed the same way.
+    pub long_fixed_minutes: Vec<u32>,
+}
+
+impl DerivedCaches {
+    /// Re-derive every cached value from `s`' source fields. Called at
+    /// each point where the stored `Settings` is replaced (see
+    /// `Settings::rebuild_derived`), so the caches can never drift from
+    /// the settings they summarise.
+    fn rebuild(s: &Settings) -> Self {
+        Self {
+            micro_fixed_minutes: s
+                .micro_fixed_times
+                .iter()
+                .filter_map(|t| parse_hhmm(t))
+                .collect(),
+            long_fixed_minutes: s
+                .long_fixed_times
+                .iter()
+                .filter_map(|t| parse_hhmm(t))
+                .collect(),
+        }
+    }
+}
 
 /// Which monitor(s) an overlay break should appear on.
 ///
@@ -469,6 +511,15 @@ pub struct Settings {
     /// every read+write.
     #[serde(default)]
     pub custom_css: String,
+    /// Stable per-load derivations (parsed fixed times, etc.) resolved
+    /// once via [`Settings::rebuild_derived`] rather than on every tick /
+    /// fire. Never serialised: `#[serde(skip)]` keeps it off disk and out
+    /// of the Rust↔TS parity surface, and it's rebuilt explicitly at each
+    /// settings-replacement site. Defaults empty; callers that bypass
+    /// `rebuild_derived` (e.g. raw struct literals in tests) just see
+    /// empty caches, which the run loop treats as "no fixed times".
+    #[serde(skip)]
+    pub derived: DerivedCaches,
 }
 
 impl Default for Settings {
@@ -548,6 +599,7 @@ impl Default for Settings {
             micro_break_mode: BreakMode::default(),
             long_break_mode: BreakMode::default(),
             custom_css: String::new(),
+            derived: DerivedCaches::default(),
         }
     }
 }
@@ -577,6 +629,18 @@ impl Settings {
     pub fn fixed_active(&self, kind: BreakKind) -> bool {
         self.schedule_mode_for(kind)
             .is_some_and(ScheduleMode::fixed_active)
+    }
+
+    /// Re-derive the `derived` cache from the current source fields.
+    ///
+    /// Must be called at every point where a `Settings` value is stored
+    /// into the scheduler's mutex (settings update, profile switch /
+    /// reset, IPC set, backup import, construction) so the cache can
+    /// never lag the settings it summarises. `clamp` calls it last, so
+    /// any path that clamps (load + the renderer update path) is covered
+    /// automatically; the no-clamp replacement sites call it explicitly.
+    pub fn rebuild_derived(&mut self) {
+        self.derived = DerivedCaches::rebuild(self);
     }
 
     /// Clamp every numeric field to a safe range. Called on every load
@@ -651,6 +715,10 @@ impl Settings {
             self.custom_css.truncate(cut);
         }
         self.custom_css = sanitize_custom_css(&self.custom_css);
+        // Source fields are now in their final clamped form; re-derive the
+        // caches so a clamped load/update path never has to touch them
+        // again.
+        self.rebuild_derived();
     }
 }
 
@@ -1366,6 +1434,48 @@ mod tests {
         assert_eq!(s.micro_break_mode, BreakMode::Windowed);
         assert_eq!(s.micro_schedule_mode, ScheduleMode::Fixed);
         assert_eq!(s.long_hint_mix, HintMix::Social);
+    }
+
+    #[test]
+    fn rebuild_derived_parses_fixed_times_to_minutes_dropping_garbage() {
+        let mut s = Settings {
+            micro_fixed_times: vec!["09:00".into(), "garbage".into(), "13:30".into()],
+            long_fixed_times: vec!["7:05".into(), "24:00".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        // "09:00" → 540, "13:30" → 810; "garbage" dropped.
+        assert_eq!(s.derived.micro_fixed_minutes, vec![540, 810]);
+        // "7:05" → 425; "24:00" out of range, dropped.
+        assert_eq!(s.derived.long_fixed_minutes, vec![425]);
+    }
+
+    #[test]
+    fn clamp_rebuilds_fixed_time_cache() {
+        // The load + renderer-update paths run through `clamp`, which must
+        // leave the derived cache populated without a separate call.
+        let mut s = Settings {
+            micro_fixed_times: vec!["10:00".into()],
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.derived.micro_fixed_minutes, vec![600]);
+    }
+
+    #[test]
+    fn rebuild_derived_refreshes_cache_after_source_change() {
+        // Correctness-critical: editing the fixed-time list and rebuilding
+        // must replace the cache, not append or go stale.
+        let mut s = Settings {
+            micro_fixed_times: vec!["08:00".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        assert_eq!(s.derived.micro_fixed_minutes, vec![480]);
+
+        s.micro_fixed_times = vec!["15:45".into()];
+        s.rebuild_derived();
+        assert_eq!(s.derived.micro_fixed_minutes, vec![945]);
     }
 
     #[test]

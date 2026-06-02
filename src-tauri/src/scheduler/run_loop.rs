@@ -17,7 +17,7 @@ use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind
 use super::session_lock;
 use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
 use super::timers::{
-    current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
+    current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string,
     prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
     BedtimeAction, BedtimeWindow, PrebreakGate,
 };
@@ -325,18 +325,12 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             continue;
         }
 
-        let long_fixed_due = s.long_enabled
-            && s.fixed_active(BreakKind::Long)
-            && s.long_fixed_times
-                .iter()
-                .filter_map(|t| parse_hhmm(t))
-                .any(|m| m == now_min);
-        let micro_fixed_due = s.micro_enabled
-            && s.fixed_active(BreakKind::Micro)
-            && s.micro_fixed_times
-                .iter()
-                .filter_map(|t| parse_hhmm(t))
-                .any(|m| m == now_min);
+        // Fixed times are pre-parsed to minutes-since-midnight at settings
+        // load/update (see `Settings::rebuild_derived`), so the per-tick
+        // check is a plain `== now_min` rather than re-running `parse_hhmm`
+        // over every `"HH:MM"` string on all 86,400 ticks a day.
+        let long_fixed_due = fixed_break_due(BreakKind::Long, &s, now_min);
+        let micro_fixed_due = fixed_break_due(BreakKind::Micro, &s, now_min);
 
         if long_fixed_due || micro_fixed_due {
             let (fire_long, fire_micro) = {
@@ -1011,6 +1005,21 @@ fn log_suppressions(
     }
 }
 
+/// Pure decision: is a fixed-time break for `kind` due at `now_min`?
+///
+/// Reads the pre-parsed minutes from `s.derived` (resolved once at
+/// settings load/update) instead of re-parsing the `"HH:MM"` strings,
+/// and gates on the kind being enabled and in a fixed-firing schedule
+/// mode. `Sleep` has no fixed-time schedule and is always `false`.
+fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
+    let (enabled, minutes) = match kind {
+        BreakKind::Long => (s.long_enabled, &s.derived.long_fixed_minutes),
+        BreakKind::Micro => (s.micro_enabled, &s.derived.micro_fixed_minutes),
+        BreakKind::Sleep => return false,
+    };
+    enabled && s.fixed_active(kind) && minutes.contains(&now_min)
+}
+
 // Case-insensitive token match for the app-pause list. We tokenise the
 // running process name on non-alphanumeric boundaries (`.`, `-`, `_`,
 // whitespace, path separators) and accept a target that EITHER equals a
@@ -1219,6 +1228,69 @@ mod tests {
         let prev = SystemTime::now();
         let now = prev + SUSPEND_GAP_THRESHOLD;
         assert!(resumed_after_gap(prev, now, SUSPEND_GAP_THRESHOLD));
+    }
+
+    // ----- fixed_break_due: cached fixed-time firing behaves like the
+    //       old per-tick parse, but reads pre-parsed minutes -----
+
+    fn settings_with_fixed(kind: BreakKind, mode: &str, times: Vec<&str>) -> Settings {
+        let mut s = Settings::default();
+        match kind {
+            BreakKind::Micro => {
+                s.micro_schedule_mode = mode.into();
+                s.micro_fixed_times = times.into_iter().map(String::from).collect();
+            }
+            BreakKind::Long => {
+                s.long_schedule_mode = mode.into();
+                s.long_fixed_times = times.into_iter().map(String::from).collect();
+            }
+            BreakKind::Sleep => unreachable!(),
+        }
+        s.rebuild_derived();
+        s
+    }
+
+    #[test]
+    fn fixed_break_due_fires_at_cached_minute() {
+        let s = settings_with_fixed(BreakKind::Micro, "fixed", vec!["09:00", "13:30"]);
+        assert!(fixed_break_due(BreakKind::Micro, &s, 540));
+        assert!(fixed_break_due(BreakKind::Micro, &s, 810));
+        assert!(!fixed_break_due(BreakKind::Micro, &s, 541));
+    }
+
+    #[test]
+    fn fixed_break_due_respects_schedule_mode_and_enabled() {
+        // "interval" mode → fixed times never fire even though they parse.
+        let s = settings_with_fixed(BreakKind::Long, "interval", vec!["09:00"]);
+        assert!(!fixed_break_due(BreakKind::Long, &s, 540));
+
+        // Disabled kind → no fire.
+        let mut s = settings_with_fixed(BreakKind::Long, "fixed", vec!["09:00"]);
+        s.long_enabled = false;
+        assert!(!fixed_break_due(BreakKind::Long, &s, 540));
+    }
+
+    #[test]
+    fn fixed_break_due_both_mode_fires() {
+        let s = settings_with_fixed(BreakKind::Micro, "both", vec!["07:05"]);
+        assert!(fixed_break_due(BreakKind::Micro, &s, 425));
+    }
+
+    #[test]
+    fn fixed_break_due_sleep_never_fires() {
+        let s = Settings::default();
+        assert!(!fixed_break_due(BreakKind::Sleep, &s, 0));
+    }
+
+    #[test]
+    fn fixed_break_due_tracks_cache_rebuild() {
+        // Editing the times and rebuilding must change which minute fires.
+        let mut s = settings_with_fixed(BreakKind::Micro, "fixed", vec!["08:00"]);
+        assert!(fixed_break_due(BreakKind::Micro, &s, 480));
+        s.micro_fixed_times = vec!["15:45".into()];
+        s.rebuild_derived();
+        assert!(!fixed_break_due(BreakKind::Micro, &s, 480));
+        assert!(fixed_break_due(BreakKind::Micro, &s, 945));
     }
 
     #[test]

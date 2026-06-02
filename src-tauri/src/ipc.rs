@@ -282,10 +282,13 @@ async fn dispatch(app: &AppHandle, req: IpcRequest) -> IpcResponse {
                 return IpcResponse::err(format!("unknown key: {key}"));
             }
             v[&key] = value;
-            let next: crate::scheduler::Settings = match serde_json::from_value(v) {
+            let mut next: crate::scheduler::Settings = match serde_json::from_value(v) {
                 Ok(n) => n,
                 Err(e) => return IpcResponse::err(format!("type mismatch: {e}")),
             };
+            // Deserialised wholesale from JSON, so the `#[serde(skip)]`
+            // `derived` cache arrives empty — rebuild it before storing.
+            next.rebuild_derived();
             *scheduler.settings.lock().await = next.clone();
             {
                 let active = scheduler.active_profile_name.lock().await.clone();
