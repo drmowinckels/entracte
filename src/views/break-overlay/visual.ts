@@ -49,3 +49,10 @@ export function progressColor(remainingFraction: number): string {
   const b = Math.round(RING_START[2] * t + RING_END[2] * (1 - t));
   return `rgb(${r}, ${g}, ${b})`;
 }
+
+/** Clamp a value into the `[0, 1]` range. Used for the overlay's
+ * health-intensity fraction, which a stale or out-of-range break event
+ * could otherwise push past the bounds the vignette CSS expects. */
+export function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}

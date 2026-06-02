@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pickRotationTheme } from "../../../lib/color";
@@ -51,7 +51,6 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
     DEFAULT_OVERLAY_SETTINGS,
   );
   const [resolvedTheme, setResolvedTheme] = useState<string>("dark");
-  const startedAtRef = useRef<number>(0);
 
   const clearBreak = useCallback(() => {
     setActive(null);
@@ -96,7 +95,6 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
         hints.length > 0 ? Math.floor(Math.random() * hints.length) : 0;
       setHintIndex(initialIndex);
       setFinished(false);
-      startedAtRef.current = Date.now();
       setActive({ ...payload, hints });
       setRemaining(payload.duration_secs);
       try {

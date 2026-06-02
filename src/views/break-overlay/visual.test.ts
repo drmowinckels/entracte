@@ -2,11 +2,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   RING_CIRCUMFERENCE,
   RING_RADIUS,
+  clamp01,
   progressColor,
   rgbFor,
   systemPrefersContrast,
   systemPrefersReducedTransparency,
 } from "./visual";
+
+describe("clamp01", () => {
+  it("passes through values already inside [0, 1]", () => {
+    expect(clamp01(0)).toBe(0);
+    expect(clamp01(0.42)).toBe(0.42);
+    expect(clamp01(1)).toBe(1);
+  });
+
+  it("clamps out-of-range values to the nearest bound", () => {
+    expect(clamp01(-0.5)).toBe(0);
+    expect(clamp01(1.7)).toBe(1);
+  });
+});
 
 describe("rgbFor", () => {
   it("returns the custom RGB string verbatim when theme is 'custom'", () => {

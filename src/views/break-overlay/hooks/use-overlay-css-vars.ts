@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
-import { RING_CIRCUMFERENCE, progressColor, rgbFor } from "../visual";
+import { RING_CIRCUMFERENCE, clamp01, progressColor, rgbFor } from "../visual";
 import type { BreakEvent, OverlaySettings } from "../types";
 
 export type OverlayCssVarsRefs = {
@@ -27,7 +27,7 @@ export function useOverlayCssVars(
   useEffect(() => {
     const el = rootRef.current;
     if (!el || !active) return;
-    const intensity = Math.max(0, Math.min(1, active.health_intensity));
+    const intensity = clamp01(active.health_intensity);
     const bg = highContrast
       ? "#000000"
       : `rgba(${rgbFor(resolvedTheme, appearance.overlay_custom_rgb)}, ${(opaque ? 1 : appearance.overlay_opacity).toFixed(3)})`;
