@@ -1044,6 +1044,7 @@ fn process_match(running: &str, target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::settings::BreakMode;
     use super::*;
 
     // Drives `deliver_scheduled_break` end to end through the
@@ -1061,7 +1062,7 @@ mod tests {
         use tauri::Manager;
 
         let mut settings = Settings::default();
-        settings.micro_break_mode = "notification".into();
+        settings.micro_break_mode = BreakMode::Notification;
         let (_dir, sched) = test_scheduler(settings.clone());
 
         let app = mock_builder()
@@ -1090,7 +1091,7 @@ mod tests {
         use tauri::Manager;
 
         let mut settings = Settings::default();
-        settings.micro_break_mode = "notification".into();
+        settings.micro_break_mode = BreakMode::Notification;
         let (_dir, sched) = test_scheduler(settings.clone());
         {
             let mut t = sched.timers.lock().await;

@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use log::warn;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::hooks::Hook;
 
@@ -31,6 +32,183 @@ pub enum BreakSoundMode {
     Ambient,
 }
 
+/// How a break surfaces to the user, per break kind
+/// (`micro_break_mode` / `long_break_mode`). Maps 1:1 onto the runtime
+/// [`BreakDelivery`] enum via [`BreakMode::delivery`]; the split exists
+/// because Sleep hard-codes `Overlay` and never reads a `BreakMode`.
+///
+/// On-disk strings are lowercase (`"overlay"` / `"windowed"` /
+/// `"notification"`); a corrupt or unknown value deserialises to
+/// [`BreakMode::Overlay`] with a logged warning rather than failing the
+/// whole settings load — see [`deserialize_with_fallback`].
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BreakMode {
+    #[default]
+    Overlay,
+    Windowed,
+    Notification,
+}
+
+impl BreakMode {
+    /// Project onto the runtime delivery enum the overlay/notification
+    /// glue actually branches on.
+    pub fn delivery(self) -> BreakDelivery {
+        match self {
+            Self::Overlay => BreakDelivery::Overlay,
+            Self::Windowed => BreakDelivery::Windowed,
+            Self::Notification => BreakDelivery::Notification,
+        }
+    }
+
+    fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "overlay" => Some(Self::Overlay),
+            "windowed" => Some(Self::Windowed),
+            "notification" => Some(Self::Notification),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BreakMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(deserialize_with_fallback(
+            deserializer,
+            "break_mode",
+            Self::from_disk_str,
+        ))
+    }
+}
+
+/// Which scheduling strategy fires a break kind
+/// (`micro_schedule_mode` / `long_schedule_mode`). `Interval` is the
+/// repeating timer, `Fixed` is wall-clock times, `Both` runs them
+/// together. Sleep has no interval/fixed split and never reads this.
+///
+/// On-disk strings are lowercase; a corrupt or unknown value
+/// deserialises to [`ScheduleMode::Interval`] with a logged warning.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleMode {
+    #[default]
+    Interval,
+    Fixed,
+    Both,
+}
+
+impl ScheduleMode {
+    /// True iff this mode fires on the repeating interval timer.
+    pub fn interval_active(self) -> bool {
+        matches!(self, Self::Interval | Self::Both)
+    }
+
+    /// True iff this mode fires at fixed wall-clock times.
+    pub fn fixed_active(self) -> bool {
+        matches!(self, Self::Fixed | Self::Both)
+    }
+
+    fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "interval" => Some(Self::Interval),
+            "fixed" => Some(Self::Fixed),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ScheduleMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(deserialize_with_fallback(
+            deserializer,
+            "schedule_mode",
+            Self::from_disk_str,
+        ))
+    }
+}
+
+/// Which hint pool a break kind draws from. Micro mixes `physical` and
+/// `psychological`; long mixes `solo` and `social`; `Both` concatenates
+/// the kind's two pools. The vocabularies don't overlap, so one enum
+/// covers both kinds — `effective_*_hints` only ever asks "is this the
+/// mix, or one of my two pools?".
+///
+/// On-disk strings are lowercase; a corrupt or unknown value
+/// deserialises to [`HintMix::Both`] with a logged warning.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HintMix {
+    #[default]
+    Both,
+    Physical,
+    Psychological,
+    Solo,
+    Social,
+}
+
+impl HintMix {
+    fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "both" => Some(Self::Both),
+            "physical" => Some(Self::Physical),
+            "psychological" => Some(Self::Psychological),
+            "solo" => Some(Self::Solo),
+            "social" => Some(Self::Social),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HintMix {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(deserialize_with_fallback(
+            deserializer,
+            "hint_mix",
+            Self::from_disk_str,
+        ))
+    }
+}
+
+/// Deserialise a lowercase-tagged enum permissively: read the raw string
+/// and map it through `parse`, falling back to `T::default()` with a
+/// single logged warning on any unknown/corrupt value.
+///
+/// This preserves the pre-enum runtime behaviour exactly — the old
+/// `String` fields stored arbitrary text and the `*_for` matchers
+/// silently treated anything unrecognised as the fallback. Keeping that
+/// here means a hand-edited or stale `settings.json` still loads instead
+/// of having serde reject the whole profile. We can't lean on the
+/// derived `Deserialize` for the strict parse (it would recurse back
+/// into this custom impl), so each enum hands in its own `from_disk_str`.
+fn deserialize_with_fallback<'de, D, T>(
+    deserializer: D,
+    field: &str,
+    parse: fn(&str) -> Option<T>,
+) -> T
+where
+    D: Deserializer<'de>,
+    T: Default,
+{
+    let raw = match String::deserialize(deserializer) {
+        Ok(raw) => raw,
+        Err(_) => return T::default(),
+    };
+    parse(&raw).unwrap_or_else(|| {
+        warn!("settings: unknown {field} value {raw:?} — falling back to default");
+        T::default()
+    })
+}
+
 /// Per-break-kind audio configuration: mode + which bundled sound to play.
 /// `sound_id` is the numeric id from `src/assets/sounds/credits.json`, or
 /// the literal `"custom"` to use `custom_path` (a Supporter-pack feature).
@@ -56,28 +234,12 @@ impl BreakSound {
     }
 }
 
-fn default_break_mode() -> String {
-    "overlay".to_string()
-}
-
-fn default_schedule_mode() -> String {
-    "interval".to_string()
-}
-
 fn default_tray_countdown_target() -> String {
     "next".to_string()
 }
 
 fn default_clock_format() -> String {
     "24h".to_string()
-}
-
-fn default_micro_hint_mix() -> String {
-    "both".to_string()
-}
-
-fn default_long_hint_mix() -> String {
-    "both".to_string()
 }
 
 fn default_micro_physical_hints() -> Vec<String> {
@@ -271,10 +433,10 @@ pub struct Settings {
     #[serde(alias = "micro_hints")]
     pub micro_physical_hints: Vec<String>,
     pub micro_psychological_hints: Vec<String>,
-    pub micro_hint_mix: String,
+    pub micro_hint_mix: HintMix,
     pub long_hints: Vec<String>,
     pub long_social_hints: Vec<String>,
-    pub long_hint_mix: String,
+    pub long_hint_mix: HintMix,
     pub sleep_hints: Vec<String>,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
@@ -287,8 +449,8 @@ pub struct Settings {
     pub overlay_font_scale: f32,
     pub micro_fixed_times: Vec<String>,
     pub long_fixed_times: Vec<String>,
-    pub micro_schedule_mode: String,
-    pub long_schedule_mode: String,
+    pub micro_schedule_mode: ScheduleMode,
+    pub long_schedule_mode: ScheduleMode,
     pub hooks_enabled: bool,
     pub hooks: Vec<Hook>,
     pub daily_screen_time_enabled: bool,
@@ -296,10 +458,8 @@ pub struct Settings {
     pub daily_screen_time_remind_again_minutes: u64,
     pub tray_countdown_enabled: bool,
     pub tray_countdown_target: String,
-    #[serde(default = "default_break_mode")]
-    pub micro_break_mode: String,
-    #[serde(default = "default_break_mode")]
-    pub long_break_mode: String,
+    pub micro_break_mode: BreakMode,
+    pub long_break_mode: BreakMode,
     /// Supporter-only freeform stylesheet, applied to both the settings
     /// window and the break overlay via the renderer's
     /// `useCustomStylesheet` hook (which uses `adoptedStyleSheets` so we
@@ -360,10 +520,10 @@ impl Default for Settings {
             break_health_enabled: true,
             micro_physical_hints: default_micro_physical_hints(),
             micro_psychological_hints: default_micro_psychological_hints(),
-            micro_hint_mix: default_micro_hint_mix(),
+            micro_hint_mix: HintMix::default(),
             long_hints: default_long_hints(),
             long_social_hints: default_long_social_hints(),
-            long_hint_mix: default_long_hint_mix(),
+            long_hint_mix: HintMix::default(),
             sleep_hints: default_sleep_hints(),
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
@@ -376,8 +536,8 @@ impl Default for Settings {
             overlay_font_scale: 1.0,
             micro_fixed_times: Vec::new(),
             long_fixed_times: Vec::new(),
-            micro_schedule_mode: default_schedule_mode(),
-            long_schedule_mode: default_schedule_mode(),
+            micro_schedule_mode: ScheduleMode::default(),
+            long_schedule_mode: ScheduleMode::default(),
             hooks_enabled: false,
             hooks: Vec::new(),
             daily_screen_time_enabled: false,
@@ -385,35 +545,38 @@ impl Default for Settings {
             daily_screen_time_remind_again_minutes: 60,
             tray_countdown_enabled: true,
             tray_countdown_target: default_tray_countdown_target(),
-            micro_break_mode: default_break_mode(),
-            long_break_mode: default_break_mode(),
+            micro_break_mode: BreakMode::default(),
+            long_break_mode: BreakMode::default(),
             custom_css: String::new(),
         }
     }
 }
 
 impl Settings {
-    /// The raw `*_schedule_mode` string for the given break kind. Sleep
-    /// has no interval/fixed split, so it reports an empty mode.
-    fn schedule_mode_for(&self, kind: BreakKind) -> &str {
+    /// The [`ScheduleMode`] for the given break kind. Sleep has no
+    /// interval/fixed split, so its mode never participates in either
+    /// active-check — both report false (see `interval_active` /
+    /// `fixed_active`).
+    fn schedule_mode_for(&self, kind: BreakKind) -> Option<ScheduleMode> {
         match kind {
-            BreakKind::Micro => self.micro_schedule_mode.as_str(),
-            BreakKind::Long => self.long_schedule_mode.as_str(),
-            BreakKind::Sleep => "",
+            BreakKind::Micro => Some(self.micro_schedule_mode),
+            BreakKind::Long => Some(self.long_schedule_mode),
+            BreakKind::Sleep => None,
         }
     }
 
-    /// True iff this break kind's schedule fires on a repeating interval
-    /// (`"interval"` or `"both"`). Centralises the mode string-matching
-    /// the run loop would otherwise duplicate at every call site.
+    /// True iff this break kind's schedule fires on a repeating interval.
+    /// Centralises the dispatch the run loop would otherwise duplicate at
+    /// every call site.
     pub fn interval_active(&self, kind: BreakKind) -> bool {
-        matches!(self.schedule_mode_for(kind), "interval" | "both")
+        self.schedule_mode_for(kind)
+            .is_some_and(ScheduleMode::interval_active)
     }
 
-    /// True iff this break kind's schedule fires at fixed clock times
-    /// (`"fixed"` or `"both"`).
+    /// True iff this break kind's schedule fires at fixed clock times.
     pub fn fixed_active(&self, kind: BreakKind) -> bool {
-        matches!(self.schedule_mode_for(kind), "fixed" | "both")
+        self.schedule_mode_for(kind)
+            .is_some_and(ScheduleMode::fixed_active)
     }
 
     /// Clamp every numeric field to a safe range. Called on every load
@@ -532,13 +695,12 @@ fn strip_css_comments(css: &str) -> String {
 }
 
 /// Resolve the micro-break hint pool, honouring `micro_hint_mix`.
-/// `"physical"` and `"psychological"` return only that pool; anything
-/// else (including `"both"`) concatenates both in physical-then-
-/// psychological order.
+/// `Physical` / `Psychological` return only that pool; anything else
+/// concatenates both in physical-then-psychological order.
 pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
-    match s.micro_hint_mix.as_str() {
-        "physical" => s.micro_physical_hints.clone(),
-        "psychological" => s.micro_psychological_hints.clone(),
+    match s.micro_hint_mix {
+        HintMix::Physical => s.micro_physical_hints.clone(),
+        HintMix::Psychological => s.micro_psychological_hints.clone(),
         _ => {
             let mut combined = Vec::with_capacity(
                 s.micro_physical_hints.len() + s.micro_psychological_hints.len(),
@@ -551,12 +713,12 @@ pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
 }
 
 /// Resolve the long-break hint pool, honouring `long_hint_mix`.
-/// `"solo"` / `"social"` filter to that pool; anything else (including
-/// `"both"`) concatenates them in solo-then-social order.
+/// `Solo` / `Social` filter to that pool; anything else concatenates
+/// them in solo-then-social order.
 pub fn effective_long_hints(s: &Settings) -> Vec<String> {
-    match s.long_hint_mix.as_str() {
-        "solo" => s.long_hints.clone(),
-        "social" => s.long_social_hints.clone(),
+    match s.long_hint_mix {
+        HintMix::Solo => s.long_hints.clone(),
+        HintMix::Social => s.long_social_hints.clone(),
         _ => {
             let mut combined = Vec::with_capacity(s.long_hints.len() + s.long_social_hints.len());
             combined.extend(s.long_hints.iter().cloned());
@@ -569,17 +731,12 @@ pub fn effective_long_hints(s: &Settings) -> Vec<String> {
 /// Resolve the delivery mode for the given break kind.
 ///
 /// Sleep breaks always use `Overlay` (bedtime reminders ignore the
-/// per-kind mode). Unknown mode strings fall back to `Overlay`.
+/// per-kind mode); micro/long dispatch straight off their `BreakMode`.
 pub fn delivery_for(kind: BreakKind, s: &Settings) -> BreakDelivery {
-    let mode = match kind {
-        BreakKind::Micro => s.micro_break_mode.as_str(),
-        BreakKind::Long => s.long_break_mode.as_str(),
-        BreakKind::Sleep => "overlay",
-    };
-    match mode {
-        "notification" => BreakDelivery::Notification,
-        "windowed" => BreakDelivery::Windowed,
-        _ => BreakDelivery::Overlay,
+    match kind {
+        BreakKind::Micro => s.micro_break_mode.delivery(),
+        BreakKind::Long => s.long_break_mode.delivery(),
+        BreakKind::Sleep => BreakDelivery::Overlay,
     }
 }
 
@@ -686,7 +843,7 @@ mod tests {
         assert!(s.sound_volume >= 0.0 && s.sound_volume <= 1.0);
         assert!(!s.micro_physical_hints.is_empty());
         assert!(!s.micro_psychological_hints.is_empty());
-        assert_eq!(s.micro_hint_mix, "both");
+        assert_eq!(s.micro_hint_mix, HintMix::Both);
         assert!(!s.long_hints.is_empty());
         assert!(!s.sleep_hints.is_empty());
         assert_eq!(s.micro_idle_reset_secs, 300);
@@ -891,7 +1048,7 @@ mod tests {
             s.micro_psychological_hints,
             Settings::default().micro_psychological_hints
         );
-        assert_eq!(s.micro_hint_mix, "both");
+        assert_eq!(s.micro_hint_mix, HintMix::Both);
     }
 
     #[test]
@@ -901,16 +1058,18 @@ mod tests {
         s.micro_physical_hints = vec!["a".into(), "b".into()];
         s.micro_psychological_hints = vec!["c".into()];
 
-        s.micro_hint_mix = "physical".into();
+        s.micro_hint_mix = HintMix::Physical;
         assert_eq!(effective_micro_hints(&s), vec!["a", "b"]);
 
-        s.micro_hint_mix = "psychological".into();
+        s.micro_hint_mix = HintMix::Psychological;
         assert_eq!(effective_micro_hints(&s), vec!["c"]);
 
-        s.micro_hint_mix = "both".into();
+        s.micro_hint_mix = HintMix::Both;
         assert_eq!(effective_micro_hints(&s), vec!["a", "b", "c"]);
 
-        s.micro_hint_mix = "garbage".into();
+        // A long-only variant on a micro field falls through to the
+        // concatenated pool, matching the pre-enum "anything else" arm.
+        s.micro_hint_mix = HintMix::Social;
         assert_eq!(effective_micro_hints(&s), vec!["a", "b", "c"]);
     }
 
@@ -921,16 +1080,18 @@ mod tests {
         s.long_hints = vec!["solo1".into(), "solo2".into()];
         s.long_social_hints = vec!["soc1".into()];
 
-        s.long_hint_mix = "solo".into();
+        s.long_hint_mix = HintMix::Solo;
         assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2"]);
 
-        s.long_hint_mix = "social".into();
+        s.long_hint_mix = HintMix::Social;
         assert_eq!(effective_long_hints(&s), vec!["soc1"]);
 
-        s.long_hint_mix = "both".into();
+        s.long_hint_mix = HintMix::Both;
         assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2", "soc1"]);
 
-        s.long_hint_mix = "garbage".into();
+        // A micro-only variant on a long field falls through to the
+        // concatenated pool, matching the pre-enum "anything else" arm.
+        s.long_hint_mix = HintMix::Physical;
         assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2", "soc1"]);
     }
 
@@ -938,7 +1099,7 @@ mod tests {
     fn default_long_social_hints_are_populated() {
         let s = Settings::default();
         assert!(!s.long_social_hints.is_empty());
-        assert_eq!(s.long_hint_mix, "both");
+        assert_eq!(s.long_hint_mix, HintMix::Both);
     }
 
     #[test]
@@ -946,8 +1107,8 @@ mod tests {
         let s = Settings::default();
         assert!(s.micro_fixed_times.is_empty());
         assert!(s.long_fixed_times.is_empty());
-        assert_eq!(s.micro_schedule_mode, "interval");
-        assert_eq!(s.long_schedule_mode, "interval");
+        assert_eq!(s.micro_schedule_mode, ScheduleMode::Interval);
+        assert_eq!(s.long_schedule_mode, ScheduleMode::Interval);
     }
 
     #[test]
@@ -955,31 +1116,32 @@ mod tests {
     fn schedule_mode_helpers_match_interval_fixed_and_both() {
         let mut s = Settings::default();
 
-        s.micro_schedule_mode = "interval".into();
+        s.micro_schedule_mode = ScheduleMode::Interval;
         assert!(s.interval_active(BreakKind::Micro));
         assert!(!s.fixed_active(BreakKind::Micro));
 
-        s.micro_schedule_mode = "fixed".into();
+        s.micro_schedule_mode = ScheduleMode::Fixed;
         assert!(!s.interval_active(BreakKind::Micro));
         assert!(s.fixed_active(BreakKind::Micro));
 
-        s.micro_schedule_mode = "both".into();
+        s.micro_schedule_mode = ScheduleMode::Both;
         assert!(s.interval_active(BreakKind::Micro));
         assert!(s.fixed_active(BreakKind::Micro));
 
-        s.long_schedule_mode = "interval".into();
+        s.long_schedule_mode = ScheduleMode::Interval;
         assert!(s.interval_active(BreakKind::Long));
         assert!(!s.fixed_active(BreakKind::Long));
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn schedule_mode_helpers_reject_unknown_and_sleep() {
-        let mut s = Settings::default();
-        s.micro_schedule_mode = "garbage".into();
-        assert!(!s.interval_active(BreakKind::Micro));
-        assert!(!s.fixed_active(BreakKind::Micro));
-        // Sleep has no interval/fixed split: both helpers report false.
+    fn schedule_mode_helpers_report_false_for_sleep() {
+        // Sleep has no interval/fixed split: both helpers report false
+        // regardless of the micro/long modes.
+        let s = Settings {
+            micro_schedule_mode: ScheduleMode::Both,
+            long_schedule_mode: ScheduleMode::Both,
+            ..Settings::default()
+        };
         assert!(!s.interval_active(BreakKind::Sleep));
         assert!(!s.fixed_active(BreakKind::Sleep));
     }
@@ -1007,8 +1169,8 @@ mod tests {
     #[test]
     fn break_mode_defaults_to_overlay() {
         let s = Settings::default();
-        assert_eq!(s.micro_break_mode, "overlay");
-        assert_eq!(s.long_break_mode, "overlay");
+        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
+        assert_eq!(s.long_break_mode, BreakMode::Overlay);
         assert_eq!(delivery_for(BreakKind::Micro, &s), BreakDelivery::Overlay);
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
         assert_eq!(delivery_for(BreakKind::Sleep, &s), BreakDelivery::Overlay);
@@ -1018,14 +1180,14 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn delivery_for_notification_per_kind() {
         let mut s = Settings::default();
-        s.micro_break_mode = "notification".into();
+        s.micro_break_mode = BreakMode::Notification;
         assert_eq!(
             delivery_for(BreakKind::Micro, &s),
             BreakDelivery::Notification
         );
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
 
-        s.long_break_mode = "notification".into();
+        s.long_break_mode = BreakMode::Notification;
         assert_eq!(
             delivery_for(BreakKind::Long, &s),
             BreakDelivery::Notification
@@ -1036,8 +1198,8 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn delivery_for_sleep_always_overlay() {
         let mut s = Settings::default();
-        s.micro_break_mode = "notification".into();
-        s.long_break_mode = "notification".into();
+        s.micro_break_mode = BreakMode::Notification;
+        s.long_break_mode = BreakMode::Notification;
         assert_eq!(delivery_for(BreakKind::Sleep, &s), BreakDelivery::Overlay);
     }
 
@@ -1045,22 +1207,12 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn delivery_for_windowed_per_kind() {
         let mut s = Settings::default();
-        s.micro_break_mode = "windowed".into();
+        s.micro_break_mode = BreakMode::Windowed;
         assert_eq!(delivery_for(BreakKind::Micro, &s), BreakDelivery::Windowed);
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
 
-        s.long_break_mode = "windowed".into();
+        s.long_break_mode = BreakMode::Windowed;
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Windowed);
-    }
-
-    #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn delivery_for_unknown_mode_falls_back_to_overlay() {
-        let mut s = Settings::default();
-        s.micro_break_mode = "garbage".into();
-        s.long_break_mode = "".into();
-        assert_eq!(delivery_for(BreakKind::Micro, &s), BreakDelivery::Overlay);
-        assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
     }
 
     #[test]
@@ -1071,14 +1223,14 @@ mod tests {
         assert!(!is_windowed_mode(BreakKind::Long, &s));
         assert!(!is_windowed_mode(BreakKind::Sleep, &s));
 
-        s.micro_break_mode = "windowed".into();
+        s.micro_break_mode = BreakMode::Windowed;
         assert!(is_windowed_mode(BreakKind::Micro, &s));
         assert!(!is_windowed_mode(BreakKind::Long, &s));
 
-        s.long_break_mode = "windowed".into();
+        s.long_break_mode = BreakMode::Windowed;
         assert!(is_windowed_mode(BreakKind::Long, &s));
 
-        s.micro_break_mode = "notification".into();
+        s.micro_break_mode = BreakMode::Notification;
         assert!(!is_windowed_mode(BreakKind::Micro, &s));
     }
 
@@ -1086,8 +1238,8 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn is_windowed_mode_for_sleep_is_always_false() {
         let mut s = Settings::default();
-        s.micro_break_mode = "windowed".into();
-        s.long_break_mode = "windowed".into();
+        s.micro_break_mode = BreakMode::Windowed;
+        s.long_break_mode = BreakMode::Windowed;
         assert!(!is_windowed_mode(BreakKind::Sleep, &s));
     }
 
@@ -1100,8 +1252,120 @@ mod tests {
     fn legacy_settings_json_defaults_break_mode_to_overlay() {
         let json = r#"{"micro_interval_secs": 600}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_break_mode, "overlay");
-        assert_eq!(s.long_break_mode, "overlay");
+        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
+        assert_eq!(s.long_break_mode, BreakMode::Overlay);
+    }
+
+    // -- Enum serde: on-disk strings stay lowercase so existing
+    //    settings.json files round-trip, and unknown/corrupt values
+    //    normalise to the fallback on load instead of failing the parse.
+
+    #[test]
+    fn break_mode_serialises_to_lowercase_disk_strings() {
+        assert_eq!(
+            serde_json::to_value(BreakMode::Overlay).unwrap(),
+            serde_json::json!("overlay")
+        );
+        assert_eq!(
+            serde_json::to_value(BreakMode::Windowed).unwrap(),
+            serde_json::json!("windowed")
+        );
+        assert_eq!(
+            serde_json::to_value(BreakMode::Notification).unwrap(),
+            serde_json::json!("notification")
+        );
+    }
+
+    #[test]
+    fn schedule_mode_serialises_to_lowercase_disk_strings() {
+        assert_eq!(
+            serde_json::to_value(ScheduleMode::Interval).unwrap(),
+            serde_json::json!("interval")
+        );
+        assert_eq!(
+            serde_json::to_value(ScheduleMode::Fixed).unwrap(),
+            serde_json::json!("fixed")
+        );
+        assert_eq!(
+            serde_json::to_value(ScheduleMode::Both).unwrap(),
+            serde_json::json!("both")
+        );
+    }
+
+    #[test]
+    fn hint_mix_serialises_to_lowercase_disk_strings() {
+        for (variant, expected) in [
+            (HintMix::Both, "both"),
+            (HintMix::Physical, "physical"),
+            (HintMix::Psychological, "psychological"),
+            (HintMix::Solo, "solo"),
+            (HintMix::Social, "social"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(variant).unwrap(),
+                serde_json::json!(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn enum_fields_round_trip_through_settings_json() {
+        let s = Settings {
+            micro_break_mode: BreakMode::Notification,
+            long_break_mode: BreakMode::Windowed,
+            micro_schedule_mode: ScheduleMode::Fixed,
+            long_schedule_mode: ScheduleMode::Both,
+            micro_hint_mix: HintMix::Physical,
+            long_hint_mix: HintMix::Social,
+            ..Settings::default()
+        };
+
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.micro_break_mode, BreakMode::Notification);
+        assert_eq!(back.long_break_mode, BreakMode::Windowed);
+        assert_eq!(back.micro_schedule_mode, ScheduleMode::Fixed);
+        assert_eq!(back.long_schedule_mode, ScheduleMode::Both);
+        assert_eq!(back.micro_hint_mix, HintMix::Physical);
+        assert_eq!(back.long_hint_mix, HintMix::Social);
+    }
+
+    #[test]
+    fn corrupt_break_mode_normalises_to_overlay_on_load() {
+        let json = r#"{"micro_break_mode": "garbage", "long_break_mode": ""}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
+        assert_eq!(s.long_break_mode, BreakMode::Overlay);
+    }
+
+    #[test]
+    fn corrupt_schedule_mode_normalises_to_interval_on_load() {
+        let json = r#"{"micro_schedule_mode": "garbage", "long_schedule_mode": 42}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.micro_schedule_mode, ScheduleMode::Interval);
+        assert_eq!(s.long_schedule_mode, ScheduleMode::Interval);
+    }
+
+    #[test]
+    fn corrupt_hint_mix_normalises_to_both_on_load() {
+        let json = r#"{"micro_hint_mix": "garbage", "long_hint_mix": null}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.micro_hint_mix, HintMix::Both);
+        assert_eq!(s.long_hint_mix, HintMix::Both);
+    }
+
+    #[test]
+    fn known_enum_disk_strings_deserialise_to_their_variant() {
+        let json = r#"{
+            "micro_break_mode": "windowed",
+            "micro_schedule_mode": "fixed",
+            "long_hint_mix": "social"
+        }"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.micro_break_mode, BreakMode::Windowed);
+        assert_eq!(s.micro_schedule_mode, ScheduleMode::Fixed);
+        assert_eq!(s.long_hint_mix, HintMix::Social);
     }
 
     #[test]
@@ -1273,5 +1537,113 @@ mod parity_tests {
         // Sanity: if the extractor returns nothing, the parity test
         // would falsely "pass" the diff (both sides equal-empty).
         assert!(!ts_settings_keys().is_empty());
+    }
+
+    // -- Enum *value* parity. The field-name test above proves the keys
+    //    line up; this proves the typed enums (`BreakMode`,
+    //    `ScheduleMode`, `HintMix`) serialise to exactly the string
+    //    literals the TS unions accept. A new Rust variant with no TS
+    //    counterpart (or vice versa) fails here at unit-test time rather
+    //    than as a runtime Zod rejection.
+
+    use super::{BreakMode, HintMix, ScheduleMode};
+
+    /// All on-disk strings a Rust enum can serialise to. Drives the
+    /// value-parity check from the Rust side without hand-maintaining a
+    /// list — add a variant and it shows up automatically.
+    fn rust_enum_values<T, const N: usize>(variants: [T; N]) -> BTreeSet<String>
+    where
+        T: serde::Serialize,
+    {
+        variants
+            .into_iter()
+            .map(|v| {
+                serde_json::to_value(v)
+                    .expect("enum serialises")
+                    .as_str()
+                    .expect("enum serialises to a string")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Pull the string literals out of a TS union alias
+    /// (`type Name = "a" | "b" | "c";`), tolerating line wraps.
+    fn ts_union_values(source: &str, name: &str) -> BTreeSet<String> {
+        let needle = format!("type {name} =");
+        let start = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("`{name}` union not found in TS source"))
+            + needle.len();
+        let after = &source[start..];
+        let end = after
+            .find(';')
+            .unwrap_or_else(|| panic!("end of `{name}` union not found"));
+        let body = &after[..end];
+        let mut out = BTreeSet::new();
+        let mut rest = body;
+        while let Some(open) = rest.find('"') {
+            rest = &rest[open + 1..];
+            let close = rest
+                .find('"')
+                .unwrap_or_else(|| panic!("unterminated literal in `{name}` union"));
+            out.insert(rest[..close].to_string());
+            rest = &rest[close + 1..];
+        }
+        out
+    }
+
+    fn ts_source() -> String {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let path = PathBuf::from(manifest).join("../src/views/settings/types.ts");
+        std::fs::read_to_string(&path).expect("read TS settings types")
+    }
+
+    #[test]
+    fn break_mode_values_match_ts_union() {
+        let rust = rust_enum_values([
+            BreakMode::Overlay,
+            BreakMode::Windowed,
+            BreakMode::Notification,
+        ]);
+        let ts = ts_union_values(&ts_source(), "BreakDeliveryMode");
+        assert_eq!(rust, ts, "BreakMode ↔ BreakDeliveryMode value drift");
+    }
+
+    #[test]
+    fn schedule_mode_values_match_ts_union() {
+        let rust = rust_enum_values([
+            ScheduleMode::Interval,
+            ScheduleMode::Fixed,
+            ScheduleMode::Both,
+        ]);
+        let ts = ts_union_values(&ts_source(), "ScheduleMode");
+        assert_eq!(rust, ts, "ScheduleMode value drift");
+    }
+
+    #[test]
+    fn hint_mix_values_match_ts_unions() {
+        // HintMix is one Rust enum but two TS unions (micro vs long); its
+        // value set is the union of both. Splitting per-kind is a TS-only
+        // nicety — Rust accepts any variant on either field.
+        let rust = rust_enum_values([
+            HintMix::Both,
+            HintMix::Physical,
+            HintMix::Psychological,
+            HintMix::Solo,
+            HintMix::Social,
+        ]);
+        let src = ts_source();
+        let mut ts = ts_union_values(&src, "MicroHintMix");
+        ts.extend(ts_union_values(&src, "LongHintMix"));
+        assert_eq!(rust, ts, "HintMix ↔ Micro/LongHintMix value drift");
+    }
+
+    #[test]
+    fn ts_union_values_parses_canonical_form() {
+        let src = "type Foo = \"a\" | \"b\" | \"c\";\n";
+        let vals = ts_union_values(src, "Foo");
+        assert_eq!(vals.len(), 3);
+        assert!(vals.contains("a") && vals.contains("b") && vals.contains("c"));
     }
 }

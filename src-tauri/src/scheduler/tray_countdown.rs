@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use super::pause::PauseState;
 use super::timers::{current_minutes, in_window};
-use super::types::SuppressReason;
+use super::types::{BreakKind, SuppressReason};
 use super::Scheduler;
 
 /// One-second snapshot of what the tray ticker should display.
@@ -90,21 +90,18 @@ impl Scheduler {
         } else {
             let t = self.timers.lock().await;
             let now = Instant::now();
-            let micro_secs = if s.micro_enabled
-                && matches!(s.micro_schedule_mode.as_str(), "interval" | "both")
-            {
+            let micro_secs = if s.micro_enabled && s.interval_active(BreakKind::Micro) {
                 let elapsed = now.saturating_duration_since(t.last_micro).as_secs();
                 Some(s.micro_interval_secs.saturating_sub(elapsed))
             } else {
                 None
             };
-            let long_secs =
-                if s.long_enabled && matches!(s.long_schedule_mode.as_str(), "interval" | "both") {
-                    let elapsed = now.saturating_duration_since(t.last_long).as_secs();
-                    Some(s.long_interval_secs.saturating_sub(elapsed))
-                } else {
-                    None
-                };
+            let long_secs = if s.long_enabled && s.interval_active(BreakKind::Long) {
+                let elapsed = now.saturating_duration_since(t.last_long).as_secs();
+                Some(s.long_interval_secs.saturating_sub(elapsed))
+            } else {
+                None
+            };
             pick_countdown_secs(&s.tray_countdown_target, micro_secs, long_secs)
         };
 
