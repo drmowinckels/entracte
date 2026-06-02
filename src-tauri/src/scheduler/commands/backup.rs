@@ -487,6 +487,8 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
     }
     {
         let mut settings = scheduler.settings.lock().await;
+        // `active_settings` rebuilds the `#[serde(skip)]` `derived` cache
+        // from the imported (deserialised) profile fields.
         *settings = profiles_file.active_settings();
     }
     let restored_pause = restore_pause_state(&scheduler.pause_path);

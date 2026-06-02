@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::scheduler::{PauseState, Scheduler};
+use crate::scheduler::{PauseState, Scheduler, Settings};
 use crate::secure_io::{ensure_user_only_dir, write_user_only};
 
 const SETTINGS_DENYLIST: &[&str] = &["hooks", "hooks_enabled"];
@@ -274,17 +274,9 @@ async fn dispatch(app: &AppHandle, req: IpcRequest) -> IpcResponse {
                 return IpcResponse::err(format!("settings key '{key}' is not writable via IPC"));
             }
             let current = scheduler.settings.lock().await.clone();
-            let mut v = match serde_json::to_value(&current) {
-                Ok(v) => v,
-                Err(e) => return IpcResponse::err(format!("serialize: {e}")),
-            };
-            if v.get(&key).is_none() {
-                return IpcResponse::err(format!("unknown key: {key}"));
-            }
-            v[&key] = value;
-            let next: crate::scheduler::Settings = match serde_json::from_value(v) {
+            let next = match apply_settings_key(&current, &key, value) {
                 Ok(n) => n,
-                Err(e) => return IpcResponse::err(format!("type mismatch: {e}")),
+                Err(e) => return IpcResponse::err(e),
             };
             *scheduler.settings.lock().await = next.clone();
             {
@@ -298,6 +290,31 @@ async fn dispatch(app: &AppHandle, req: IpcRequest) -> IpcResponse {
             IpcResponse::ok(serde_json::json!({"ok": true, "key": key}))
         }
     }
+}
+
+/// Merge a single `key`/`value` override into `current` and return the
+/// resulting `Settings`, ready to store.
+///
+/// Pure (no locks, no runtime), so the JSON round-trip + cache rebuild is
+/// unit-testable without driving the production `AppHandle<Wry>` IPC path.
+/// Serialises `current` to JSON, validates the key exists, swaps in
+/// `value`, deserialises back, and rebuilds the `#[serde(skip)]` `derived`
+/// cache (which arrives empty from a wholesale deserialise). Errors are the
+/// user-facing strings the IPC handler returns verbatim.
+fn apply_settings_key(
+    current: &Settings,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<Settings, String> {
+    let mut v = serde_json::to_value(current).map_err(|e| format!("serialize: {e}"))?;
+    if v.get(key).is_none() {
+        return Err(format!("unknown key: {key}"));
+    }
+    v[key] = value;
+    let mut next: Settings =
+        serde_json::from_value(v).map_err(|e| format!("type mismatch: {e}"))?;
+    next.rebuild_derived();
+    Ok(next)
 }
 
 async fn status_payload(scheduler: &Scheduler) -> IpcResponse {
@@ -610,6 +627,40 @@ mod tests {
         assert!(s.contains("\"ok\":false"));
         assert!(!s.contains("\"data\""));
         assert!(s.contains("\"error\":\"nope\""));
+    }
+
+    #[test]
+    fn apply_settings_key_sets_value_and_rebuilds_derived_cache() {
+        // The IPC set path deserialises wholesale, so the `#[serde(skip)]`
+        // `derived` cache must be rebuilt from the new source fields.
+        let current = Settings::default();
+        let next = apply_settings_key(
+            &current,
+            "micro_fixed_times",
+            serde_json::json!(["09:30", "14:00"]),
+        )
+        .expect("valid key + value");
+        assert_eq!(next.micro_fixed_times, vec!["09:30", "14:00"]);
+        // "09:30" → 570, "14:00" → 840.
+        assert_eq!(next.derived.micro_fixed_minutes, vec![570, 840]);
+    }
+
+    #[test]
+    fn apply_settings_key_rejects_unknown_key() {
+        let err = apply_settings_key(&Settings::default(), "not_a_field", serde_json::json!(1))
+            .unwrap_err();
+        assert!(err.contains("unknown key"), "got: {err}");
+    }
+
+    #[test]
+    fn apply_settings_key_rejects_type_mismatch() {
+        let err = apply_settings_key(
+            &Settings::default(),
+            "micro_interval_secs",
+            serde_json::json!("not a number"),
+        )
+        .unwrap_err();
+        assert!(err.contains("type mismatch"), "got: {err}");
     }
 
     #[test]

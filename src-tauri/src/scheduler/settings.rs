@@ -3,7 +3,69 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::hooks::Hook;
 
+use super::timers::parse_hhmm;
 use super::types::{BreakDelivery, BreakKind};
+
+/// Stable, per-settings-load derivations resolved once at load/update
+/// time instead of being recomputed on every 1Hz scheduler tick or
+/// break fire.
+///
+/// These are pure functions of the owning `Settings`' source fields:
+/// `rebuild` re-derives the whole struct from a `Settings`, and the
+/// run loop / fire path read the cached vectors directly. The cache is
+/// `#[serde(skip)]` on `Settings` (it never hits disk and is rebuilt on
+/// deserialise via the `Default` it picks up), so adding it doesn't
+/// change the on-disk shape or the Rust↔TS parity surface.
+#[derive(Debug, Clone, Default)]
+pub struct DerivedCaches {
+    /// `micro_fixed_times` parsed to minutes-since-midnight, with
+    /// unparseable entries dropped — the per-tick compare becomes a plain
+    /// `== now_min` instead of re-running `parse_hhmm` on every string.
+    pub micro_fixed_minutes: Vec<u32>,
+    /// `long_fixed_times` parsed the same way.
+    pub long_fixed_minutes: Vec<u32>,
+    /// `app_pause_list` targets pre-lowercased so the per-refresh process
+    /// scan only has to lowercase the live process name once, instead of
+    /// re-lowercasing every configured target for every running process.
+    /// Empty targets are dropped (they never match).
+    pub app_pause_targets_lower: Vec<String>,
+    /// Micro-break hint pool already resolved for the active
+    /// `micro_hint_mix` (see [`effective_micro_hints`]). Resolving the mix
+    /// concatenates two pools on every break fire otherwise; caching it
+    /// turns the fire path into a single clone of the finished vector.
+    pub micro_hints_resolved: Vec<String>,
+    /// Long-break hint pool resolved for the active `long_hint_mix`.
+    pub long_hints_resolved: Vec<String>,
+}
+
+impl DerivedCaches {
+    /// Re-derive every cached value from `s`' source fields. Called at
+    /// each point where the stored `Settings` is replaced (see
+    /// `Settings::rebuild_derived`), so the caches can never drift from
+    /// the settings they summarise.
+    fn rebuild(s: &Settings) -> Self {
+        Self {
+            micro_fixed_minutes: s
+                .micro_fixed_times
+                .iter()
+                .filter_map(|t| parse_hhmm(t))
+                .collect(),
+            long_fixed_minutes: s
+                .long_fixed_times
+                .iter()
+                .filter_map(|t| parse_hhmm(t))
+                .collect(),
+            app_pause_targets_lower: s
+                .app_pause_list
+                .iter()
+                .map(|t| t.to_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect(),
+            micro_hints_resolved: resolve_micro_hints(s),
+            long_hints_resolved: resolve_long_hints(s),
+        }
+    }
+}
 
 /// Which monitor(s) an overlay break should appear on.
 ///
@@ -469,6 +531,15 @@ pub struct Settings {
     /// every read+write.
     #[serde(default)]
     pub custom_css: String,
+    /// Stable per-load derivations (parsed fixed times, etc.) resolved
+    /// once via [`Settings::rebuild_derived`] rather than on every tick /
+    /// fire. Never serialised: `#[serde(skip)]` keeps it off disk and out
+    /// of the Rust↔TS parity surface, and it's rebuilt explicitly at each
+    /// settings-replacement site. Defaults empty; callers that bypass
+    /// `rebuild_derived` (e.g. raw struct literals in tests) just see
+    /// empty caches, which the run loop treats as "no fixed times".
+    #[serde(skip)]
+    pub derived: DerivedCaches,
 }
 
 impl Default for Settings {
@@ -548,6 +619,7 @@ impl Default for Settings {
             micro_break_mode: BreakMode::default(),
             long_break_mode: BreakMode::default(),
             custom_css: String::new(),
+            derived: DerivedCaches::default(),
         }
     }
 }
@@ -577,6 +649,18 @@ impl Settings {
     pub fn fixed_active(&self, kind: BreakKind) -> bool {
         self.schedule_mode_for(kind)
             .is_some_and(ScheduleMode::fixed_active)
+    }
+
+    /// Re-derive the `derived` cache from the current source fields.
+    ///
+    /// Must be called at every point where a `Settings` value is stored
+    /// into the scheduler's mutex (settings update, profile switch /
+    /// reset, IPC set, backup import, construction) so the cache can
+    /// never lag the settings it summarises. `clamp` calls it last, so
+    /// any path that clamps (load + the renderer update path) is covered
+    /// automatically; the no-clamp replacement sites call it explicitly.
+    pub fn rebuild_derived(&mut self) {
+        self.derived = DerivedCaches::rebuild(self);
     }
 
     /// Clamp every numeric field to a safe range. Called on every load
@@ -651,6 +735,10 @@ impl Settings {
             self.custom_css.truncate(cut);
         }
         self.custom_css = sanitize_custom_css(&self.custom_css);
+        // Source fields are now in their final clamped form; re-derive the
+        // caches so a clamped load/update path never has to touch them
+        // again.
+        self.rebuild_derived();
     }
 }
 
@@ -694,10 +782,13 @@ fn strip_css_comments(css: &str) -> String {
     out
 }
 
-/// Resolve the micro-break hint pool, honouring `micro_hint_mix`.
-/// `Physical` / `Psychological` return only that pool; anything else
-/// concatenates both in physical-then-psychological order.
-pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
+/// Pure resolver for the micro-break hint pool, honouring
+/// `micro_hint_mix`. `Physical` / `Psychological` return only that pool;
+/// anything else (including `Both`) concatenates both in
+/// physical-then-psychological order. This does the allocating /
+/// concatenating work; [`DerivedCaches`] caches its result so the fire
+/// path doesn't repeat it.
+fn resolve_micro_hints(s: &Settings) -> Vec<String> {
     match s.micro_hint_mix {
         HintMix::Physical => s.micro_physical_hints.clone(),
         HintMix::Psychological => s.micro_psychological_hints.clone(),
@@ -712,10 +803,11 @@ pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
     }
 }
 
-/// Resolve the long-break hint pool, honouring `long_hint_mix`.
-/// `Solo` / `Social` filter to that pool; anything else concatenates
-/// them in solo-then-social order.
-pub fn effective_long_hints(s: &Settings) -> Vec<String> {
+/// Pure resolver for the long-break hint pool, honouring `long_hint_mix`.
+/// `Solo` / `Social` filter to that pool; anything else (including
+/// `Both`) concatenates them in solo-then-social order. Cached by
+/// [`DerivedCaches`].
+fn resolve_long_hints(s: &Settings) -> Vec<String> {
     match s.long_hint_mix {
         HintMix::Solo => s.long_hints.clone(),
         HintMix::Social => s.long_social_hints.clone(),
@@ -726,6 +818,21 @@ pub fn effective_long_hints(s: &Settings) -> Vec<String> {
             combined
         }
     }
+}
+
+/// The resolved micro-break hint pool.
+///
+/// The hint *mix* is resolved (and its two pools concatenated) once at
+/// settings load/update into the cache; this accessor just clones the
+/// finished vector, so the per-fire cost is a single allocation rather
+/// than the re-concatenation the pre-cache version did on every break.
+pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
+    s.derived.micro_hints_resolved.clone()
+}
+
+/// The resolved long-break hint pool. See [`effective_micro_hints`].
+pub fn effective_long_hints(s: &Settings) -> Vec<String> {
+    s.derived.long_hints_resolved.clone()
 }
 
 /// Resolve the delivery mode for the given break kind.
@@ -1054,23 +1161,30 @@ mod tests {
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn effective_micro_hints_modes() {
+        // `effective_micro_hints` reads the cache, so each mix change has
+        // to be followed by `rebuild_derived` — exercising both the pure
+        // resolver and the cache plumbing.
         let mut s = Settings::default();
         s.micro_physical_hints = vec!["a".into(), "b".into()];
         s.micro_psychological_hints = vec!["c".into()];
 
         s.micro_hint_mix = HintMix::Physical;
-        assert_eq!(effective_micro_hints(&s), vec!["a", "b"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["a", "b"]);
 
         s.micro_hint_mix = HintMix::Psychological;
-        assert_eq!(effective_micro_hints(&s), vec!["c"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["c"]);
 
         s.micro_hint_mix = HintMix::Both;
-        assert_eq!(effective_micro_hints(&s), vec!["a", "b", "c"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["a", "b", "c"]);
 
         // A long-only variant on a micro field falls through to the
         // concatenated pool, matching the pre-enum "anything else" arm.
         s.micro_hint_mix = HintMix::Social;
-        assert_eq!(effective_micro_hints(&s), vec!["a", "b", "c"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["a", "b", "c"]);
     }
 
     #[test]
@@ -1081,18 +1195,32 @@ mod tests {
         s.long_social_hints = vec!["soc1".into()];
 
         s.long_hint_mix = HintMix::Solo;
-        assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["solo1", "solo2"]);
 
         s.long_hint_mix = HintMix::Social;
-        assert_eq!(effective_long_hints(&s), vec!["soc1"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["soc1"]);
 
         s.long_hint_mix = HintMix::Both;
-        assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2", "soc1"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["solo1", "solo2", "soc1"]);
 
         // A micro-only variant on a long field falls through to the
         // concatenated pool, matching the pre-enum "anything else" arm.
         s.long_hint_mix = HintMix::Physical;
-        assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2", "soc1"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["solo1", "solo2", "soc1"]);
+    }
+
+    #[test]
+    fn clamp_rebuilds_resolved_hint_cache() {
+        // The load/update path runs through `clamp`; the resolved hint
+        // pools must be populated afterward without a separate call.
+        let mut s = Settings::default();
+        s.clamp();
+        assert!(!effective_micro_hints(&s).is_empty());
+        assert!(!effective_long_hints(&s).is_empty());
     }
 
     #[test]
@@ -1366,6 +1494,75 @@ mod tests {
         assert_eq!(s.micro_break_mode, BreakMode::Windowed);
         assert_eq!(s.micro_schedule_mode, ScheduleMode::Fixed);
         assert_eq!(s.long_hint_mix, HintMix::Social);
+    }
+
+    #[test]
+    fn rebuild_derived_parses_fixed_times_to_minutes_dropping_garbage() {
+        let mut s = Settings {
+            micro_fixed_times: vec!["09:00".into(), "garbage".into(), "13:30".into()],
+            long_fixed_times: vec!["7:05".into(), "24:00".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        // "09:00" → 540, "13:30" → 810; "garbage" dropped.
+        assert_eq!(s.derived.micro_fixed_minutes, vec![540, 810]);
+        // "7:05" → 425; "24:00" out of range, dropped.
+        assert_eq!(s.derived.long_fixed_minutes, vec![425]);
+    }
+
+    #[test]
+    fn rebuild_derived_lowercases_app_pause_targets_dropping_empties() {
+        let mut s = Settings {
+            app_pause_list: vec!["Zoom".into(), "OBS Studio".into(), "".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        assert_eq!(
+            s.derived.app_pause_targets_lower,
+            vec!["zoom", "obs studio"]
+        );
+    }
+
+    #[test]
+    fn rebuild_derived_refreshes_app_pause_cache_after_change() {
+        let mut s = Settings {
+            app_pause_list: vec!["Zoom".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        assert_eq!(s.derived.app_pause_targets_lower, vec!["zoom"]);
+
+        s.app_pause_list = vec!["Slack".into()];
+        s.rebuild_derived();
+        assert_eq!(s.derived.app_pause_targets_lower, vec!["slack"]);
+    }
+
+    #[test]
+    fn clamp_rebuilds_fixed_time_cache() {
+        // The load + renderer-update paths run through `clamp`, which must
+        // leave the derived cache populated without a separate call.
+        let mut s = Settings {
+            micro_fixed_times: vec!["10:00".into()],
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.derived.micro_fixed_minutes, vec![600]);
+    }
+
+    #[test]
+    fn rebuild_derived_refreshes_cache_after_source_change() {
+        // Correctness-critical: editing the fixed-time list and rebuilding
+        // must replace the cache, not append or go stale.
+        let mut s = Settings {
+            micro_fixed_times: vec!["08:00".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+        assert_eq!(s.derived.micro_fixed_minutes, vec![480]);
+
+        s.micro_fixed_times = vec!["15:45".into()];
+        s.rebuild_derived();
+        assert_eq!(s.derived.micro_fixed_minutes, vec![945]);
     }
 
     #[test]

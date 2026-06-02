@@ -17,7 +17,7 @@ use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind
 use super::session_lock;
 use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
 use super::timers::{
-    current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string, parse_hhmm,
+    current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string,
     prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
     BedtimeAction, BedtimeWindow, PrebreakGate,
 };
@@ -291,10 +291,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 let sys = sysinfo_system.get_or_insert_with(System::new);
                 sys.refresh_processes(ProcessesToUpdate::All, false);
                 app_pause_active = sys.processes().values().any(|p| {
-                    let proc_name = p.name().to_string_lossy().to_string();
-                    s.app_pause_list
+                    // Lowercase the live process name once per process; the
+                    // targets are pre-lowercased at settings load/update.
+                    let proc_lower = p.name().to_string_lossy().to_lowercase();
+                    s.derived
+                        .app_pause_targets_lower
                         .iter()
-                        .any(|target| process_match(&proc_name, target))
+                        .any(|target| process_match_lower(&proc_lower, target))
                 });
                 last_app_refresh = Instant::now();
             }
@@ -325,18 +328,12 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             continue;
         }
 
-        let long_fixed_due = s.long_enabled
-            && s.fixed_active(BreakKind::Long)
-            && s.long_fixed_times
-                .iter()
-                .filter_map(|t| parse_hhmm(t))
-                .any(|m| m == now_min);
-        let micro_fixed_due = s.micro_enabled
-            && s.fixed_active(BreakKind::Micro)
-            && s.micro_fixed_times
-                .iter()
-                .filter_map(|t| parse_hhmm(t))
-                .any(|m| m == now_min);
+        // Fixed times are pre-parsed to minutes-since-midnight at settings
+        // load/update (see `Settings::rebuild_derived`), so the per-tick
+        // check is a plain `== now_min` rather than re-running `parse_hhmm`
+        // over every `"HH:MM"` string on all 86,400 ticks a day.
+        let long_fixed_due = fixed_break_due(BreakKind::Long, &s, now_min);
+        let micro_fixed_due = fixed_break_due(BreakKind::Micro, &s, now_min);
 
         if long_fixed_due || micro_fixed_due {
             let (fire_long, fire_micro) = {
@@ -1011,6 +1008,21 @@ fn log_suppressions(
     }
 }
 
+/// Pure decision: is a fixed-time break for `kind` due at `now_min`?
+///
+/// Reads the pre-parsed minutes from `s.derived` (resolved once at
+/// settings load/update) instead of re-parsing the `"HH:MM"` strings,
+/// and gates on the kind being enabled and in a fixed-firing schedule
+/// mode. `Sleep` has no fixed-time schedule and is always `false`.
+fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
+    let (enabled, minutes) = match kind {
+        BreakKind::Long => (s.long_enabled, &s.derived.long_fixed_minutes),
+        BreakKind::Micro => (s.micro_enabled, &s.derived.micro_fixed_minutes),
+        BreakKind::Sleep => return false,
+    };
+    enabled && s.fixed_active(kind) && minutes.contains(&now_min)
+}
+
 // Case-insensitive token match for the app-pause list. We tokenise the
 // running process name on non-alphanumeric boundaries (`.`, `-`, `_`,
 // whitespace, path separators) and accept a target that EITHER equals a
@@ -1020,36 +1032,50 @@ fn log_suppressions(
 // rejecting `zoominfo` and `azoomatic`. Multi-token targets (e.g.
 // `osascript -e`) fall back to substring so power-users can still
 // match a distinctive snippet.
-fn process_match(running: &str, target: &str) -> bool {
-    let r = running.to_lowercase();
-    let t = target.to_lowercase();
-    if t.is_empty() {
+/// Case-insensitive token match assuming both arguments are already
+/// lowercased. The run loop pre-lowercases the target list once at
+/// settings load/update (`derived.app_pause_targets_lower`) and only
+/// lowercases the live process name per scan, so the hot path avoids
+/// re-lowercasing every configured target for every running process.
+fn process_match_lower(running_lower: &str, target_lower: &str) -> bool {
+    if target_lower.is_empty() {
         return false;
     }
-    let target_is_single_token = t.chars().all(|c| c.is_alphanumeric());
+    let target_is_single_token = target_lower.chars().all(|c| c.is_alphanumeric());
     if !target_is_single_token {
-        return r.contains(&t);
+        return running_lower.contains(target_lower);
     }
-    r.split(|c: char| !c.is_alphanumeric()).any(|tok| {
-        if tok == t {
-            return true;
-        }
-        if let Some(suffix) = tok.strip_prefix(t.as_str()) {
-            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
-        } else {
-            false
-        }
-    })
+    running_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|tok| {
+            if tok == target_lower {
+                return true;
+            }
+            if let Some(suffix) = tok.strip_prefix(target_lower) {
+                !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+            } else {
+                false
+            }
+        })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::settings::ScheduleMode;
     use super::*;
     // Only referenced by the notification-delivery tests below, which are
     // gated off Windows (the Tauri mock rig is) — gate the import to match
     // so a Windows build doesn't trip `-D unused-imports`.
     #[cfg(not(target_os = "windows"))]
     use super::super::settings::BreakMode;
+
+    /// Test-only convenience wrapper: lowercases both sides then defers to
+    /// the production `process_match_lower`. Lets the existing match tests
+    /// keep their raw (mixed-case) inputs while production stays on the
+    /// pre-lowercased hot path.
+    fn process_match(running: &str, target: &str) -> bool {
+        process_match_lower(&running.to_lowercase(), &target.to_lowercase())
+    }
 
     // Drives `deliver_scheduled_break` end to end through the
     // Notification delivery path — the one branch that doesn't enumerate
@@ -1130,24 +1156,28 @@ mod tests {
 
     #[test]
     fn scheduled_break_event_long_draws_long_fields() {
-        let s = Settings::default();
+        let mut s = Settings::default();
+        s.rebuild_derived();
         let e = scheduled_break_event(BreakKind::Long, &s, 0.5);
         assert_eq!(e.kind, BreakKind::Long);
         assert_eq!(e.duration_secs, s.long_duration_secs);
         assert_eq!(e.manual_finish, s.long_manual_finish);
         assert_eq!(e.hints, effective_long_hints(&s));
+        assert!(!e.hints.is_empty(), "default long hints are non-empty");
         // break_health is enabled by default → live intensity passes through.
         assert_eq!(e.health_intensity, 0.5);
     }
 
     #[test]
     fn scheduled_break_event_micro_draws_micro_fields() {
-        let s = Settings::default();
+        let mut s = Settings::default();
+        s.rebuild_derived();
         let e = scheduled_break_event(BreakKind::Micro, &s, 0.5);
         assert_eq!(e.kind, BreakKind::Micro);
         assert_eq!(e.duration_secs, s.micro_duration_secs);
         assert_eq!(e.manual_finish, s.micro_manual_finish);
         assert_eq!(e.hints, effective_micro_hints(&s));
+        assert!(!e.hints.is_empty(), "default micro hints are non-empty");
     }
 
     #[test]
@@ -1219,6 +1249,103 @@ mod tests {
         let prev = SystemTime::now();
         let now = prev + SUSPEND_GAP_THRESHOLD;
         assert!(resumed_after_gap(prev, now, SUSPEND_GAP_THRESHOLD));
+    }
+
+    // ----- fixed_break_due: cached fixed-time firing behaves like the
+    //       old per-tick parse, but reads pre-parsed minutes -----
+
+    fn settings_with_fixed(kind: BreakKind, mode: ScheduleMode, times: Vec<&str>) -> Settings {
+        // Set the requested kind's fixed schedule. We touch only the
+        // matching pair so each test asserts the per-kind cache in
+        // isolation; `kind == Micro` leaves the long fields default and
+        // vice-versa. (No `Sleep` arm — `fixed_break_due` already returns
+        // `false` for it and `fixed_break_due_sleep_never_fires` covers
+        // that, so the fixture never needs to build a Sleep case.)
+        let is_micro = matches!(kind, BreakKind::Micro);
+        let parsed: Vec<String> = times.into_iter().map(String::from).collect();
+        let mut s = Settings::default();
+        if is_micro {
+            s.micro_schedule_mode = mode;
+            s.micro_fixed_times = parsed;
+        } else {
+            s.long_schedule_mode = mode;
+            s.long_fixed_times = parsed;
+        }
+        s.rebuild_derived();
+        s
+    }
+
+    #[test]
+    fn fixed_break_due_fires_at_cached_minute() {
+        let s = settings_with_fixed(
+            BreakKind::Micro,
+            ScheduleMode::Fixed,
+            vec!["09:00", "13:30"],
+        );
+        assert!(fixed_break_due(BreakKind::Micro, &s, 540));
+        assert!(fixed_break_due(BreakKind::Micro, &s, 810));
+        assert!(!fixed_break_due(BreakKind::Micro, &s, 541));
+    }
+
+    #[test]
+    fn fixed_break_due_respects_schedule_mode_and_enabled() {
+        // "interval" mode → fixed times never fire even though they parse.
+        let s = settings_with_fixed(BreakKind::Long, ScheduleMode::Interval, vec!["09:00"]);
+        assert!(!fixed_break_due(BreakKind::Long, &s, 540));
+
+        // Disabled kind → no fire.
+        let mut s = settings_with_fixed(BreakKind::Long, ScheduleMode::Fixed, vec!["09:00"]);
+        s.long_enabled = false;
+        assert!(!fixed_break_due(BreakKind::Long, &s, 540));
+    }
+
+    #[test]
+    fn fixed_break_due_both_mode_fires() {
+        let s = settings_with_fixed(BreakKind::Micro, ScheduleMode::Both, vec!["07:05"]);
+        assert!(fixed_break_due(BreakKind::Micro, &s, 425));
+    }
+
+    #[test]
+    fn fixed_break_due_sleep_never_fires() {
+        let s = Settings::default();
+        assert!(!fixed_break_due(BreakKind::Sleep, &s, 0));
+    }
+
+    #[test]
+    fn fixed_break_due_tracks_cache_rebuild() {
+        // Editing the times and rebuilding must change which minute fires.
+        let mut s = settings_with_fixed(BreakKind::Micro, ScheduleMode::Fixed, vec!["08:00"]);
+        assert!(fixed_break_due(BreakKind::Micro, &s, 480));
+        s.micro_fixed_times = vec!["15:45".into()];
+        s.rebuild_derived();
+        assert!(!fixed_break_due(BreakKind::Micro, &s, 480));
+        assert!(fixed_break_due(BreakKind::Micro, &s, 945));
+    }
+
+    #[test]
+    fn process_match_lower_equals_process_match_for_prelowercased_input() {
+        // The hot path calls `process_match_lower` with both sides already
+        // lowercased; it must return the same answer as the public wrapper
+        // for every case the wrapper covers.
+        let cases = [
+            ("zoom.us", "zoom", true),
+            ("OBS Studio", "obs", true),
+            ("zoominfo.exe", "zoom", false),
+            ("obs64.exe", "obs", true),
+            ("firefoxnightly.exe", "firefox", false),
+            ("/usr/bin/osascript -e foo", "osascript -e", true),
+            ("safari", "zoom", false),
+            ("zoom.us", "", false),
+        ];
+        for (running, target, expected) in cases {
+            assert_eq!(
+                process_match_lower(&running.to_lowercase(), &target.to_lowercase()),
+                expected,
+                "process_match_lower({running:?}, {target:?})"
+            );
+            // And the wrapper agrees, since the run loop relies on parity.
+            assert_eq!(process_match(running, target), expected);
+        }
     }
 
     #[test]
