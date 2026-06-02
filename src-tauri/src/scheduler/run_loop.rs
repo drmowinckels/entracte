@@ -572,13 +572,13 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
             s.long_duration_secs,
             s.long_enforceable || s.strict_mode,
             s.long_manual_finish,
-            effective_long_hints(s),
+            effective_long_hints(s).to_vec(),
         ),
         BreakKind::Micro => (
             s.micro_duration_secs,
             s.micro_enforceable || s.strict_mode,
             s.micro_manual_finish,
-            effective_micro_hints(s),
+            effective_micro_hints(s).to_vec(),
         ),
         BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
     };
@@ -1155,24 +1155,28 @@ mod tests {
 
     #[test]
     fn scheduled_break_event_long_draws_long_fields() {
-        let s = Settings::default();
+        let mut s = Settings::default();
+        s.rebuild_derived();
         let e = scheduled_break_event(BreakKind::Long, &s, 0.5);
         assert_eq!(e.kind, BreakKind::Long);
         assert_eq!(e.duration_secs, s.long_duration_secs);
         assert_eq!(e.manual_finish, s.long_manual_finish);
         assert_eq!(e.hints, effective_long_hints(&s));
+        assert!(!e.hints.is_empty(), "default long hints are non-empty");
         // break_health is enabled by default → live intensity passes through.
         assert_eq!(e.health_intensity, 0.5);
     }
 
     #[test]
     fn scheduled_break_event_micro_draws_micro_fields() {
-        let s = Settings::default();
+        let mut s = Settings::default();
+        s.rebuild_derived();
         let e = scheduled_break_event(BreakKind::Micro, &s, 0.5);
         assert_eq!(e.kind, BreakKind::Micro);
         assert_eq!(e.duration_secs, s.micro_duration_secs);
         assert_eq!(e.manual_finish, s.micro_manual_finish);
         assert_eq!(e.hints, effective_micro_hints(&s));
+        assert!(!e.hints.is_empty(), "default micro hints are non-empty");
     }
 
     #[test]

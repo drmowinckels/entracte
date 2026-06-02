@@ -29,6 +29,13 @@ pub struct DerivedCaches {
     /// re-lowercasing every configured target for every running process.
     /// Empty targets are dropped (they never match).
     pub app_pause_targets_lower: Vec<String>,
+    /// Micro-break hint pool already resolved for the active
+    /// `micro_hint_mix` (see [`effective_micro_hints`]). Resolving the mix
+    /// concatenates two pools on every break fire otherwise; caching it
+    /// turns the fire path into a single clone of the finished vector.
+    pub micro_hints_resolved: Vec<String>,
+    /// Long-break hint pool resolved for the active `long_hint_mix`.
+    pub long_hints_resolved: Vec<String>,
 }
 
 impl DerivedCaches {
@@ -54,6 +61,8 @@ impl DerivedCaches {
                 .map(|t| t.to_lowercase())
                 .filter(|t| !t.is_empty())
                 .collect(),
+            micro_hints_resolved: resolve_micro_hints(s),
+            long_hints_resolved: resolve_long_hints(s),
         }
     }
 }
@@ -773,10 +782,13 @@ fn strip_css_comments(css: &str) -> String {
     out
 }
 
-/// Resolve the micro-break hint pool, honouring `micro_hint_mix`.
-/// `Physical` / `Psychological` return only that pool; anything else
-/// concatenates both in physical-then-psychological order.
-pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
+/// Pure resolver for the micro-break hint pool, honouring
+/// `micro_hint_mix`. `Physical` / `Psychological` return only that pool;
+/// anything else (including `Both`) concatenates both in
+/// physical-then-psychological order. This does the allocating /
+/// concatenating work; [`DerivedCaches`] caches its result so the fire
+/// path doesn't repeat it.
+fn resolve_micro_hints(s: &Settings) -> Vec<String> {
     match s.micro_hint_mix {
         HintMix::Physical => s.micro_physical_hints.clone(),
         HintMix::Psychological => s.micro_psychological_hints.clone(),
@@ -791,10 +803,11 @@ pub fn effective_micro_hints(s: &Settings) -> Vec<String> {
     }
 }
 
-/// Resolve the long-break hint pool, honouring `long_hint_mix`.
-/// `Solo` / `Social` filter to that pool; anything else concatenates
-/// them in solo-then-social order.
-pub fn effective_long_hints(s: &Settings) -> Vec<String> {
+/// Pure resolver for the long-break hint pool, honouring `long_hint_mix`.
+/// `Solo` / `Social` filter to that pool; anything else (including
+/// `Both`) concatenates them in solo-then-social order. Cached by
+/// [`DerivedCaches`].
+fn resolve_long_hints(s: &Settings) -> Vec<String> {
     match s.long_hint_mix {
         HintMix::Solo => s.long_hints.clone(),
         HintMix::Social => s.long_social_hints.clone(),
@@ -805,6 +818,21 @@ pub fn effective_long_hints(s: &Settings) -> Vec<String> {
             combined
         }
     }
+}
+
+/// Borrow the resolved micro-break hint pool from the cache.
+///
+/// Resolved once at settings load/update (see [`DerivedCaches`]); callers
+/// that need ownership (the `BreakEvent` build) clone the returned slice,
+/// which is a single allocation rather than the per-fire concatenation
+/// the old `effective_micro_hints` did.
+pub fn effective_micro_hints(s: &Settings) -> &[String] {
+    &s.derived.micro_hints_resolved
+}
+
+/// Borrow the resolved long-break hint pool from the cache.
+pub fn effective_long_hints(s: &Settings) -> &[String] {
+    &s.derived.long_hints_resolved
 }
 
 /// Resolve the delivery mode for the given break kind.
@@ -1133,23 +1161,30 @@ mod tests {
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn effective_micro_hints_modes() {
+        // `effective_micro_hints` reads the cache, so each mix change has
+        // to be followed by `rebuild_derived` — exercising both the pure
+        // resolver and the cache plumbing.
         let mut s = Settings::default();
         s.micro_physical_hints = vec!["a".into(), "b".into()];
         s.micro_psychological_hints = vec!["c".into()];
 
         s.micro_hint_mix = HintMix::Physical;
-        assert_eq!(effective_micro_hints(&s), vec!["a", "b"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["a", "b"]);
 
         s.micro_hint_mix = HintMix::Psychological;
-        assert_eq!(effective_micro_hints(&s), vec!["c"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["c"]);
 
         s.micro_hint_mix = HintMix::Both;
-        assert_eq!(effective_micro_hints(&s), vec!["a", "b", "c"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["a", "b", "c"]);
 
         // A long-only variant on a micro field falls through to the
         // concatenated pool, matching the pre-enum "anything else" arm.
         s.micro_hint_mix = HintMix::Social;
-        assert_eq!(effective_micro_hints(&s), vec!["a", "b", "c"]);
+        s.rebuild_derived();
+        assert_eq!(effective_micro_hints(&s), ["a", "b", "c"]);
     }
 
     #[test]
@@ -1160,18 +1195,32 @@ mod tests {
         s.long_social_hints = vec!["soc1".into()];
 
         s.long_hint_mix = HintMix::Solo;
-        assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["solo1", "solo2"]);
 
         s.long_hint_mix = HintMix::Social;
-        assert_eq!(effective_long_hints(&s), vec!["soc1"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["soc1"]);
 
         s.long_hint_mix = HintMix::Both;
-        assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2", "soc1"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["solo1", "solo2", "soc1"]);
 
         // A micro-only variant on a long field falls through to the
         // concatenated pool, matching the pre-enum "anything else" arm.
         s.long_hint_mix = HintMix::Physical;
-        assert_eq!(effective_long_hints(&s), vec!["solo1", "solo2", "soc1"]);
+        s.rebuild_derived();
+        assert_eq!(effective_long_hints(&s), ["solo1", "solo2", "soc1"]);
+    }
+
+    #[test]
+    fn clamp_rebuilds_resolved_hint_cache() {
+        // The load/update path runs through `clamp`; the resolved hint
+        // pools must be populated afterward without a separate call.
+        let mut s = Settings::default();
+        s.clamp();
+        assert!(!effective_micro_hints(&s).is_empty());
+        assert!(!effective_long_hints(&s).is_empty());
     }
 
     #[test]
