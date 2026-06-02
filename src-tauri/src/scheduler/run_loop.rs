@@ -357,28 +357,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 )
             };
             // Fixed-time fires bypass the idle gate: the clock is the signal, not user activity.
+            let fixed_key = Some((today_str.clone(), now_min));
             if fire_long {
-                fire_scheduled_break(
-                    &app,
-                    &sched,
-                    &s,
-                    BreakKind::Long,
-                    Instant::now(),
-                    Some((today_str.clone(), now_min)),
-                )
-                .await;
+                fire_scheduled_break(&app, &sched, &s, BreakKind::Long, fixed_key).await;
                 continue;
             }
             if fire_micro {
-                fire_scheduled_break(
-                    &app,
-                    &sched,
-                    &s,
-                    BreakKind::Micro,
-                    Instant::now(),
-                    Some((today_str.clone(), now_min)),
-                )
-                .await;
+                fire_scheduled_break(&app, &sched, &s, BreakKind::Micro, fixed_key).await;
                 continue;
             }
         }
@@ -513,30 +498,28 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         }
 
         if should_fire_long {
-            fire_scheduled_break(&app, &sched, &s, BreakKind::Long, Instant::now(), None).await;
+            fire_scheduled_break(&app, &sched, &s, BreakKind::Long, None).await;
         } else if should_fire_micro {
-            fire_scheduled_break(&app, &sched, &s, BreakKind::Micro, Instant::now(), None).await;
+            fire_scheduled_break(&app, &sched, &s, BreakKind::Micro, None).await;
         }
     }
 }
 
 /// Fire a scheduled micro/long break end to end: deliver it (see
 /// [`deliver_scheduled_break`]) and apply the post-fire timer bookkeeping
-/// under the timers lock (see [`record_scheduled_fire`]). `now` and
-/// `fixed_key` are threaded straight through to the bookkeeping — the live
-/// call sites pass `Instant::now()` and `Some((today, minute))` for a
-/// fixed-time fire or `None` for an interval fire.
+/// under the timers lock (see [`record_scheduled_fire`]). `fixed_key` is
+/// `Some((today, minute))` for a fixed-time fire (recording the dedupe
+/// key) or `None` for an interval fire; the fire `Instant` is stamped here.
 async fn fire_scheduled_break<R: Runtime>(
     app: &AppHandle<R>,
     sched: &Scheduler,
     s: &Settings,
     kind: BreakKind,
-    now: Instant,
     fixed_key: Option<(String, u32)>,
 ) {
     let delivery = deliver_scheduled_break(app, sched, s, kind).await;
     let mut t = sched.timers.lock().await;
-    record_scheduled_fire(&mut t, kind, delivery, now, fixed_key);
+    record_scheduled_fire(&mut t, kind, delivery, Instant::now(), fixed_key);
 }
 
 /// Build and surface a scheduled micro/long break: resolve the per-kind
@@ -1121,19 +1104,18 @@ mod tests {
             .expect("mock app builds");
         app.manage(sched.clone());
 
-        let now = Instant::now();
+        let before = Instant::now();
         fire_scheduled_break(
             app.handle(),
             &sched,
             &settings,
             BreakKind::Micro,
-            now,
             Some(("2026-06-02".into(), 600)),
         )
         .await;
 
         let t = sched.timers.lock().await;
-        assert_eq!(t.last_micro, now);
+        assert!(t.last_micro >= before);
         assert!(!t.micro_warned);
         assert_eq!(t.micro_deferred_since, None);
         assert_eq!(t.last_micro_fixed_fire, Some(("2026-06-02".into(), 600)));
