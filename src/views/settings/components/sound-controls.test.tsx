@@ -15,7 +15,9 @@ const playCustomSound = vi.fn();
 const ambientStop = vi.fn();
 const customStop = vi.fn();
 const previewAmbient = vi.fn((..._a: unknown[]) => ({ stop: ambientStop }));
-const previewCustomAmbient = vi.fn((..._a: unknown[]) => ({ stop: customStop }));
+const previewCustomAmbient = vi.fn((..._a: unknown[]) => ({
+  stop: customStop,
+}));
 const openMock = vi.fn();
 
 vi.mock("../../../lib/sounds", () => ({
@@ -60,7 +62,10 @@ describe("SoundControls", () => {
   });
 
   it("auditions an end-chime track the moment it's selected", () => {
-    const { onChange } = renderControls({ mode: "end_chime", sound_id: "chime-a" });
+    const { onChange } = renderControls({
+      mode: "end_chime",
+      sound_id: "chime-a",
+    });
     fireEvent.change(screen.getByRole("combobox", { name: /track/i }), {
       target: { value: "chime-b" },
     });
@@ -111,7 +116,9 @@ describe("SoundControls", () => {
         isSupporter
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /choose file|replace/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /choose file|replace/i }),
+    );
     await waitFor(() =>
       expect(previewCustomAmbient).toHaveBeenCalledWith("/music/rain.mp3", 0.5),
     );
