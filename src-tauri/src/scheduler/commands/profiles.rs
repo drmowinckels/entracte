@@ -519,6 +519,65 @@ mod tests {
         ]
     }
 
+    // Profile carrying fixed times + app-pause targets so a switch onto it
+    // can prove the `derived` cache is rebuilt from its (deserialised,
+    // cache-less) source fields rather than left stale/empty.
+    fn profiles_with_derived_source() -> Vec<Profile> {
+        vec![
+            Profile {
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                settings: Settings::default(),
+            },
+            Profile {
+                name: "Fixed".to_string(),
+                settings: Settings {
+                    micro_schedule_mode: "fixed".into(),
+                    micro_fixed_times: vec!["09:30".into(), "14:00".into()],
+                    app_pause_enabled: true,
+                    app_pause_list: vec!["Zoom".into(), "OBS Studio".into()],
+                    ..Settings::default()
+                },
+            },
+        ]
+    }
+
+    // The profile-switch path stores the new profile's settings without
+    // going through `clamp`, so it must rebuild the `#[serde(skip)]`
+    // `derived` cache explicitly. Drives the real `set_active_profile_impl`
+    // through a mock AppHandle (gated off Windows for the mock-rig reason).
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn set_active_profile_rebuilds_derived_caches() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+
+        let (_dir, sched) =
+            test_scheduler_with_profiles(profiles_with_derived_source(), DEFAULT_PROFILE_NAME);
+        // Default profile has no fixed times / app-pause targets.
+        assert!(sched
+            .settings
+            .lock()
+            .await
+            .derived
+            .micro_fixed_minutes
+            .is_empty());
+
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+
+        set_active_profile_impl(app.handle(), &sched, "Fixed".to_string())
+            .await
+            .unwrap();
+
+        let s = sched.settings.lock().await;
+        // "09:30" → 570, "14:00" → 840.
+        assert_eq!(s.derived.micro_fixed_minutes, vec![570, 840]);
+        assert_eq!(
+            s.derived.app_pause_targets_lower,
+            vec!["zoom", "obs studio"]
+        );
+    }
+
     #[tokio::test]
     async fn create_profile_appends_copy_of_active_settings() {
         let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
