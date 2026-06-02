@@ -1061,6 +1061,7 @@ fn process_match_lower(running_lower: &str, target_lower: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::settings::ScheduleMode;
     use super::*;
     // Only referenced by the notification-delivery tests below, which are
     // gated off Windows (the Tauri mock rig is) — gate the import to match
@@ -1253,7 +1254,7 @@ mod tests {
     // ----- fixed_break_due: cached fixed-time firing behaves like the
     //       old per-tick parse, but reads pre-parsed minutes -----
 
-    fn settings_with_fixed(kind: BreakKind, mode: &str, times: Vec<&str>) -> Settings {
+    fn settings_with_fixed(kind: BreakKind, mode: ScheduleMode, times: Vec<&str>) -> Settings {
         // Set the requested kind's fixed schedule. We touch only the
         // matching pair so each test asserts the per-kind cache in
         // isolation; `kind == Micro` leaves the long fields default and
@@ -1264,10 +1265,10 @@ mod tests {
         let parsed: Vec<String> = times.into_iter().map(String::from).collect();
         let mut s = Settings::default();
         if is_micro {
-            s.micro_schedule_mode = mode.into();
+            s.micro_schedule_mode = mode;
             s.micro_fixed_times = parsed;
         } else {
-            s.long_schedule_mode = mode.into();
+            s.long_schedule_mode = mode;
             s.long_fixed_times = parsed;
         }
         s.rebuild_derived();
@@ -1276,7 +1277,11 @@ mod tests {
 
     #[test]
     fn fixed_break_due_fires_at_cached_minute() {
-        let s = settings_with_fixed(BreakKind::Micro, "fixed", vec!["09:00", "13:30"]);
+        let s = settings_with_fixed(
+            BreakKind::Micro,
+            ScheduleMode::Fixed,
+            vec!["09:00", "13:30"],
+        );
         assert!(fixed_break_due(BreakKind::Micro, &s, 540));
         assert!(fixed_break_due(BreakKind::Micro, &s, 810));
         assert!(!fixed_break_due(BreakKind::Micro, &s, 541));
@@ -1285,18 +1290,18 @@ mod tests {
     #[test]
     fn fixed_break_due_respects_schedule_mode_and_enabled() {
         // "interval" mode → fixed times never fire even though they parse.
-        let s = settings_with_fixed(BreakKind::Long, "interval", vec!["09:00"]);
+        let s = settings_with_fixed(BreakKind::Long, ScheduleMode::Interval, vec!["09:00"]);
         assert!(!fixed_break_due(BreakKind::Long, &s, 540));
 
         // Disabled kind → no fire.
-        let mut s = settings_with_fixed(BreakKind::Long, "fixed", vec!["09:00"]);
+        let mut s = settings_with_fixed(BreakKind::Long, ScheduleMode::Fixed, vec!["09:00"]);
         s.long_enabled = false;
         assert!(!fixed_break_due(BreakKind::Long, &s, 540));
     }
 
     #[test]
     fn fixed_break_due_both_mode_fires() {
-        let s = settings_with_fixed(BreakKind::Micro, "both", vec!["07:05"]);
+        let s = settings_with_fixed(BreakKind::Micro, ScheduleMode::Both, vec!["07:05"]);
         assert!(fixed_break_due(BreakKind::Micro, &s, 425));
     }
 
@@ -1309,7 +1314,7 @@ mod tests {
     #[test]
     fn fixed_break_due_tracks_cache_rebuild() {
         // Editing the times and rebuilding must change which minute fires.
-        let mut s = settings_with_fixed(BreakKind::Micro, "fixed", vec!["08:00"]);
+        let mut s = settings_with_fixed(BreakKind::Micro, ScheduleMode::Fixed, vec!["08:00"]);
         assert!(fixed_break_due(BreakKind::Micro, &s, 480));
         s.micro_fixed_times = vec!["15:45".into()];
         s.rebuild_derived();

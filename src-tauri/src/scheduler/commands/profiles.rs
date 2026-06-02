@@ -534,7 +534,7 @@ mod tests {
             Profile {
                 name: "Fixed".to_string(),
                 settings: Settings {
-                    micro_schedule_mode: "fixed".into(),
+                    micro_schedule_mode: crate::scheduler::settings::ScheduleMode::Fixed,
                     micro_fixed_times: vec!["09:30".into(), "14:00".into()],
                     app_pause_enabled: true,
                     app_pause_list: vec!["Zoom".into(), "OBS Studio".into()],
