@@ -983,22 +983,31 @@ fn notify_screen_time_budget<R: Runtime>(app: &AppHandle<R>, budget_minutes: u64
     super::overlay::post_notification(app, "Time to wind down", screen_time_body(budget_minutes));
 }
 
+/// Pure decision: which break kinds were due (enabled and past their
+/// interval) at this tick and so are being suppressed by a guard. Split
+/// out from [`log_suppressions`] so the per-kind logic is unit-testable
+/// without a `Logger`.
+fn suppressed_kinds(s: &Settings, t: &super::timers::BreakTimers) -> Vec<BreakKind> {
+    [
+        (BreakKind::Micro, t.last_micro),
+        (BreakKind::Long, t.last_long),
+    ]
+    .into_iter()
+    .filter_map(|(kind, last)| {
+        let b = s.for_kind(kind)?;
+        (b.enabled && last.elapsed() >= Duration::from_secs(b.interval_secs)).then_some(kind)
+    })
+    .collect()
+}
+
 fn log_suppressions(
     logger: &Logger,
     s: &Settings,
     t: &super::timers::BreakTimers,
     reason: GuardReason,
 ) {
-    for (kind, last) in [
-        (BreakKind::Micro, t.last_micro),
-        (BreakKind::Long, t.last_long),
-    ] {
-        let Some(b) = s.for_kind(kind) else {
-            continue;
-        };
-        if b.enabled && last.elapsed() >= Duration::from_secs(b.interval_secs) {
-            logger.log(EventPayload::GuardSuppress { kind, reason });
-        }
+    for kind in suppressed_kinds(s, t) {
+        logger.log(EventPayload::GuardSuppress { kind, reason });
     }
 }
 
@@ -1995,5 +2004,56 @@ mod tests {
         let s = settings_for_guards(true, true, true, true, true);
         let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true).unwrap();
         assert_eq!(outcome.reason, SuppressReason::AppPause);
+    }
+
+    /// `BreakTimers` with both interval clocks anchored far enough in the
+    /// past that any enabled kind reads as overdue.
+    fn overdue_timers() -> super::super::timers::BreakTimers {
+        let mut t = super::super::timers::BreakTimers::new();
+        let past = std::time::Instant::now() - Duration::from_secs(100_000);
+        t.last_micro = past;
+        t.last_long = past;
+        t
+    }
+
+    #[test]
+    fn suppressed_kinds_reports_both_when_enabled_and_overdue() {
+        let mut s = Settings::default();
+        s.rebuild_derived();
+        assert_eq!(
+            suppressed_kinds(&s, &overdue_timers()),
+            vec![BreakKind::Micro, BreakKind::Long]
+        );
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn suppressed_kinds_skips_disabled_kinds() {
+        let mut s = Settings::default();
+        s.micro_enabled = false;
+        s.rebuild_derived();
+        assert_eq!(
+            suppressed_kinds(&s, &overdue_timers()),
+            vec![BreakKind::Long]
+        );
+    }
+
+    #[test]
+    fn suppressed_kinds_empty_when_not_yet_due() {
+        // Fresh timers are anchored at now, so neither kind is overdue.
+        let mut s = Settings::default();
+        s.rebuild_derived();
+        assert!(suppressed_kinds(&s, &super::super::timers::BreakTimers::new()).is_empty());
+    }
+
+    #[test]
+    fn log_suppressions_logs_each_suppressed_kind() {
+        use crate::test_support::test_scheduler;
+        let mut s = Settings::default();
+        s.rebuild_derived();
+        let (_dir, sched) = test_scheduler(s.clone());
+        // Exercises the thin logging wrapper: both kinds are overdue, so it
+        // forwards a GuardSuppress event for each to the logger.
+        log_suppressions(&sched.logger, &s, &overdue_timers(), GuardReason::Idle);
     }
 }
