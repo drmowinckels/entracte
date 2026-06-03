@@ -3,7 +3,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Runtime};
-use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 use user_idle::UserIdle;
 
@@ -956,20 +955,24 @@ fn warn_user_idle_failure(err: &str, backoff_secs: u64) {
     }
 }
 
-fn notify_break_coming(app: &AppHandle, kind: BreakKind, seconds: u64) {
+fn prebreak_message(kind: BreakKind, seconds: u64) -> (&'static str, String) {
     let title = match kind {
         BreakKind::Micro => "Micro break coming up",
         BreakKind::Long => "Long break coming up",
         BreakKind::Sleep => "Bedtime reminder coming up",
     };
-    let body = format!("Starting in {}s", seconds);
-    let _ = app.notification().builder().title(title).body(body).show();
+    (title, format!("Starting in {seconds}s"))
 }
 
-fn notify_screen_time_budget(app: &AppHandle, budget_minutes: u64) {
+fn notify_break_coming<R: Runtime>(app: &AppHandle<R>, kind: BreakKind, seconds: u64) {
+    let (title, body) = prebreak_message(kind, seconds);
+    super::overlay::post_notification(app, title, body);
+}
+
+fn screen_time_body(budget_minutes: u64) -> String {
     let hours = budget_minutes / 60;
     let mins = budget_minutes % 60;
-    let body = if hours > 0 && mins == 0 {
+    if hours > 0 && mins == 0 {
         format!(
             "You've been at the screen {} hour{} — time to wrap up.",
             hours,
@@ -979,13 +982,11 @@ fn notify_screen_time_budget(app: &AppHandle, budget_minutes: u64) {
         format!("You've been at the screen {mins} minutes — time to wrap up.")
     } else {
         format!("You've been at the screen {hours}h {mins}m — time to wrap up.")
-    };
-    let _ = app
-        .notification()
-        .builder()
-        .title("Time to wind down")
-        .body(body)
-        .show();
+    }
+}
+
+fn notify_screen_time_budget<R: Runtime>(app: &AppHandle<R>, budget_minutes: u64) {
+    super::overlay::post_notification(app, "Time to wind down", screen_time_body(budget_minutes));
 }
 
 fn log_suppressions(
@@ -1095,8 +1096,11 @@ mod tests {
         settings.micro_break_mode = BreakMode::Notification;
         let (_dir, sched) = test_scheduler(settings.clone());
 
+        // No notification plugin: the cfg(test) `post_notification` is a
+        // no-op, so the delivery path must run without it. If the OS-posting
+        // body ever leaks into the test build, `app.notification()` panics
+        // here — a tripwire against reintroducing real-notification spam.
         let app = mock_builder()
-            .plugin(tauri_plugin_notification::init())
             .build(mock_context(noop_assets()))
             .expect("mock app builds");
         app.manage(sched.clone());
@@ -1130,7 +1134,6 @@ mod tests {
         }
 
         let app = mock_builder()
-            .plugin(tauri_plugin_notification::init())
             .build(mock_context(noop_assets()))
             .expect("mock app builds");
         app.manage(sched.clone());
@@ -1187,6 +1190,62 @@ mod tests {
         // the invariant is enforced with a panic and asserted here.
         let s = Settings::default();
         let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0);
+    }
+
+    #[test]
+    fn prebreak_message_titles_per_kind() {
+        assert_eq!(
+            prebreak_message(BreakKind::Micro, 30).0,
+            "Micro break coming up"
+        );
+        assert_eq!(
+            prebreak_message(BreakKind::Long, 30).0,
+            "Long break coming up"
+        );
+        assert_eq!(
+            prebreak_message(BreakKind::Sleep, 30).0,
+            "Bedtime reminder coming up"
+        );
+        assert_eq!(prebreak_message(BreakKind::Micro, 45).1, "Starting in 45s");
+    }
+
+    #[test]
+    fn screen_time_body_formats_each_bucket() {
+        assert_eq!(
+            screen_time_body(45),
+            "You've been at the screen 45 minutes — time to wrap up."
+        );
+        assert_eq!(
+            screen_time_body(60),
+            "You've been at the screen 1 hour — time to wrap up."
+        );
+        assert_eq!(
+            screen_time_body(120),
+            "You've been at the screen 2 hours — time to wrap up."
+        );
+        assert_eq!(
+            screen_time_body(90),
+            "You've been at the screen 1h 30m — time to wrap up."
+        );
+    }
+
+    // The notify_* wrappers are thin glue over post_notification, which is a
+    // no-op under cfg(test). Driving them with a mock app that has no
+    // notification plugin proves they run the delivery glue without touching
+    // the OS — and would panic (no plugin) if the real show path ever leaked
+    // back into a test build.
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn notify_wrappers_do_not_touch_os_under_test() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        notify_break_coming(app.handle(), BreakKind::Micro, 30);
+        notify_break_coming(app.handle(), BreakKind::Long, 60);
+        notify_break_coming(app.handle(), BreakKind::Sleep, 90);
+        notify_screen_time_budget(app.handle(), 90);
     }
 
     #[test]
