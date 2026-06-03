@@ -2006,41 +2006,42 @@ mod tests {
         assert_eq!(outcome.reason, SuppressReason::AppPause);
     }
 
-    /// `BreakTimers` with both interval clocks anchored far enough in the
-    /// past that any enabled kind reads as overdue.
-    fn overdue_timers() -> super::super::timers::BreakTimers {
-        let mut t = super::super::timers::BreakTimers::new();
-        let past = std::time::Instant::now() - Duration::from_secs(100_000);
-        t.last_micro = past;
-        t.last_long = past;
-        t
+    /// Settings whose micro/long intervals are zero so `last.elapsed() >= 0`
+    /// is always true with fresh timers — makes "overdue" hold regardless
+    /// of the CI monotonic clock's age (no wall-time back-dating, which a
+    /// young clock could turn into a no-op or panic).
+    #[allow(clippy::field_reassign_with_default)]
+    fn zero_interval_settings() -> Settings {
+        let mut s = Settings::default();
+        s.micro_interval_secs = 0;
+        s.long_interval_secs = 0;
+        s.rebuild_derived();
+        s
     }
 
     #[test]
     fn suppressed_kinds_reports_both_when_enabled_and_overdue() {
-        let mut s = Settings::default();
-        s.rebuild_derived();
+        let s = zero_interval_settings();
         assert_eq!(
-            suppressed_kinds(&s, &overdue_timers()),
+            suppressed_kinds(&s, &super::super::timers::BreakTimers::new()),
             vec![BreakKind::Micro, BreakKind::Long]
         );
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn suppressed_kinds_skips_disabled_kinds() {
-        let mut s = Settings::default();
+        let mut s = zero_interval_settings();
         s.micro_enabled = false;
-        s.rebuild_derived();
         assert_eq!(
-            suppressed_kinds(&s, &overdue_timers()),
+            suppressed_kinds(&s, &super::super::timers::BreakTimers::new()),
             vec![BreakKind::Long]
         );
     }
 
     #[test]
     fn suppressed_kinds_empty_when_not_yet_due() {
-        // Fresh timers are anchored at now, so neither kind is overdue.
+        // Default intervals are 1200s+ and fresh timers are anchored at now,
+        // so neither kind has elapsed long enough to be due.
         let mut s = Settings::default();
         s.rebuild_derived();
         assert!(suppressed_kinds(&s, &super::super::timers::BreakTimers::new()).is_empty());
@@ -2049,11 +2050,15 @@ mod tests {
     #[test]
     fn log_suppressions_logs_each_suppressed_kind() {
         use crate::test_support::test_scheduler;
-        let mut s = Settings::default();
-        s.rebuild_derived();
+        let s = zero_interval_settings();
         let (_dir, sched) = test_scheduler(s.clone());
-        // Exercises the thin logging wrapper: both kinds are overdue, so it
+        // Exercises the thin logging wrapper: both kinds are due, so it
         // forwards a GuardSuppress event for each to the logger.
-        log_suppressions(&sched.logger, &s, &overdue_timers(), GuardReason::Idle);
+        log_suppressions(
+            &sched.logger,
+            &s,
+            &super::super::timers::BreakTimers::new(),
+            GuardReason::Idle,
+        );
     }
 }
