@@ -1,0 +1,107 @@
+name: Build preview installers
+
+# Produces runnable installers (.AppImage/.deb/.rpm, .msi/.exe, .dmg/.app)
+# as downloadable workflow artifacts so changes can be tested on real
+# Windows and Linux machines (or VMs) *before* cutting a release tag.
+# Development happens on macOS, so this is the only way to exercise the
+# per-OS surface (IPC transport, tray, overlay always-on-top, DnD/camera
+# detection, autostart) without waiting for a release.
+#
+# Cost control: full Tauri bundles on three runners are expensive, so this
+# never runs automatically on every PR. Two opt-in triggers only:
+#   * Manual    — Actions tab → "Build preview installers" → Run workflow.
+#   * PR label  — add the `build:installers` label to a PR; pushes to that
+#                 PR then rebuild until the label is removed.
+#
+# Artifacts are debug builds (faster to compile, fine for behaviour
+# testing) and are NOT signed — Gatekeeper/SmartScreen will warn, same as
+# any unsigned local build. Updater artifact signing is disabled via a
+# config override so no signing secret is required (works on forks too).
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+concurrency:
+  group: build-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Manual runs always build. PR runs build only while the opt-in label
+    # is present — `synchronize`/`reopened` re-evaluate the current label
+    # set, so removing the label stops further preview builds.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'build:installers')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            label: macos-aarch64
+          - platform: ubuntu-22.04
+            label: linux-x86_64
+          - platform: windows-latest
+            label: windows-x86_64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxss-dev rpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # `--debug` skips the LTO/codegen-units=1 release profile so the
+      # build finishes in a fraction of the time. The `--config` override
+      # turns off `createUpdaterArtifacts` (set in tauri.conf.json) so the
+      # build doesn't demand TAURI_SIGNING_PRIVATE_KEY — preview installs
+      # don't go through the in-app updater. `shell: bash` is forced so the
+      # single-quoted JSON parses identically on the Windows runner.
+      - name: Build debug installers
+        shell: bash
+        run: npm run tauri build -- --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      # `find -printf` is GNU-only, so this stays portable (the macOS
+      # runner ships BSD find): list matching files, then basename each.
+      - name: List built bundles
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.label }}"
+            echo ""
+            echo '```'
+            find src-tauri/target/debug/bundle -type f \
+              \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \
+                 -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) \
+              2>/dev/null | while read -r f; do basename "$f"; done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # SHA-pinned to match release.yml's uploader. Bumped via dependabot.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installers-${{ matrix.label }}
+          path: src-tauri/target/debug/bundle/
+          if-no-files-found: error
+          retention-days: 14
