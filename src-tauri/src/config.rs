@@ -32,7 +32,7 @@ pub fn migrate_legacy_settings(value: &mut Value) {
     migrate_sound_fields(obj);
 }
 
-// Map legacy global `sound_theme` to per-kind `micro_sound` + `long_sound`.
+// Map legacy global `sound_theme` to per-kind `micro.sound` + `long.sound`.
 // Only fires when neither per-kind field is present, so user-set new values are never clobbered.
 // Also strips obsolete fields so they don't leak into the deserialized Settings via flatten.
 fn migrate_sound_fields(obj: &mut serde_json::Map<String, Value>) {
@@ -227,8 +227,8 @@ mod tests {
         assert_eq!(f.profiles[0].name, DEFAULT_PROFILE_NAME);
         let d = Settings::default();
         assert_eq!(
-            f.profiles[0].settings.micro_interval_secs,
-            d.micro_interval_secs
+            f.profiles[0].settings.micro.interval_secs,
+            d.micro.interval_secs
         );
     }
 
@@ -237,10 +237,10 @@ mod tests {
     fn save_and_load_round_trip_multiple_profiles() {
         let (_dir, path) = temp_file();
         let mut work = Settings::default();
-        work.micro_interval_secs = 600;
+        work.micro.interval_secs = 600;
         work.overlay_color = "forest".to_string();
         let mut home = Settings::default();
-        home.micro_interval_secs = 1800;
+        home.micro.interval_secs = 1800;
         home.overlay_color = "rose".to_string();
 
         let file = ProfilesFile {
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(loaded.profiles.len(), 2);
         assert_eq!(loaded.active, "Home");
         assert_eq!(loaded.profiles[0].name, "Work");
-        assert_eq!(loaded.profiles[0].settings.micro_interval_secs, 600);
+        assert_eq!(loaded.profiles[0].settings.micro.interval_secs, 600);
         assert_eq!(loaded.profiles[1].name, "Home");
         assert_eq!(loaded.profiles[1].settings.overlay_color, "rose");
     }
@@ -278,12 +278,12 @@ mod tests {
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.active, DEFAULT_PROFILE_NAME);
         assert_eq!(loaded.profiles[0].name, DEFAULT_PROFILE_NAME);
-        assert_eq!(loaded.profiles[0].settings.micro_interval_secs, 99);
+        assert_eq!(loaded.profiles[0].settings.micro.interval_secs, 99);
         assert_eq!(loaded.profiles[0].settings.overlay_color, "rose");
         let d = Settings::default();
         assert_eq!(
-            loaded.profiles[0].settings.long_interval_secs,
-            d.long_interval_secs
+            loaded.profiles[0].settings.long.interval_secs,
+            d.long.interval_secs
         );
     }
 
@@ -302,7 +302,7 @@ mod tests {
         assert!(text.contains("\"active\""));
         let reloaded = load(&path);
         assert_eq!(reloaded.profiles.len(), 1);
-        assert_eq!(reloaded.profiles[0].settings.micro_interval_secs, 77);
+        assert_eq!(reloaded.profiles[0].settings.micro.interval_secs, 77);
     }
 
     #[test]
@@ -438,19 +438,19 @@ mod tests {
             let loaded = load(&path);
             let s = &loaded.profiles[0].settings;
             assert_eq!(
-                serde_json::to_string(&s.micro_sound.mode).unwrap(),
+                serde_json::to_string(&s.micro.sound.mode).unwrap(),
                 format!("\"{want_mode}\""),
                 "micro mode mismatch for theme {theme}"
             );
             assert_eq!(
-                s.micro_sound.sound_id, want_id,
+                s.micro.sound.sound_id, want_id,
                 "micro id mismatch for theme {theme}"
             );
             assert_eq!(
-                s.long_sound.mode, s.micro_sound.mode,
+                s.long.sound.mode, s.micro.sound.mode,
                 "long should match micro for theme {theme}"
             );
-            assert_eq!(s.long_sound.sound_id, want_id);
+            assert_eq!(s.long.sound.sound_id, want_id);
         }
     }
 
@@ -468,11 +468,11 @@ mod tests {
         let loaded = load(&path);
         let s = &loaded.profiles[0].settings;
         assert_eq!(
-            serde_json::to_string(&s.micro_sound.mode).unwrap(),
+            serde_json::to_string(&s.micro.sound.mode).unwrap(),
             "\"ambient\"",
-            "explicit micro_sound must win over legacy theme"
+            "explicit micro.sound must win over legacy theme"
         );
-        assert_eq!(s.micro_sound.sound_id, "851196");
+        assert_eq!(s.micro.sound.sound_id, "851196");
     }
 
     #[test]
@@ -491,13 +491,13 @@ mod tests {
         .unwrap();
         let loaded = load(&path);
         assert_eq!(loaded.profiles.len(), 2);
-        assert_eq!(loaded.profiles[0].settings.micro_sound.sound_id, "398496");
-        assert_eq!(loaded.profiles[0].settings.long_sound.sound_id, "398496");
+        assert_eq!(loaded.profiles[0].settings.micro.sound.sound_id, "398496");
+        assert_eq!(loaded.profiles[0].settings.long.sound.sound_id, "398496");
         assert_eq!(
-            serde_json::to_string(&loaded.profiles[1].settings.micro_sound.mode).unwrap(),
+            serde_json::to_string(&loaded.profiles[1].settings.micro.sound.mode).unwrap(),
             "\"off\""
         );
-        assert_eq!(loaded.profiles[1].settings.micro_sound.sound_id, "");
+        assert_eq!(loaded.profiles[1].settings.micro.sound.sound_id, "");
     }
 
     #[test]
@@ -513,8 +513,8 @@ mod tests {
         .unwrap();
         let loaded = load(&path);
         let s = &loaded.profiles[0].settings;
-        assert_eq!(s.micro_sound.sound_id, "398496");
-        assert_eq!(s.long_sound.sound_id, "398496");
+        assert_eq!(s.micro.sound.sound_id, "398496");
+        assert_eq!(s.long.sound.sound_id, "398496");
     }
 
     #[test]
@@ -528,8 +528,8 @@ mod tests {
         };
         let s = file.active_settings();
         assert_eq!(
-            s.micro_interval_secs,
-            Settings::default().micro_interval_secs
+            s.micro.interval_secs,
+            Settings::default().micro.interval_secs
         );
     }
 }

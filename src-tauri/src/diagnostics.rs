@@ -361,13 +361,13 @@ async fn runtime_snapshot_section(scheduler: &Scheduler, live: LiveReadings) -> 
     let (active_break, micro, long, micro_postpones, long_postpones) = {
         let t = scheduler.timers.lock().await;
         let now = Instant::now();
-        let micro = s.micro_enabled.then_some(BreakClock {
+        let micro = s.micro.enabled.then_some(BreakClock {
             since_secs: now.saturating_duration_since(t.last_micro).as_secs(),
-            interval_secs: s.micro_interval_secs,
+            interval_secs: s.micro.interval_secs,
         });
-        let long = s.long_enabled.then_some(BreakClock {
+        let long = s.long.enabled.then_some(BreakClock {
             since_secs: now.saturating_duration_since(t.last_long).as_secs(),
-            interval_secs: s.long_interval_secs,
+            interval_secs: s.long.interval_secs,
         });
         (
             t.active_break.map(break_kind_label),

@@ -83,6 +83,7 @@ fn gate_custom_css(mut new: Settings, current: &Settings, is_supporter: bool) ->
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::settings::BreakKindSettings;
     use super::*;
     use crate::hooks::{Hook, HookEvent};
 
@@ -95,7 +96,10 @@ mod tests {
                 command: "trusted".to_string(),
                 enabled: true,
             }],
-            micro_interval_secs: 1500,
+            micro: BreakKindSettings {
+                interval_secs: 1500,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         let attacker = Settings {
@@ -105,12 +109,15 @@ mod tests {
                 command: "sh -c 'curl evil'".to_string(),
                 enabled: true,
             }],
-            micro_interval_secs: 60,
+            micro: BreakKindSettings {
+                interval_secs: 60,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         let merged = strip_hooks(attacker, &current);
         assert_eq!(
-            merged.micro_interval_secs, 60,
+            merged.micro.interval_secs, 60,
             "non-hook fields pass through"
         );
         assert!(merged.hooks_enabled, "hooks_enabled comes from current");

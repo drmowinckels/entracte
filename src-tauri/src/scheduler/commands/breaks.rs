@@ -119,11 +119,10 @@ pub async fn get_pause_info(scheduler: tauri::State<'_, Scheduler>) -> Result<Pa
 /// `*_enforceable` flag OR `strict_mode`, while sleep is always
 /// enforceable.
 pub(crate) fn test_break_enforceable(kind: BreakKind, s: &Settings) -> bool {
-    match kind {
-        BreakKind::Micro => s.micro_enforceable || s.strict_mode,
-        BreakKind::Long => s.long_enforceable || s.strict_mode,
-        BreakKind::Sleep => true,
-    }
+    // Sleep (no per-kind block) is always enforceable; micro/long obey
+    // their own `enforceable` flag OR `strict_mode`.
+    s.for_kind(kind)
+        .is_none_or(|k| k.enforceable || s.strict_mode)
 }
 
 /// Fire a one-off break of the given kind right now. Shared by the
@@ -141,11 +140,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
         BreakKind::Long => effective_long_hints(&s),
         BreakKind::Sleep => s.sleep_hints.clone(),
     };
-    let manual_finish = match kind {
-        BreakKind::Micro => s.micro_manual_finish,
-        BreakKind::Long => s.long_manual_finish,
-        BreakKind::Sleep => false,
-    };
+    let manual_finish = s.for_kind(kind).is_some_and(|k| k.manual_finish);
     let intensity = scheduler.stats.lock().await.intensity();
     let delivery = delivery_for(kind, &s);
     let enforceable = test_break_enforceable(kind, &s);
@@ -319,7 +314,7 @@ pub async fn postpone_break_impl(
         let now = Instant::now();
         match kind {
             BreakKind::Micro => {
-                let target = Duration::from_secs(s.micro_interval_secs)
+                let target = Duration::from_secs(s.micro.interval_secs)
                     .saturating_sub(Duration::from_secs(postpone_secs));
                 t.last_micro = now.checked_sub(target).unwrap_or(now);
                 t.micro_warned = false;
@@ -327,12 +322,12 @@ pub async fn postpone_break_impl(
                 t.micro_postpone_count = t.micro_postpone_count.saturating_add(1);
             }
             BreakKind::Long => {
-                let target = Duration::from_secs(s.long_interval_secs)
+                let target = Duration::from_secs(s.long.interval_secs)
                     .saturating_sub(Duration::from_secs(postpone_secs));
                 t.last_long = now.checked_sub(target).unwrap_or(now);
                 t.long_warned = false;
                 t.long_deferred_since = None;
-                let micro_target = Duration::from_secs(s.micro_interval_secs)
+                let micro_target = Duration::from_secs(s.micro.interval_secs)
                     .saturating_sub(Duration::from_secs(postpone_secs));
                 t.last_micro = now.checked_sub(micro_target).unwrap_or(now);
                 t.micro_warned = false;
@@ -518,20 +513,18 @@ pub async fn resume_last_break_impl<R: Runtime>(
         return Err("no break to resume".to_string());
     };
     let s = scheduler.settings.lock().await.clone();
-    let (duration_secs, enforceable, manual_finish, hints) = match kind {
-        BreakKind::Micro => (
-            s.micro_duration_secs,
-            s.micro_enforceable || s.strict_mode,
-            s.micro_manual_finish,
-            effective_micro_hints(&s),
+    let (duration_secs, enforceable, manual_finish, hints) = match s.for_kind(kind) {
+        Some(k) => (
+            k.duration_secs,
+            k.enforceable || s.strict_mode,
+            k.manual_finish,
+            match kind {
+                BreakKind::Long => effective_long_hints(&s),
+                _ => effective_micro_hints(&s),
+            },
         ),
-        BreakKind::Long => (
-            s.long_duration_secs,
-            s.long_enforceable || s.strict_mode,
-            s.long_manual_finish,
-            effective_long_hints(&s),
-        ),
-        BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
+        // Sleep has no per-kind block: bedtime duration, always enforceable.
+        None => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
     };
     let intensity = scheduler.stats.lock().await.intensity();
     fire_break(
@@ -595,6 +588,7 @@ pub async fn resume_last_break<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::settings::BreakKindSettings;
     use super::*;
     use crate::scheduler::timers::BreakTimers;
     use crate::test_support::test_scheduler;
@@ -636,7 +630,10 @@ mod tests {
     fn test_break_enforceable_micro_off_when_no_strict_no_micro_enforceable() {
         let s = Settings {
             strict_mode: false,
-            micro_enforceable: false,
+            micro: BreakKindSettings {
+                enforceable: false,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         assert!(!test_break_enforceable(BreakKind::Micro, &s));
@@ -646,7 +643,10 @@ mod tests {
     fn test_break_enforceable_micro_true_when_micro_enforceable() {
         let s = Settings {
             strict_mode: false,
-            micro_enforceable: true,
+            micro: BreakKindSettings {
+                enforceable: true,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         assert!(test_break_enforceable(BreakKind::Micro, &s));
@@ -656,7 +656,10 @@ mod tests {
     fn test_break_enforceable_micro_true_when_strict_mode() {
         let s = Settings {
             strict_mode: true,
-            micro_enforceable: false,
+            micro: BreakKindSettings {
+                enforceable: false,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         assert!(test_break_enforceable(BreakKind::Micro, &s));
@@ -666,21 +669,30 @@ mod tests {
     fn test_break_enforceable_long_mirrors_micro() {
         let off = Settings {
             strict_mode: false,
-            long_enforceable: false,
+            long: BreakKindSettings {
+                enforceable: false,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         assert!(!test_break_enforceable(BreakKind::Long, &off));
 
         let opt_in = Settings {
             strict_mode: false,
-            long_enforceable: true,
+            long: BreakKindSettings {
+                enforceable: true,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         assert!(test_break_enforceable(BreakKind::Long, &opt_in));
 
         let strict = Settings {
             strict_mode: true,
-            long_enforceable: false,
+            long: BreakKindSettings {
+                enforceable: false,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         assert!(test_break_enforceable(BreakKind::Long, &strict));
@@ -690,8 +702,14 @@ mod tests {
     fn test_break_enforceable_sleep_always_true() {
         let lax = Settings {
             strict_mode: false,
-            micro_enforceable: false,
-            long_enforceable: false,
+            micro: BreakKindSettings {
+                enforceable: false,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                enforceable: false,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         assert!(test_break_enforceable(BreakKind::Sleep, &lax));

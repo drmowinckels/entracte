@@ -378,6 +378,7 @@ pub async fn reset_profile_to_defaults<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::settings::BreakKindSettings;
     use super::*;
 
     fn named_profile(name: &str) -> Profile {
@@ -494,7 +495,10 @@ mod tests {
         vec![Profile {
             name: DEFAULT_PROFILE_NAME.to_string(),
             settings: Settings {
-                micro_interval_secs: 1234,
+                micro: BreakKindSettings {
+                    interval_secs: 1234,
+                    ..Settings::default().micro
+                },
                 ..Settings::default()
             },
         }]
@@ -505,14 +509,20 @@ mod tests {
             Profile {
                 name: DEFAULT_PROFILE_NAME.to_string(),
                 settings: Settings {
-                    micro_interval_secs: 1234,
+                    micro: BreakKindSettings {
+                        interval_secs: 1234,
+                        ..Settings::default().micro
+                    },
                     ..Settings::default()
                 },
             },
             Profile {
                 name: "Work".to_string(),
                 settings: Settings {
-                    micro_interval_secs: 600,
+                    micro: BreakKindSettings {
+                        interval_secs: 600,
+                        ..Settings::default().micro
+                    },
                     ..Settings::default()
                 },
             },
@@ -534,8 +544,11 @@ mod tests {
             Profile {
                 name: "Fixed".to_string(),
                 settings: Settings {
-                    micro_schedule_mode: crate::scheduler::settings::ScheduleMode::Fixed,
-                    micro_fixed_times: vec!["09:30".into(), "14:00".into()],
+                    micro: BreakKindSettings {
+                        schedule_mode: crate::scheduler::settings::ScheduleMode::Fixed,
+                        fixed_times: vec!["09:30".into(), "14:00".into()],
+                        ..Settings::default().micro
+                    },
                     app_pause_enabled: true,
                     app_pause_list: vec!["Zoom".into(), "OBS Studio".into()],
                     ..Settings::default()
@@ -591,7 +604,7 @@ mod tests {
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[1].name, "Focus");
         // The copy carries the active profile's settings, not Settings::default.
-        assert_eq!(profiles[1].settings.micro_interval_secs, 1234);
+        assert_eq!(profiles[1].settings.micro.interval_secs, 1234);
     }
 
     #[tokio::test]
@@ -623,7 +636,7 @@ mod tests {
         assert_eq!(profiles.len(), 3);
         let focus = profiles.iter().find(|p| p.name == "Focus").unwrap();
         // Copies Work's settings (600), not the active Default's (1234).
-        assert_eq!(focus.settings.micro_interval_secs, 600);
+        assert_eq!(focus.settings.micro.interval_secs, 600);
         // Active pointer doesn't move.
         let active = sched.active_profile_name.lock().await;
         assert_eq!(*active, DEFAULT_PROFILE_NAME);
@@ -759,13 +772,13 @@ mod tests {
         let profiles = sched.profiles.lock().await;
         let work = profiles.iter().find(|p| p.name == "Work").unwrap();
         assert_eq!(
-            work.settings.micro_interval_secs,
-            Settings::default().micro_interval_secs,
+            work.settings.micro.interval_secs,
+            Settings::default().micro.interval_secs,
         );
         // The live `settings` slot belongs to Default, not Work, so the
         // reset of an inactive profile must leave it alone.
         assert_eq!(
-            sched.settings.lock().await.micro_interval_secs,
+            sched.settings.lock().await.micro.interval_secs,
             1234,
             "active profile's live settings stay put when the inactive one resets",
         );
@@ -778,8 +791,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            sched.settings.lock().await.micro_interval_secs,
-            Settings::default().micro_interval_secs,
+            sched.settings.lock().await.micro.interval_secs,
+            Settings::default().micro.interval_secs,
         );
     }
 
@@ -824,7 +837,7 @@ mod tests {
         crate::scheduler::timers::reset_timers_keep_sleep(&mut *sched.timers.lock().await);
         // After the switch: settings reflect Work, active points at Work,
         // and the timers' last_sleep is preserved while flags clear.
-        assert_eq!(sched.settings.lock().await.micro_interval_secs, 600);
+        assert_eq!(sched.settings.lock().await.micro.interval_secs, 600);
         assert_eq!(*sched.active_profile_name.lock().await, "Work");
         let t = sched.timers.lock().await;
         assert!(!t.micro_warned);
@@ -858,6 +871,7 @@ mod tests {
 // =====================================================================
 #[cfg(all(test, not(target_os = "windows")))]
 mod rig_smoke_tests {
+    use super::super::super::settings::BreakKindSettings;
     use super::*;
     use crate::config::DEFAULT_PROFILE_NAME;
     use crate::test_support::{mock_app_with_scheduler, wrap_in_mock_app};
@@ -890,7 +904,10 @@ mod rig_smoke_tests {
             Profile {
                 name: "Work".to_string(),
                 settings: Settings {
-                    micro_interval_secs: 600,
+                    micro: BreakKindSettings {
+                        interval_secs: 600,
+                        ..Settings::default().micro
+                    },
                     ..Settings::default()
                 },
             },

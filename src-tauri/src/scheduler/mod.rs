@@ -36,6 +36,11 @@ pub use commands::settings::*;
 pub use commands::stats::*;
 pub use pause::PauseState;
 pub use settings::Settings;
+// `BreakKindSettings` is re-exported on the flat `scheduler::` path so the
+// backup `rig_tests` can build per-kind settings without reaching into the
+// `settings` submodule; only consumed from `#[cfg(test)]`, hence the allow.
+#[allow(unused_imports)]
+pub use settings::BreakKindSettings;
 // `MonitorPlacement` only has consumers inside `config::tests`; preserve the
 // pre-split flat path so the test doesn't have to know the new module layout.
 #[allow(unused_imports)]

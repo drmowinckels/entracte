@@ -507,7 +507,7 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
     }
     // Reseed the break-timer cursors against the restored settings.
     // The 1Hz run loop reads `timers` every tick; without this reset
-    // it would compare the restored `Settings::micro_interval_secs`
+    // it would compare the restored `Settings::micro.interval_secs`
     // against pre-import `last_micro`, potentially firing a break
     // immediately. `set_active_profile` does the same when switching.
     {
@@ -1123,7 +1123,7 @@ mod tests {
 mod rig_tests {
     use super::*;
     use crate::config::{Profile, DEFAULT_PROFILE_NAME};
-    use crate::scheduler::Settings;
+    use crate::scheduler::{BreakKindSettings, Settings};
     use crate::supporter::SupporterRecord;
     use crate::test_support::{mock_app_with_scheduler, temp_dir};
     use chrono::TimeZone;
@@ -1189,7 +1189,10 @@ mod rig_tests {
     #[tokio::test]
     async fn round_trip_restores_profiles_and_emits_events() {
         let source_settings = Settings {
-            micro_interval_secs: 600,
+            micro: BreakKindSettings {
+                interval_secs: 600,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         let (src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
@@ -1234,8 +1237,8 @@ mod rig_tests {
         assert_eq!(dest_sched.profiles.lock().await.len(), 2);
         assert_eq!(dest_sched.active_profile_name.lock().await.as_str(), "Work",);
         assert_eq!(
-            dest_sched.settings.lock().await.micro_interval_secs,
-            source_settings.micro_interval_secs,
+            dest_sched.settings.lock().await.micro.interval_secs,
+            source_settings.micro.interval_secs,
         );
         assert!(profile_emitted.load(Ordering::SeqCst));
         assert!(pause_emitted.load(Ordering::SeqCst));
@@ -1362,7 +1365,10 @@ mod rig_tests {
         // Source app: two profiles, "Work" active. Persist so the
         // export command reads the same state we just set up.
         let source_settings = Settings {
-            micro_interval_secs: 777,
+            micro: BreakKindSettings {
+                interval_secs: 777,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         let (src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
@@ -1419,8 +1425,8 @@ mod rig_tests {
         assert_eq!(dest_sched.profiles.lock().await.len(), 2);
         assert_eq!(dest_sched.active_profile_name.lock().await.as_str(), "Work",);
         assert_eq!(
-            dest_sched.settings.lock().await.micro_interval_secs,
-            source_settings.micro_interval_secs,
+            dest_sched.settings.lock().await.micro.interval_secs,
+            source_settings.micro.interval_secs,
         );
     }
 
@@ -1955,7 +1961,10 @@ mod rig_tests {
 
         // Source app: two profiles, "Work" active.
         let source_settings = Settings {
-            micro_interval_secs: 1234,
+            micro: BreakKindSettings {
+                interval_secs: 1234,
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         let (src_dir, src_sched) = crate::test_support::test_scheduler_with_profiles(
@@ -2049,8 +2058,8 @@ mod rig_tests {
         assert_eq!(dest_sched.profiles.lock().await.len(), 2);
         assert_eq!(dest_sched.active_profile_name.lock().await.as_str(), "Work",);
         assert_eq!(
-            dest_sched.settings.lock().await.micro_interval_secs,
-            source_settings.micro_interval_secs,
+            dest_sched.settings.lock().await.micro.interval_secs,
+            source_settings.micro.interval_secs,
         );
     }
 }

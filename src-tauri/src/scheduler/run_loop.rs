@@ -158,7 +158,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         let locked = session_lock::screen_locked();
         let idle_secs = promote_idle_for_lock(raw_idle_secs, locked, &s);
         let idle_for_typing = idle_for_typing_defer(idle_reading, idle_secs, locked);
-        let is_active = idle_secs < s.micro_idle_reset_secs;
+        let is_active = idle_secs < s.micro.idle_reset_secs;
         let today_str = local_today_string();
         let budget_secs = s.daily_screen_time_budget_minutes.saturating_mul(60);
         let remind_again_secs = s.daily_screen_time_remind_again_minutes.saturating_mul(60);
@@ -369,8 +369,8 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         let long_interval_active = s.interval_active(BreakKind::Long);
 
         let (micro_idle_suppressed, long_idle_suppressed) = (
-            idle_secs >= s.micro_idle_reset_secs,
-            idle_secs >= s.long_idle_reset_secs,
+            idle_secs >= s.micro.idle_reset_secs,
+            idle_secs >= s.long.idle_reset_secs,
         );
 
         if micro_idle_suppressed || long_idle_suppressed {
@@ -395,13 +395,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             let mut t = sched.timers.lock().await;
             if prebreak_warn_due(
                 PrebreakGate {
-                    enabled: s.long_enabled,
+                    enabled: s.long.enabled,
                     mode_includes_interval: long_interval_active,
                     already_warned: t.long_warned,
                     idle_suppressed: long_idle_suppressed,
                 },
                 t.last_long,
-                s.long_interval_secs,
+                s.long.interval_secs,
                 s.prebreak_notification_seconds,
                 tick_now,
             ) {
@@ -410,13 +410,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             }
             if prebreak_warn_due(
                 PrebreakGate {
-                    enabled: s.micro_enabled,
+                    enabled: s.micro.enabled,
                     mode_includes_interval: micro_interval_active,
                     already_warned: t.micro_warned,
                     idle_suppressed: micro_idle_suppressed,
                 },
                 t.last_micro,
-                s.micro_interval_secs,
+                s.micro.interval_secs,
                 s.prebreak_notification_seconds,
                 tick_now,
             ) {
@@ -429,18 +429,18 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             let t = sched.timers.lock().await;
             (
                 interval_break_due(
-                    s.long_enabled,
+                    s.long.enabled,
                     long_interval_active,
                     t.last_long,
-                    s.long_interval_secs,
+                    s.long.interval_secs,
                     long_idle_suppressed,
                     tick_now,
                 ),
                 interval_break_due(
-                    s.micro_enabled,
+                    s.micro.enabled,
                     micro_interval_active,
                     t.last_micro,
-                    s.micro_interval_secs,
+                    s.micro.interval_secs,
                     micro_idle_suppressed,
                     tick_now,
                 ),
@@ -567,21 +567,17 @@ async fn deliver_scheduled_break<R: Runtime>(
 /// live value from the stats lock; the helper applies the
 /// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
 fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
-    let (duration_secs, enforceable, manual_finish, hints) = match kind {
-        BreakKind::Long => (
-            s.long_duration_secs,
-            s.long_enforceable || s.strict_mode,
-            s.long_manual_finish,
-            effective_long_hints(s),
-        ),
-        BreakKind::Micro => (
-            s.micro_duration_secs,
-            s.micro_enforceable || s.strict_mode,
-            s.micro_manual_finish,
-            effective_micro_hints(s),
-        ),
+    let k = s
+        .for_kind(kind)
+        .unwrap_or_else(|| unreachable!("sleep breaks use the bedtime fire path"));
+    let hints = match kind {
+        BreakKind::Long => effective_long_hints(s),
+        BreakKind::Micro => effective_micro_hints(s),
         BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
     };
+    let duration_secs = k.duration_secs;
+    let enforceable = k.enforceable || s.strict_mode;
+    let manual_finish = k.manual_finish;
     BreakEvent {
         kind,
         duration_secs,
@@ -838,8 +834,8 @@ pub(super) fn decide_lock_transition(
 pub(super) fn idle_secs_with_lock(raw_idle_secs: u64, locked: Option<bool>, s: &Settings) -> u64 {
     if matches!(locked, Some(true)) {
         raw_idle_secs
-            .max(s.micro_idle_reset_secs)
-            .max(s.long_idle_reset_secs)
+            .max(s.micro.idle_reset_secs)
+            .max(s.long.idle_reset_secs)
     } else {
         raw_idle_secs
     }
@@ -994,13 +990,13 @@ fn log_suppressions(
     t: &super::timers::BreakTimers,
     reason: GuardReason,
 ) {
-    if s.micro_enabled && t.last_micro.elapsed() >= Duration::from_secs(s.micro_interval_secs) {
+    if s.micro.enabled && t.last_micro.elapsed() >= Duration::from_secs(s.micro.interval_secs) {
         logger.log(EventPayload::GuardSuppress {
             kind: BreakKind::Micro,
             reason,
         });
     }
-    if s.long_enabled && t.last_long.elapsed() >= Duration::from_secs(s.long_interval_secs) {
+    if s.long.enabled && t.last_long.elapsed() >= Duration::from_secs(s.long.interval_secs) {
         logger.log(EventPayload::GuardSuppress {
             kind: BreakKind::Long,
             reason,
@@ -1015,12 +1011,15 @@ fn log_suppressions(
 /// and gates on the kind being enabled and in a fixed-firing schedule
 /// mode. `Sleep` has no fixed-time schedule and is always `false`.
 fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
-    let (enabled, minutes) = match kind {
-        BreakKind::Long => (s.long_enabled, &s.derived.long_fixed_minutes),
-        BreakKind::Micro => (s.micro_enabled, &s.derived.micro_fixed_minutes),
+    let Some(k) = s.for_kind(kind) else {
+        return false; // Sleep has no fixed-time schedule.
+    };
+    let minutes = match kind {
+        BreakKind::Long => &s.derived.long_fixed_minutes,
+        BreakKind::Micro => &s.derived.micro_fixed_minutes,
         BreakKind::Sleep => return false,
     };
-    enabled && s.fixed_active(kind) && minutes.contains(&now_min)
+    k.enabled && s.fixed_active(kind) && minutes.contains(&now_min)
 }
 
 // Case-insensitive token match for the app-pause list. We tokenise the
@@ -1061,7 +1060,7 @@ fn process_match_lower(running_lower: &str, target_lower: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::settings::ScheduleMode;
+    use super::super::settings::{BreakKindSettings, ScheduleMode};
     use super::*;
     // Only referenced by the notification-delivery tests below, which are
     // gated off Windows (the Tauri mock rig is) — gate the import to match
@@ -1092,7 +1091,7 @@ mod tests {
         use tauri::Manager;
 
         let mut settings = Settings::default();
-        settings.micro_break_mode = BreakMode::Notification;
+        settings.micro.break_mode = BreakMode::Notification;
         let (_dir, sched) = test_scheduler(settings.clone());
 
         let app = mock_builder()
@@ -1121,7 +1120,7 @@ mod tests {
         use tauri::Manager;
 
         let mut settings = Settings::default();
-        settings.micro_break_mode = BreakMode::Notification;
+        settings.micro.break_mode = BreakMode::Notification;
         let (_dir, sched) = test_scheduler(settings.clone());
         {
             let mut t = sched.timers.lock().await;
@@ -1160,8 +1159,8 @@ mod tests {
         s.rebuild_derived();
         let e = scheduled_break_event(BreakKind::Long, &s, 0.5);
         assert_eq!(e.kind, BreakKind::Long);
-        assert_eq!(e.duration_secs, s.long_duration_secs);
-        assert_eq!(e.manual_finish, s.long_manual_finish);
+        assert_eq!(e.duration_secs, s.long.duration_secs);
+        assert_eq!(e.manual_finish, s.long.manual_finish);
         assert_eq!(e.hints, effective_long_hints(&s));
         assert!(!e.hints.is_empty(), "default long hints are non-empty");
         // break_health is enabled by default → live intensity passes through.
@@ -1174,8 +1173,8 @@ mod tests {
         s.rebuild_derived();
         let e = scheduled_break_event(BreakKind::Micro, &s, 0.5);
         assert_eq!(e.kind, BreakKind::Micro);
-        assert_eq!(e.duration_secs, s.micro_duration_secs);
-        assert_eq!(e.manual_finish, s.micro_manual_finish);
+        assert_eq!(e.duration_secs, s.micro.duration_secs);
+        assert_eq!(e.manual_finish, s.micro.manual_finish);
         assert_eq!(e.hints, effective_micro_hints(&s));
         assert!(!e.hints.is_empty(), "default micro hints are non-empty");
     }
@@ -1265,11 +1264,11 @@ mod tests {
         let parsed: Vec<String> = times.into_iter().map(String::from).collect();
         let mut s = Settings::default();
         if is_micro {
-            s.micro_schedule_mode = mode;
-            s.micro_fixed_times = parsed;
+            s.micro.schedule_mode = mode;
+            s.micro.fixed_times = parsed;
         } else {
-            s.long_schedule_mode = mode;
-            s.long_fixed_times = parsed;
+            s.long.schedule_mode = mode;
+            s.long.fixed_times = parsed;
         }
         s.rebuild_derived();
         s
@@ -1295,7 +1294,7 @@ mod tests {
 
         // Disabled kind → no fire.
         let mut s = settings_with_fixed(BreakKind::Long, ScheduleMode::Fixed, vec!["09:00"]);
-        s.long_enabled = false;
+        s.long.enabled = false;
         assert!(!fixed_break_due(BreakKind::Long, &s, 540));
     }
 
@@ -1316,7 +1315,7 @@ mod tests {
         // Editing the times and rebuilding must change which minute fires.
         let mut s = settings_with_fixed(BreakKind::Micro, ScheduleMode::Fixed, vec!["08:00"]);
         assert!(fixed_break_due(BreakKind::Micro, &s, 480));
-        s.micro_fixed_times = vec!["15:45".into()];
+        s.micro.fixed_times = vec!["15:45".into()];
         s.rebuild_derived();
         assert!(!fixed_break_due(BreakKind::Micro, &s, 480));
         assert!(fixed_break_due(BreakKind::Micro, &s, 945));
@@ -1586,8 +1585,14 @@ mod tests {
 
     fn settings_with_idle_thresholds(micro: u64, long: u64) -> Settings {
         Settings {
-            micro_idle_reset_secs: micro,
-            long_idle_reset_secs: long,
+            micro: BreakKindSettings {
+                idle_reset_secs: micro,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                idle_reset_secs: long,
+                ..Settings::default().long
+            },
             ..Settings::default()
         }
     }
@@ -1618,8 +1623,8 @@ mod tests {
         // gate at line ~341 trips for both micro and long.
         let s = settings_with_idle_thresholds(120, 300);
         let promoted = idle_secs_with_lock(0, Some(true), &s);
-        assert!(promoted >= s.micro_idle_reset_secs);
-        assert!(promoted >= s.long_idle_reset_secs);
+        assert!(promoted >= s.micro.idle_reset_secs);
+        assert!(promoted >= s.long.idle_reset_secs);
         assert_eq!(promoted, 300);
     }
 

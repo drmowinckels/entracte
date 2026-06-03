@@ -245,10 +245,10 @@ async fn dispatch(app: &AppHandle, req: IpcRequest) -> IpcResponse {
             };
             let secs = match break_kind {
                 crate::scheduler::BreakKind::Micro => {
-                    scheduler.settings.lock().await.micro_duration_secs
+                    scheduler.settings.lock().await.micro.duration_secs
                 }
                 crate::scheduler::BreakKind::Long => {
-                    scheduler.settings.lock().await.long_duration_secs
+                    scheduler.settings.lock().await.long.duration_secs
                 }
                 crate::scheduler::BreakKind::Sleep => 0,
             };
@@ -640,7 +640,7 @@ mod tests {
             serde_json::json!(["09:30", "14:00"]),
         )
         .expect("valid key + value");
-        assert_eq!(next.micro_fixed_times, vec!["09:30", "14:00"]);
+        assert_eq!(next.micro.fixed_times, vec!["09:30", "14:00"]);
         // "09:30" → 570, "14:00" → 840.
         assert_eq!(next.derived.micro_fixed_minutes, vec![570, 840]);
     }

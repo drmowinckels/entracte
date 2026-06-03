@@ -90,15 +90,15 @@ impl Scheduler {
         } else {
             let t = self.timers.lock().await;
             let now = Instant::now();
-            let micro_secs = if s.micro_enabled && s.interval_active(BreakKind::Micro) {
+            let micro_secs = if s.micro.enabled && s.interval_active(BreakKind::Micro) {
                 let elapsed = now.saturating_duration_since(t.last_micro).as_secs();
-                Some(s.micro_interval_secs.saturating_sub(elapsed))
+                Some(s.micro.interval_secs.saturating_sub(elapsed))
             } else {
                 None
             };
-            let long_secs = if s.long_enabled && s.interval_active(BreakKind::Long) {
+            let long_secs = if s.long.enabled && s.interval_active(BreakKind::Long) {
                 let elapsed = now.saturating_duration_since(t.last_long).as_secs();
-                Some(s.long_interval_secs.saturating_sub(elapsed))
+                Some(s.long.interval_secs.saturating_sub(elapsed))
             } else {
                 None
             };
@@ -293,7 +293,7 @@ mod tests {
     use crate::config::{Profile, DEFAULT_PROFILE_NAME};
     use crate::scheduler::break_stats::BreakStats;
     use crate::scheduler::screen_time::ScreenTimeState;
-    use crate::scheduler::settings::Settings;
+    use crate::scheduler::settings::{BreakKindSettings, Settings};
     use crate::scheduler::timers::BreakTimers;
     use crate::scheduler::types::BreakEvent as InternalBreakEvent;
     use crate::scheduler::types::BreakKind;
@@ -343,13 +343,13 @@ mod tests {
     #[tokio::test]
     async fn tray_countdown_snapshot_running_when_idle_and_text_enabled() {
         // Fresh scheduler with the default interval settings → both timers
-        // anchored at construction → countdown is ~micro_interval_secs.
+        // anchored at construction → countdown is ~micro.interval_secs.
         let s = Settings {
             tray_countdown_enabled: true,
             tray_countdown_target: "short".to_string(),
             ..Settings::default()
         };
-        let micro = s.micro_interval_secs;
+        let micro = s.micro.interval_secs;
         let (_dir, sched) = build_test_scheduler(s);
         let (snap, text_on) = sched.tray_countdown_snapshot().await;
         assert!(text_on);
@@ -431,8 +431,14 @@ mod tests {
         // Both kinds disabled → no interval-driven countdown → Idle.
         let s = Settings {
             tray_countdown_enabled: true,
-            micro_enabled: false,
-            long_enabled: false,
+            micro: BreakKindSettings {
+                enabled: false,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                enabled: false,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         let (_dir, sched) = build_test_scheduler(s);

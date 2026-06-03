@@ -46,12 +46,14 @@ impl DerivedCaches {
     fn rebuild(s: &Settings) -> Self {
         Self {
             micro_fixed_minutes: s
-                .micro_fixed_times
+                .micro
+                .fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
                 .collect(),
             long_fixed_minutes: s
-                .long_fixed_times
+                .long
+                .fixed_times
                 .iter()
                 .filter_map(|t| parse_hhmm(t))
                 .collect(),
@@ -421,6 +423,296 @@ fn default_sleep_hints() -> Vec<String> {
     .collect()
 }
 
+/// The settings that vary per break kind (micro vs long).
+///
+/// One of these lives in `Settings::micro` and `Settings::long`. In
+/// memory the fields carry neutral names (`interval_secs`, not
+/// `micro_interval_secs`); on disk and over IPC they project back onto
+/// the historical flat `micro_*` / `long_*` keys via the
+/// [`prefix_micro`] / [`prefix_long`] serde adapters, so the wire format
+/// is byte-identical to the pre-split flat `Settings`.
+///
+/// The two hint pools are deliberately neutral: micro stores its
+/// `physical` / `psychological` pools in `hints_primary` /
+/// `hints_secondary`, long stores `solo` / `social` in the same two
+/// fields. The adapters map them to the asymmetric legacy keys
+/// (`micro_physical_hints` / `micro_psychological_hints` vs `long_hints`
+/// / `long_social_hints`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BreakKindSettings {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub duration_secs: u64,
+    pub idle_reset_secs: u64,
+    pub enforceable: bool,
+    pub manual_finish: bool,
+    pub sound: BreakSound,
+    /// First hint pool: micro = physical, long = solo.
+    pub hints_primary: Vec<String>,
+    /// Second hint pool: micro = psychological, long = social.
+    pub hints_secondary: Vec<String>,
+    pub hint_mix: HintMix,
+    pub fixed_times: Vec<String>,
+    pub schedule_mode: ScheduleMode,
+    pub break_mode: BreakMode,
+}
+
+impl BreakKindSettings {
+    /// Default micro-break block (20-min interval, 20-s breaks, the
+    /// built-in physical/psychological hint pools). Mirrors the historical
+    /// `micro_*` defaults from the flat `Settings`.
+    fn micro_default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 20 * 60,
+            duration_secs: 20,
+            idle_reset_secs: 5 * 60,
+            enforceable: false,
+            manual_finish: false,
+            sound: BreakSound::end_chime("337048"),
+            hints_primary: default_micro_physical_hints(),
+            hints_secondary: default_micro_psychological_hints(),
+            hint_mix: HintMix::default(),
+            fixed_times: Vec::new(),
+            schedule_mode: ScheduleMode::default(),
+            break_mode: BreakMode::default(),
+        }
+    }
+
+    /// Default long-break block (50-min interval, 10-min breaks, the
+    /// built-in solo/social hint pools, enforceable). Mirrors the
+    /// historical `long_*` defaults from the flat `Settings`.
+    fn long_default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 50 * 60,
+            duration_secs: 10 * 60,
+            idle_reset_secs: 5 * 60,
+            enforceable: true,
+            manual_finish: false,
+            sound: BreakSound::end_chime("337048"),
+            hints_primary: default_long_hints(),
+            hints_secondary: default_long_social_hints(),
+            hint_mix: HintMix::default(),
+            fixed_times: Vec::new(),
+            schedule_mode: ScheduleMode::default(),
+            break_mode: BreakMode::default(),
+        }
+    }
+}
+
+impl Default for BreakKindSettings {
+    /// A neutral default used by raw struct-update literals
+    /// (`BreakKindSettings { interval_secs: …, ..Default::default() }`)
+    /// in tests. Equal to [`BreakKindSettings::micro_default`]; the real
+    /// per-kind defaults come from `micro_default` / `long_default` via
+    /// `Settings::default`.
+    fn default() -> Self {
+        Self::micro_default()
+    }
+}
+
+/// Serde adapter that flattens a [`BreakKindSettings`] onto the legacy
+/// `micro_*` flat keys (and reads them back), preserving the pre-split
+/// on-disk / IPC shape. Used via `#[serde(flatten, with = "prefix_micro")]`.
+///
+/// Hand-rolled rather than `serde_with::with_prefix!` because the two hint
+/// pools use *asymmetric* legacy keys per kind (`micro_physical_hints` /
+/// `micro_psychological_hints` here vs `long_hints` / `long_social_hints`
+/// in [`prefix_long`]); a plain prefix can't express that. The wire struct
+/// also carries the historical `#[serde(alias = …)]` migrations
+/// (`idle_reset_secs`, `micro_hints`).
+pub mod prefix_micro {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    // Struct-level `#[serde(default)]` so an older `settings.json` missing
+    // any individual `micro_*` key still loads — each absent field falls
+    // back to the micro default, matching the pre-split struct-level
+    // `#[serde(default)]` behaviour.
+    #[derive(Serialize, Deserialize)]
+    #[serde(default)]
+    struct Wire {
+        micro_enabled: bool,
+        micro_interval_secs: u64,
+        micro_duration_secs: u64,
+        // alias keeps pre-split settings.json (single `idle_reset_secs`)
+        // loading cleanly into the micro field.
+        #[serde(alias = "idle_reset_secs")]
+        micro_idle_reset_secs: u64,
+        micro_enforceable: bool,
+        micro_manual_finish: bool,
+        micro_sound: BreakSound,
+        // alias keeps pre-split settings.json (single `micro_hints`)
+        // loading cleanly into the physical pool.
+        #[serde(alias = "micro_hints")]
+        micro_physical_hints: Vec<String>,
+        micro_psychological_hints: Vec<String>,
+        micro_hint_mix: HintMix,
+        micro_fixed_times: Vec<String>,
+        micro_schedule_mode: ScheduleMode,
+        micro_break_mode: BreakMode,
+    }
+
+    impl Default for Wire {
+        fn default() -> Self {
+            let k = BreakKindSettings::micro_default();
+            Self {
+                micro_enabled: k.enabled,
+                micro_interval_secs: k.interval_secs,
+                micro_duration_secs: k.duration_secs,
+                micro_idle_reset_secs: k.idle_reset_secs,
+                micro_enforceable: k.enforceable,
+                micro_manual_finish: k.manual_finish,
+                micro_sound: k.sound,
+                micro_physical_hints: k.hints_primary,
+                micro_psychological_hints: k.hints_secondary,
+                micro_hint_mix: k.hint_mix,
+                micro_fixed_times: k.fixed_times,
+                micro_schedule_mode: k.schedule_mode,
+                micro_break_mode: k.break_mode,
+            }
+        }
+    }
+
+    pub fn serialize<S>(k: &BreakKindSettings, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Wire {
+            micro_enabled: k.enabled,
+            micro_interval_secs: k.interval_secs,
+            micro_duration_secs: k.duration_secs,
+            micro_idle_reset_secs: k.idle_reset_secs,
+            micro_enforceable: k.enforceable,
+            micro_manual_finish: k.manual_finish,
+            micro_sound: k.sound.clone(),
+            micro_physical_hints: k.hints_primary.clone(),
+            micro_psychological_hints: k.hints_secondary.clone(),
+            micro_hint_mix: k.hint_mix,
+            micro_fixed_times: k.fixed_times.clone(),
+            micro_schedule_mode: k.schedule_mode,
+            micro_break_mode: k.break_mode,
+        }
+        .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BreakKindSettings, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let w = Wire::deserialize(deserializer)?;
+        Ok(BreakKindSettings {
+            enabled: w.micro_enabled,
+            interval_secs: w.micro_interval_secs,
+            duration_secs: w.micro_duration_secs,
+            idle_reset_secs: w.micro_idle_reset_secs,
+            enforceable: w.micro_enforceable,
+            manual_finish: w.micro_manual_finish,
+            sound: w.micro_sound,
+            hints_primary: w.micro_physical_hints,
+            hints_secondary: w.micro_psychological_hints,
+            hint_mix: w.micro_hint_mix,
+            fixed_times: w.micro_fixed_times,
+            schedule_mode: w.micro_schedule_mode,
+            break_mode: w.micro_break_mode,
+        })
+    }
+}
+
+/// Serde adapter that flattens a [`BreakKindSettings`] onto the legacy
+/// `long_*` flat keys. See [`prefix_micro`] for the rationale; this one
+/// maps the solo/social pools to `long_hints` / `long_social_hints`.
+pub mod prefix_long {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    // Struct-level `#[serde(default)]` so an older `settings.json` missing
+    // any individual `long_*` key still loads (see [`prefix_micro`]).
+    #[derive(Serialize, Deserialize)]
+    #[serde(default)]
+    struct Wire {
+        long_enabled: bool,
+        long_interval_secs: u64,
+        long_duration_secs: u64,
+        long_idle_reset_secs: u64,
+        long_enforceable: bool,
+        long_manual_finish: bool,
+        long_sound: BreakSound,
+        long_hints: Vec<String>,
+        long_social_hints: Vec<String>,
+        long_hint_mix: HintMix,
+        long_fixed_times: Vec<String>,
+        long_schedule_mode: ScheduleMode,
+        long_break_mode: BreakMode,
+    }
+
+    impl Default for Wire {
+        fn default() -> Self {
+            let k = BreakKindSettings::long_default();
+            Self {
+                long_enabled: k.enabled,
+                long_interval_secs: k.interval_secs,
+                long_duration_secs: k.duration_secs,
+                long_idle_reset_secs: k.idle_reset_secs,
+                long_enforceable: k.enforceable,
+                long_manual_finish: k.manual_finish,
+                long_sound: k.sound,
+                long_hints: k.hints_primary,
+                long_social_hints: k.hints_secondary,
+                long_hint_mix: k.hint_mix,
+                long_fixed_times: k.fixed_times,
+                long_schedule_mode: k.schedule_mode,
+                long_break_mode: k.break_mode,
+            }
+        }
+    }
+
+    pub fn serialize<S>(k: &BreakKindSettings, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Wire {
+            long_enabled: k.enabled,
+            long_interval_secs: k.interval_secs,
+            long_duration_secs: k.duration_secs,
+            long_idle_reset_secs: k.idle_reset_secs,
+            long_enforceable: k.enforceable,
+            long_manual_finish: k.manual_finish,
+            long_sound: k.sound.clone(),
+            long_hints: k.hints_primary.clone(),
+            long_social_hints: k.hints_secondary.clone(),
+            long_hint_mix: k.hint_mix,
+            long_fixed_times: k.fixed_times.clone(),
+            long_schedule_mode: k.schedule_mode,
+            long_break_mode: k.break_mode,
+        }
+        .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BreakKindSettings, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let w = Wire::deserialize(deserializer)?;
+        Ok(BreakKindSettings {
+            enabled: w.long_enabled,
+            interval_secs: w.long_interval_secs,
+            duration_secs: w.long_duration_secs,
+            idle_reset_secs: w.long_idle_reset_secs,
+            enforceable: w.long_enforceable,
+            manual_finish: w.long_manual_finish,
+            sound: w.long_sound,
+            hints_primary: w.long_hints,
+            hints_secondary: w.long_social_hints,
+            hint_mix: w.long_hint_mix,
+            fixed_times: w.long_fixed_times,
+            schedule_mode: w.long_schedule_mode,
+            break_mode: w.long_break_mode,
+        })
+    }
+}
+
 /// Single source of truth for one profile's behaviour.
 ///
 /// Deserialised from `settings.json` (one of these per profile in the
@@ -433,21 +725,29 @@ fn default_sleep_hints() -> Vec<String> {
 /// `Default::default()` if missing — older `settings.json` files keep
 /// loading as new fields are added. Pre-split fields keep their old
 /// JSON keys via `#[serde(alias = "...")]`.
+///
+/// ## Wire shape vs. in-memory shape
+///
+/// The per-break-kind fields live in [`BreakKindSettings`] sub-structs
+/// (`micro` / `long`) in memory, but the on-disk JSON and the
+/// `get_settings`/`update_settings` IPC payloads stay **flat** — every
+/// inner field keeps its historical `micro_*` / `long_*` key. The
+/// [`prefix_micro`] / [`prefix_long`] serde adapters do the flattening:
+/// `#[serde(flatten, with = "…")]` projects each sub-struct onto the
+/// legacy keys on the way out and reconstructs it on the way in. Existing
+/// `settings.json` files load unchanged and the TypeScript `types.ts`
+/// mirror needs no edits — the parity test compares the *flat* key sets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub micro_interval_secs: u64,
-    pub micro_duration_secs: u64,
-    pub long_interval_secs: u64,
-    pub long_duration_secs: u64,
-    // alias keeps pre-split settings.json (single `idle_reset_secs`) loading cleanly into the micro field.
-    #[serde(alias = "idle_reset_secs")]
-    pub micro_idle_reset_secs: u64,
-    pub long_idle_reset_secs: u64,
-    pub micro_enabled: bool,
-    pub long_enabled: bool,
-    pub micro_enforceable: bool,
-    pub long_enforceable: bool,
+    /// Per-kind settings for micro breaks, flattened to the legacy
+    /// `micro_*` keys on disk (see [`prefix_micro`]).
+    #[serde(flatten, with = "prefix_micro")]
+    pub micro: BreakKindSettings,
+    /// Per-kind settings for long breaks, flattened to the legacy
+    /// `long_*` keys on disk (see [`prefix_long`]).
+    #[serde(flatten, with = "prefix_long")]
+    pub long: BreakKindSettings,
     pub pause_during_dnd: bool,
     pub pause_during_camera: bool,
     #[serde(default)]
@@ -480,25 +780,11 @@ pub struct Settings {
     pub show_current_time: bool,
     #[serde(default = "default_clock_format")]
     pub clock_format: String,
-    pub micro_manual_finish: bool,
-    pub long_manual_finish: bool,
     pub autostart_enabled: bool,
-    #[serde(default)]
-    pub micro_sound: BreakSound,
-    #[serde(default)]
-    pub long_sound: BreakSound,
     pub sound_volume: f32,
     pub app_pause_enabled: bool,
     pub app_pause_list: Vec<String>,
     pub break_health_enabled: bool,
-    // alias keeps pre-split settings.json (single `micro_hints`) loading cleanly into the physical pool.
-    #[serde(alias = "micro_hints")]
-    pub micro_physical_hints: Vec<String>,
-    pub micro_psychological_hints: Vec<String>,
-    pub micro_hint_mix: HintMix,
-    pub long_hints: Vec<String>,
-    pub long_social_hints: Vec<String>,
-    pub long_hint_mix: HintMix,
     pub sleep_hints: Vec<String>,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
@@ -509,10 +795,6 @@ pub struct Settings {
     pub postpone_escalation_step_secs: u64,
     pub postpone_max_count: u32,
     pub overlay_font_scale: f32,
-    pub micro_fixed_times: Vec<String>,
-    pub long_fixed_times: Vec<String>,
-    pub micro_schedule_mode: ScheduleMode,
-    pub long_schedule_mode: ScheduleMode,
     pub hooks_enabled: bool,
     pub hooks: Vec<Hook>,
     pub daily_screen_time_enabled: bool,
@@ -520,8 +802,6 @@ pub struct Settings {
     pub daily_screen_time_remind_again_minutes: u64,
     pub tray_countdown_enabled: bool,
     pub tray_countdown_target: String,
-    pub micro_break_mode: BreakMode,
-    pub long_break_mode: BreakMode,
     /// Supporter-only freeform stylesheet, applied to both the settings
     /// window and the break overlay via the renderer's
     /// `useCustomStylesheet` hook (which uses `adoptedStyleSheets` so we
@@ -545,16 +825,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            micro_interval_secs: 20 * 60,
-            micro_duration_secs: 20,
-            long_interval_secs: 50 * 60,
-            long_duration_secs: 10 * 60,
-            micro_idle_reset_secs: 5 * 60,
-            long_idle_reset_secs: 5 * 60,
-            micro_enabled: true,
-            long_enabled: true,
-            micro_enforceable: false,
-            long_enforceable: true,
+            micro: BreakKindSettings::micro_default(),
+            long: BreakKindSettings::long_default(),
             pause_during_dnd: true,
             pause_during_camera: true,
             pause_during_video: false,
@@ -580,21 +852,11 @@ impl Default for Settings {
             postpone_minutes: 5,
             show_current_time: true,
             clock_format: default_clock_format(),
-            micro_manual_finish: false,
-            long_manual_finish: false,
             autostart_enabled: false,
-            micro_sound: BreakSound::end_chime("337048"),
-            long_sound: BreakSound::end_chime("337048"),
             sound_volume: 0.5,
             app_pause_enabled: false,
             app_pause_list: Vec::new(),
             break_health_enabled: true,
-            micro_physical_hints: default_micro_physical_hints(),
-            micro_psychological_hints: default_micro_psychological_hints(),
-            micro_hint_mix: HintMix::default(),
-            long_hints: default_long_hints(),
-            long_social_hints: default_long_social_hints(),
-            long_hint_mix: HintMix::default(),
             sleep_hints: default_sleep_hints(),
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
@@ -605,10 +867,6 @@ impl Default for Settings {
             postpone_escalation_step_secs: 120,
             postpone_max_count: 3,
             overlay_font_scale: 1.0,
-            micro_fixed_times: Vec::new(),
-            long_fixed_times: Vec::new(),
-            micro_schedule_mode: ScheduleMode::default(),
-            long_schedule_mode: ScheduleMode::default(),
             hooks_enabled: false,
             hooks: Vec::new(),
             daily_screen_time_enabled: false,
@@ -616,8 +874,6 @@ impl Default for Settings {
             daily_screen_time_remind_again_minutes: 60,
             tray_countdown_enabled: true,
             tray_countdown_target: default_tray_countdown_target(),
-            micro_break_mode: BreakMode::default(),
-            long_break_mode: BreakMode::default(),
             custom_css: String::new(),
             derived: DerivedCaches::default(),
         }
@@ -630,9 +886,19 @@ impl Settings {
     /// active-check — both report false (see `interval_active` /
     /// `fixed_active`).
     fn schedule_mode_for(&self, kind: BreakKind) -> Option<ScheduleMode> {
+        self.for_kind(kind).map(|k| k.schedule_mode)
+    }
+
+    /// Borrow the [`BreakKindSettings`] for `kind`, or `None` for
+    /// `Sleep` (bedtime reminders have no per-kind settings block — they
+    /// read the global `bedtime_*` fields instead). This is the single
+    /// dispatch the `scheduler/` modules route their per-kind reads
+    /// through, replacing the repeated `match kind { Micro => …micro_x,
+    /// Long => …long_x, Sleep => … }` ladders.
+    pub fn for_kind(&self, kind: BreakKind) -> Option<&BreakKindSettings> {
         match kind {
-            BreakKind::Micro => Some(self.micro_schedule_mode),
-            BreakKind::Long => Some(self.long_schedule_mode),
+            BreakKind::Micro => Some(&self.micro),
+            BreakKind::Long => Some(&self.long),
             BreakKind::Sleep => None,
         }
     }
@@ -678,16 +944,16 @@ impl Settings {
         // 1Hz tick from re-firing instantly, top-stop at 24h (intervals)
         // or 1h (durations) to keep `Duration::from_secs` arithmetic
         // well away from u64::MAX.
-        self.micro_interval_secs = self.micro_interval_secs.clamp(30, 86_400);
-        self.long_interval_secs = self.long_interval_secs.clamp(30, 86_400);
-        self.micro_duration_secs = self.micro_duration_secs.clamp(1, 3_600);
-        self.long_duration_secs = self.long_duration_secs.clamp(1, 3_600);
+        self.micro.interval_secs = self.micro.interval_secs.clamp(30, 86_400);
+        self.long.interval_secs = self.long.interval_secs.clamp(30, 86_400);
+        self.micro.duration_secs = self.micro.duration_secs.clamp(1, 3_600);
+        self.long.duration_secs = self.long.duration_secs.clamp(1, 3_600);
         self.bedtime_interval_secs = self.bedtime_interval_secs.clamp(60, 3_600);
         self.bedtime_duration_secs = self.bedtime_duration_secs.clamp(1, 3_600);
         // Idle-reset thresholds: at least 5s (anything less re-fires
         // on micro keyboard pauses), at most 1h.
-        self.micro_idle_reset_secs = self.micro_idle_reset_secs.clamp(5, 3_600);
-        self.long_idle_reset_secs = self.long_idle_reset_secs.clamp(5, 3_600);
+        self.micro.idle_reset_secs = self.micro.idle_reset_secs.clamp(5, 3_600);
+        self.long.idle_reset_secs = self.long.idle_reset_secs.clamp(5, 3_600);
         // Pre-break warn: 0 means "disabled", so the floor is 0 but we
         // cap at 5min (any longer makes the warning useless).
         self.prebreak_notification_seconds = self.prebreak_notification_seconds.min(300);
@@ -789,15 +1055,14 @@ fn strip_css_comments(css: &str) -> String {
 /// concatenating work; [`DerivedCaches`] caches its result so the fire
 /// path doesn't repeat it.
 fn resolve_micro_hints(s: &Settings) -> Vec<String> {
-    match s.micro_hint_mix {
-        HintMix::Physical => s.micro_physical_hints.clone(),
-        HintMix::Psychological => s.micro_psychological_hints.clone(),
+    match s.micro.hint_mix {
+        HintMix::Physical => s.micro.hints_primary.clone(),
+        HintMix::Psychological => s.micro.hints_secondary.clone(),
         _ => {
-            let mut combined = Vec::with_capacity(
-                s.micro_physical_hints.len() + s.micro_psychological_hints.len(),
-            );
-            combined.extend(s.micro_physical_hints.iter().cloned());
-            combined.extend(s.micro_psychological_hints.iter().cloned());
+            let mut combined =
+                Vec::with_capacity(s.micro.hints_primary.len() + s.micro.hints_secondary.len());
+            combined.extend(s.micro.hints_primary.iter().cloned());
+            combined.extend(s.micro.hints_secondary.iter().cloned());
             combined
         }
     }
@@ -808,13 +1073,14 @@ fn resolve_micro_hints(s: &Settings) -> Vec<String> {
 /// `Both`) concatenates them in solo-then-social order. Cached by
 /// [`DerivedCaches`].
 fn resolve_long_hints(s: &Settings) -> Vec<String> {
-    match s.long_hint_mix {
-        HintMix::Solo => s.long_hints.clone(),
-        HintMix::Social => s.long_social_hints.clone(),
+    match s.long.hint_mix {
+        HintMix::Solo => s.long.hints_primary.clone(),
+        HintMix::Social => s.long.hints_secondary.clone(),
         _ => {
-            let mut combined = Vec::with_capacity(s.long_hints.len() + s.long_social_hints.len());
-            combined.extend(s.long_hints.iter().cloned());
-            combined.extend(s.long_social_hints.iter().cloned());
+            let mut combined =
+                Vec::with_capacity(s.long.hints_primary.len() + s.long.hints_secondary.len());
+            combined.extend(s.long.hints_primary.iter().cloned());
+            combined.extend(s.long.hints_secondary.iter().cloned());
             combined
         }
     }
@@ -840,11 +1106,8 @@ pub fn effective_long_hints(s: &Settings) -> Vec<String> {
 /// Sleep breaks always use `Overlay` (bedtime reminders ignore the
 /// per-kind mode); micro/long dispatch straight off their `BreakMode`.
 pub fn delivery_for(kind: BreakKind, s: &Settings) -> BreakDelivery {
-    match kind {
-        BreakKind::Micro => s.micro_break_mode.delivery(),
-        BreakKind::Long => s.long_break_mode.delivery(),
-        BreakKind::Sleep => BreakDelivery::Overlay,
-    }
+    s.for_kind(kind)
+        .map_or(BreakDelivery::Overlay, |k| k.break_mode.delivery())
 }
 
 /// True iff the given break kind is currently configured for the
@@ -940,21 +1203,21 @@ mod tests {
     #[test]
     fn settings_default_sensible() {
         let s = Settings::default();
-        assert!(s.micro_interval_secs > 0);
-        assert!(s.long_interval_secs > s.micro_interval_secs);
-        assert!(s.long_enforceable);
-        assert!(!s.micro_enforceable);
+        assert!(s.micro.interval_secs > 0);
+        assert!(s.long.interval_secs > s.micro.interval_secs);
+        assert!(s.long.enforceable);
+        assert!(!s.micro.enforceable);
         assert!(s.work_end_minutes > s.work_start_minutes);
         assert!(s.overlay_opacity > 0.0 && s.overlay_opacity <= 1.0);
         assert!(s.postpone_minutes > 0);
         assert!(s.sound_volume >= 0.0 && s.sound_volume <= 1.0);
-        assert!(!s.micro_physical_hints.is_empty());
-        assert!(!s.micro_psychological_hints.is_empty());
-        assert_eq!(s.micro_hint_mix, HintMix::Both);
-        assert!(!s.long_hints.is_empty());
+        assert!(!s.micro.hints_primary.is_empty());
+        assert!(!s.micro.hints_secondary.is_empty());
+        assert_eq!(s.micro.hint_mix, HintMix::Both);
+        assert!(!s.long.hints_primary.is_empty());
         assert!(!s.sleep_hints.is_empty());
-        assert_eq!(s.micro_idle_reset_secs, 300);
-        assert_eq!(s.long_idle_reset_secs, 300);
+        assert_eq!(s.micro.idle_reset_secs, 300);
+        assert_eq!(s.long.idle_reset_secs, 300);
         assert!((s.overlay_font_scale - 1.0).abs() < f32::EPSILON);
     }
 
@@ -968,38 +1231,50 @@ mod tests {
         // Pre-fix: `Duration::from_secs(0)` + `elapsed >= 0` is always
         // true, so the scheduler fires a break every tick.
         let mut s = Settings {
-            micro_interval_secs: 0,
-            long_interval_secs: 0,
+            micro: BreakKindSettings {
+                interval_secs: 0,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                interval_secs: 0,
+                ..Settings::default().long
+            },
             bedtime_interval_secs: 0,
             ..Settings::default()
         };
         s.clamp();
-        assert!(s.micro_interval_secs >= 30);
-        assert!(s.long_interval_secs >= 30);
+        assert!(s.micro.interval_secs >= 30);
+        assert!(s.long.interval_secs >= 30);
         assert!(s.bedtime_interval_secs >= 60);
     }
 
     #[test]
     fn clamp_caps_max_intervals_below_u64_overflow_danger() {
         let mut s = Settings {
-            micro_interval_secs: u64::MAX,
-            long_interval_secs: u64::MAX,
+            micro: BreakKindSettings {
+                interval_secs: u64::MAX,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                interval_secs: u64::MAX,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         s.clamp();
-        assert!(s.micro_interval_secs <= 86_400);
-        assert!(s.long_interval_secs <= 86_400);
+        assert!(s.micro.interval_secs <= 86_400);
+        assert!(s.long.interval_secs <= 86_400);
     }
 
     #[test]
     fn clamp_leaves_in_range_values_alone() {
         let mut s = Settings::default();
-        let micro = s.micro_interval_secs;
-        let long = s.long_interval_secs;
+        let micro = s.micro.interval_secs;
+        let long = s.long.interval_secs;
         let bedtime = s.bedtime_interval_secs;
         s.clamp();
-        assert_eq!(s.micro_interval_secs, micro);
-        assert_eq!(s.long_interval_secs, long);
+        assert_eq!(s.micro.interval_secs, micro);
+        assert_eq!(s.long.interval_secs, long);
         assert_eq!(s.bedtime_interval_secs, bedtime);
     }
 
@@ -1121,14 +1396,17 @@ mod tests {
         // Clamping twice produces the same result as clamping once —
         // important because we clamp on both load and write paths.
         let mut a = Settings {
-            micro_interval_secs: 0,
+            micro: BreakKindSettings {
+                interval_secs: 0,
+                ..Settings::default().micro
+            },
             overlay_opacity: 5.0,
             ..Settings::default()
         };
         a.clamp();
         let snapshot = a.clone();
         a.clamp();
-        assert_eq!(snapshot.micro_interval_secs, a.micro_interval_secs);
+        assert_eq!(snapshot.micro.interval_secs, a.micro.interval_secs);
         assert!(
             (snapshot.overlay_opacity - a.overlay_opacity).abs() < f32::EPSILON,
             "clamp idempotent on overlay_opacity"
@@ -1139,10 +1417,10 @@ mod tests {
     fn legacy_idle_reset_secs_aliases_into_micro() {
         let json = r#"{"idle_reset_secs": 123}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_idle_reset_secs, 123);
+        assert_eq!(s.micro.idle_reset_secs, 123);
         assert_eq!(
-            s.long_idle_reset_secs,
-            Settings::default().long_idle_reset_secs
+            s.long.idle_reset_secs,
+            Settings::default().long.idle_reset_secs
         );
     }
 
@@ -1150,12 +1428,12 @@ mod tests {
     fn legacy_micro_hints_aliases_into_physical() {
         let json = r#"{"micro_hints": ["Stretch", "Blink"]}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_physical_hints, vec!["Stretch", "Blink"]);
+        assert_eq!(s.micro.hints_primary, vec!["Stretch", "Blink"]);
         assert_eq!(
-            s.micro_psychological_hints,
-            Settings::default().micro_psychological_hints
+            s.micro.hints_secondary,
+            Settings::default().micro.hints_secondary
         );
-        assert_eq!(s.micro_hint_mix, HintMix::Both);
+        assert_eq!(s.micro.hint_mix, HintMix::Both);
     }
 
     #[test]
@@ -1165,24 +1443,24 @@ mod tests {
         // to be followed by `rebuild_derived` — exercising both the pure
         // resolver and the cache plumbing.
         let mut s = Settings::default();
-        s.micro_physical_hints = vec!["a".into(), "b".into()];
-        s.micro_psychological_hints = vec!["c".into()];
+        s.micro.hints_primary = vec!["a".into(), "b".into()];
+        s.micro.hints_secondary = vec!["c".into()];
 
-        s.micro_hint_mix = HintMix::Physical;
+        s.micro.hint_mix = HintMix::Physical;
         s.rebuild_derived();
         assert_eq!(effective_micro_hints(&s), ["a", "b"]);
 
-        s.micro_hint_mix = HintMix::Psychological;
+        s.micro.hint_mix = HintMix::Psychological;
         s.rebuild_derived();
         assert_eq!(effective_micro_hints(&s), ["c"]);
 
-        s.micro_hint_mix = HintMix::Both;
+        s.micro.hint_mix = HintMix::Both;
         s.rebuild_derived();
         assert_eq!(effective_micro_hints(&s), ["a", "b", "c"]);
 
         // A long-only variant on a micro field falls through to the
         // concatenated pool, matching the pre-enum "anything else" arm.
-        s.micro_hint_mix = HintMix::Social;
+        s.micro.hint_mix = HintMix::Social;
         s.rebuild_derived();
         assert_eq!(effective_micro_hints(&s), ["a", "b", "c"]);
     }
@@ -1191,24 +1469,24 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn effective_long_hints_modes() {
         let mut s = Settings::default();
-        s.long_hints = vec!["solo1".into(), "solo2".into()];
-        s.long_social_hints = vec!["soc1".into()];
+        s.long.hints_primary = vec!["solo1".into(), "solo2".into()];
+        s.long.hints_secondary = vec!["soc1".into()];
 
-        s.long_hint_mix = HintMix::Solo;
+        s.long.hint_mix = HintMix::Solo;
         s.rebuild_derived();
         assert_eq!(effective_long_hints(&s), ["solo1", "solo2"]);
 
-        s.long_hint_mix = HintMix::Social;
+        s.long.hint_mix = HintMix::Social;
         s.rebuild_derived();
         assert_eq!(effective_long_hints(&s), ["soc1"]);
 
-        s.long_hint_mix = HintMix::Both;
+        s.long.hint_mix = HintMix::Both;
         s.rebuild_derived();
         assert_eq!(effective_long_hints(&s), ["solo1", "solo2", "soc1"]);
 
         // A micro-only variant on a long field falls through to the
         // concatenated pool, matching the pre-enum "anything else" arm.
-        s.long_hint_mix = HintMix::Physical;
+        s.long.hint_mix = HintMix::Physical;
         s.rebuild_derived();
         assert_eq!(effective_long_hints(&s), ["solo1", "solo2", "soc1"]);
     }
@@ -1226,17 +1504,17 @@ mod tests {
     #[test]
     fn default_long_social_hints_are_populated() {
         let s = Settings::default();
-        assert!(!s.long_social_hints.is_empty());
-        assert_eq!(s.long_hint_mix, HintMix::Both);
+        assert!(!s.long.hints_secondary.is_empty());
+        assert_eq!(s.long.hint_mix, HintMix::Both);
     }
 
     #[test]
     fn settings_default_fixed_times_empty_and_interval() {
         let s = Settings::default();
-        assert!(s.micro_fixed_times.is_empty());
-        assert!(s.long_fixed_times.is_empty());
-        assert_eq!(s.micro_schedule_mode, ScheduleMode::Interval);
-        assert_eq!(s.long_schedule_mode, ScheduleMode::Interval);
+        assert!(s.micro.fixed_times.is_empty());
+        assert!(s.long.fixed_times.is_empty());
+        assert_eq!(s.micro.schedule_mode, ScheduleMode::Interval);
+        assert_eq!(s.long.schedule_mode, ScheduleMode::Interval);
     }
 
     #[test]
@@ -1244,19 +1522,19 @@ mod tests {
     fn schedule_mode_helpers_match_interval_fixed_and_both() {
         let mut s = Settings::default();
 
-        s.micro_schedule_mode = ScheduleMode::Interval;
+        s.micro.schedule_mode = ScheduleMode::Interval;
         assert!(s.interval_active(BreakKind::Micro));
         assert!(!s.fixed_active(BreakKind::Micro));
 
-        s.micro_schedule_mode = ScheduleMode::Fixed;
+        s.micro.schedule_mode = ScheduleMode::Fixed;
         assert!(!s.interval_active(BreakKind::Micro));
         assert!(s.fixed_active(BreakKind::Micro));
 
-        s.micro_schedule_mode = ScheduleMode::Both;
+        s.micro.schedule_mode = ScheduleMode::Both;
         assert!(s.interval_active(BreakKind::Micro));
         assert!(s.fixed_active(BreakKind::Micro));
 
-        s.long_schedule_mode = ScheduleMode::Interval;
+        s.long.schedule_mode = ScheduleMode::Interval;
         assert!(s.interval_active(BreakKind::Long));
         assert!(!s.fixed_active(BreakKind::Long));
     }
@@ -1266,8 +1544,14 @@ mod tests {
         // Sleep has no interval/fixed split: both helpers report false
         // regardless of the micro/long modes.
         let s = Settings {
-            micro_schedule_mode: ScheduleMode::Both,
-            long_schedule_mode: ScheduleMode::Both,
+            micro: BreakKindSettings {
+                schedule_mode: ScheduleMode::Both,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                schedule_mode: ScheduleMode::Both,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         assert!(!s.interval_active(BreakKind::Sleep));
@@ -1297,8 +1581,8 @@ mod tests {
     #[test]
     fn break_mode_defaults_to_overlay() {
         let s = Settings::default();
-        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
-        assert_eq!(s.long_break_mode, BreakMode::Overlay);
+        assert_eq!(s.micro.break_mode, BreakMode::Overlay);
+        assert_eq!(s.long.break_mode, BreakMode::Overlay);
         assert_eq!(delivery_for(BreakKind::Micro, &s), BreakDelivery::Overlay);
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
         assert_eq!(delivery_for(BreakKind::Sleep, &s), BreakDelivery::Overlay);
@@ -1308,14 +1592,14 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn delivery_for_notification_per_kind() {
         let mut s = Settings::default();
-        s.micro_break_mode = BreakMode::Notification;
+        s.micro.break_mode = BreakMode::Notification;
         assert_eq!(
             delivery_for(BreakKind::Micro, &s),
             BreakDelivery::Notification
         );
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
 
-        s.long_break_mode = BreakMode::Notification;
+        s.long.break_mode = BreakMode::Notification;
         assert_eq!(
             delivery_for(BreakKind::Long, &s),
             BreakDelivery::Notification
@@ -1326,8 +1610,8 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn delivery_for_sleep_always_overlay() {
         let mut s = Settings::default();
-        s.micro_break_mode = BreakMode::Notification;
-        s.long_break_mode = BreakMode::Notification;
+        s.micro.break_mode = BreakMode::Notification;
+        s.long.break_mode = BreakMode::Notification;
         assert_eq!(delivery_for(BreakKind::Sleep, &s), BreakDelivery::Overlay);
     }
 
@@ -1335,11 +1619,11 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn delivery_for_windowed_per_kind() {
         let mut s = Settings::default();
-        s.micro_break_mode = BreakMode::Windowed;
+        s.micro.break_mode = BreakMode::Windowed;
         assert_eq!(delivery_for(BreakKind::Micro, &s), BreakDelivery::Windowed);
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Overlay);
 
-        s.long_break_mode = BreakMode::Windowed;
+        s.long.break_mode = BreakMode::Windowed;
         assert_eq!(delivery_for(BreakKind::Long, &s), BreakDelivery::Windowed);
     }
 
@@ -1351,14 +1635,14 @@ mod tests {
         assert!(!is_windowed_mode(BreakKind::Long, &s));
         assert!(!is_windowed_mode(BreakKind::Sleep, &s));
 
-        s.micro_break_mode = BreakMode::Windowed;
+        s.micro.break_mode = BreakMode::Windowed;
         assert!(is_windowed_mode(BreakKind::Micro, &s));
         assert!(!is_windowed_mode(BreakKind::Long, &s));
 
-        s.long_break_mode = BreakMode::Windowed;
+        s.long.break_mode = BreakMode::Windowed;
         assert!(is_windowed_mode(BreakKind::Long, &s));
 
-        s.micro_break_mode = BreakMode::Notification;
+        s.micro.break_mode = BreakMode::Notification;
         assert!(!is_windowed_mode(BreakKind::Micro, &s));
     }
 
@@ -1366,8 +1650,8 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn is_windowed_mode_for_sleep_is_always_false() {
         let mut s = Settings::default();
-        s.micro_break_mode = BreakMode::Windowed;
-        s.long_break_mode = BreakMode::Windowed;
+        s.micro.break_mode = BreakMode::Windowed;
+        s.long.break_mode = BreakMode::Windowed;
         assert!(!is_windowed_mode(BreakKind::Sleep, &s));
     }
 
@@ -1380,8 +1664,8 @@ mod tests {
     fn legacy_settings_json_defaults_break_mode_to_overlay() {
         let json = r#"{"micro_interval_secs": 600}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
-        assert_eq!(s.long_break_mode, BreakMode::Overlay);
+        assert_eq!(s.micro.break_mode, BreakMode::Overlay);
+        assert_eq!(s.long.break_mode, BreakMode::Overlay);
     }
 
     // -- Enum serde: on-disk strings stay lowercase so existing
@@ -1439,48 +1723,54 @@ mod tests {
     #[test]
     fn enum_fields_round_trip_through_settings_json() {
         let s = Settings {
-            micro_break_mode: BreakMode::Notification,
-            long_break_mode: BreakMode::Windowed,
-            micro_schedule_mode: ScheduleMode::Fixed,
-            long_schedule_mode: ScheduleMode::Both,
-            micro_hint_mix: HintMix::Physical,
-            long_hint_mix: HintMix::Social,
+            micro: BreakKindSettings {
+                break_mode: BreakMode::Notification,
+                schedule_mode: ScheduleMode::Fixed,
+                hint_mix: HintMix::Physical,
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                break_mode: BreakMode::Windowed,
+                schedule_mode: ScheduleMode::Both,
+                hint_mix: HintMix::Social,
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
 
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(back.micro_break_mode, BreakMode::Notification);
-        assert_eq!(back.long_break_mode, BreakMode::Windowed);
-        assert_eq!(back.micro_schedule_mode, ScheduleMode::Fixed);
-        assert_eq!(back.long_schedule_mode, ScheduleMode::Both);
-        assert_eq!(back.micro_hint_mix, HintMix::Physical);
-        assert_eq!(back.long_hint_mix, HintMix::Social);
+        assert_eq!(back.micro.break_mode, BreakMode::Notification);
+        assert_eq!(back.long.break_mode, BreakMode::Windowed);
+        assert_eq!(back.micro.schedule_mode, ScheduleMode::Fixed);
+        assert_eq!(back.long.schedule_mode, ScheduleMode::Both);
+        assert_eq!(back.micro.hint_mix, HintMix::Physical);
+        assert_eq!(back.long.hint_mix, HintMix::Social);
     }
 
     #[test]
     fn corrupt_break_mode_normalises_to_overlay_on_load() {
         let json = r#"{"micro_break_mode": "garbage", "long_break_mode": ""}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
-        assert_eq!(s.long_break_mode, BreakMode::Overlay);
+        assert_eq!(s.micro.break_mode, BreakMode::Overlay);
+        assert_eq!(s.long.break_mode, BreakMode::Overlay);
     }
 
     #[test]
     fn corrupt_schedule_mode_normalises_to_interval_on_load() {
         let json = r#"{"micro_schedule_mode": "garbage", "long_schedule_mode": 42}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_schedule_mode, ScheduleMode::Interval);
-        assert_eq!(s.long_schedule_mode, ScheduleMode::Interval);
+        assert_eq!(s.micro.schedule_mode, ScheduleMode::Interval);
+        assert_eq!(s.long.schedule_mode, ScheduleMode::Interval);
     }
 
     #[test]
     fn corrupt_hint_mix_normalises_to_both_on_load() {
         let json = r#"{"micro_hint_mix": "garbage", "long_hint_mix": null}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_hint_mix, HintMix::Both);
-        assert_eq!(s.long_hint_mix, HintMix::Both);
+        assert_eq!(s.micro.hint_mix, HintMix::Both);
+        assert_eq!(s.long.hint_mix, HintMix::Both);
     }
 
     #[test]
@@ -1491,16 +1781,22 @@ mod tests {
             "long_hint_mix": "social"
         }"#;
         let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.micro_break_mode, BreakMode::Windowed);
-        assert_eq!(s.micro_schedule_mode, ScheduleMode::Fixed);
-        assert_eq!(s.long_hint_mix, HintMix::Social);
+        assert_eq!(s.micro.break_mode, BreakMode::Windowed);
+        assert_eq!(s.micro.schedule_mode, ScheduleMode::Fixed);
+        assert_eq!(s.long.hint_mix, HintMix::Social);
     }
 
     #[test]
     fn rebuild_derived_parses_fixed_times_to_minutes_dropping_garbage() {
         let mut s = Settings {
-            micro_fixed_times: vec!["09:00".into(), "garbage".into(), "13:30".into()],
-            long_fixed_times: vec!["7:05".into(), "24:00".into()],
+            micro: BreakKindSettings {
+                fixed_times: vec!["09:00".into(), "garbage".into(), "13:30".into()],
+                ..Settings::default().micro
+            },
+            long: BreakKindSettings {
+                fixed_times: vec!["7:05".into(), "24:00".into()],
+                ..Settings::default().long
+            },
             ..Settings::default()
         };
         s.rebuild_derived();
@@ -1542,7 +1838,10 @@ mod tests {
         // The load + renderer-update paths run through `clamp`, which must
         // leave the derived cache populated without a separate call.
         let mut s = Settings {
-            micro_fixed_times: vec!["10:00".into()],
+            micro: BreakKindSettings {
+                fixed_times: vec!["10:00".into()],
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         s.clamp();
@@ -1554,13 +1853,16 @@ mod tests {
         // Correctness-critical: editing the fixed-time list and rebuilding
         // must replace the cache, not append or go stale.
         let mut s = Settings {
-            micro_fixed_times: vec!["08:00".into()],
+            micro: BreakKindSettings {
+                fixed_times: vec!["08:00".into()],
+                ..Settings::default().micro
+            },
             ..Settings::default()
         };
         s.rebuild_derived();
         assert_eq!(s.derived.micro_fixed_minutes, vec![480]);
 
-        s.micro_fixed_times = vec!["15:45".into()];
+        s.micro.fixed_times = vec!["15:45".into()];
         s.rebuild_derived();
         assert_eq!(s.derived.micro_fixed_minutes, vec![945]);
     }
