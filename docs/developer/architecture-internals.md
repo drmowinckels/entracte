@@ -233,6 +233,8 @@ Focus styling lives in [`src/views/settings/settings.css`](https://github.com/dr
 
 Strict mode swaps the dialog for an `aria-live="assertive"` `role="alert"` region instead — the user has opted into being interrupted.
 
+When a long break is enforceable it intentionally renders no Skip control. In that case (and only that case — not micro/sleep breaks, not when Skip or Postpone are available) the overlay surfaces a static `role="note"` line explaining why and where to change it. The decision is the pure [`shouldShowEnforceableHint`](https://github.com/drmowinckels/entracte/blob/main/src/views/break-overlay/skip-hint.ts) helper; the hint is informational, not interactive, and is part of the dialog's described content rather than a live region.
+
 ### Audit infrastructure
 
 `npm run audit:a11y` boots a Vite preview, drives Chromium with puppeteer, and runs axe-core against every tab × light/dark scheme. The same script also fails on any unexpected `console.error` in the renderer. Add new violations to the explicit allowlist only when you've ruled out a real bug — the default is to fix.

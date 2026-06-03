@@ -20,6 +20,10 @@ import { useFocusTrap } from "./break-overlay/hooks/use-focus-trap";
 import { useMilestoneAnnouncer } from "./break-overlay/hooks/use-milestone-announcer";
 import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
 import { derivePostpone } from "./break-overlay/postpone";
+import {
+  ENFORCEABLE_LONG_BREAK_HINT,
+  shouldShowEnforceableHint,
+} from "./break-overlay/skip-hint";
 import { breakSoundFor, labelFor } from "./break-overlay/types";
 import {
   RING_RADIUS,
@@ -110,6 +114,12 @@ export default function BreakOverlay() {
   const dismissable = !active.enforceable;
   const showPostpone = active.postpone_available && !finished;
   const showSkip = dismissable && !finished;
+  const showEnforceableHint = shouldShowEnforceableHint({
+    kind: active.kind,
+    enforceable: active.enforceable,
+    postpone_available: active.postpone_available,
+    finished,
+  });
   const showFinishButton = finished && active.manual_finish;
   const activeSoundCfg = breakSoundFor(active.kind, appearance);
   const creditSound =
@@ -264,6 +274,15 @@ export default function BreakOverlay() {
         {showPostpone && postpone.exhausted && (
           <p className="overlay-dismiss">
             Postpone exhausted — take this break
+          </p>
+        )}
+        {showEnforceableHint && (
+          <p
+            className="overlay-enforceable-hint"
+            role="note"
+            data-testid="overlay-enforceable-hint"
+          >
+            {ENFORCEABLE_LONG_BREAK_HINT}
           </p>
         )}
       </div>
