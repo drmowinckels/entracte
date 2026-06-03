@@ -84,12 +84,13 @@ Helper components in [src/views/settings/components/rows.tsx](../src/views/setti
 
 ## Per-OS detection
 
-| Feature | macOS                                                         | Windows                                                 | Linux                                                                                   |
-| ------- | ------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| DnD     | `~/Library/DoNotDisturb/DB/Assertions.json` poll              | WNF `NtQueryWnfStateData` (state `0xA3BC1875_A3BC0875`) | GNOME `gsettings … show-banners` (inverted), else KDE `Inhibited` DBus prop via `gdbus` |
-| Camera  | `log stream` event-driven                                     | `HKCU\…\ConsentStore\webcam` poll (2s)                  | walk `/proc/<pid>/fd/*` for `/dev/video*` (2s)                                          |
-| Idle    | `user-idle` crate (CGEventSourceSeconds…)                     | `user-idle` (GetLastInputInfo)                          | `user-idle` X11; Wayland is unreliable                                                  |
-| Video   | `pmset -g assertions` `PreventUserIdleDisplaySleep` poll (2s) | `powercfg /requests` DISPLAY section poll (2s)          | `systemd-inhibit --list` poll (2s), match WHAT == `idle`                                |
+| Feature                     | macOS                                                                                          | Windows                                                 | Linux                                                                                   |
+| --------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| DnD                         | `~/Library/DoNotDisturb/DB/Assertions.json` poll                                               | WNF `NtQueryWnfStateData` (state `0xA3BC1875_A3BC0875`) | GNOME `gsettings … show-banners` (inverted), else KDE `Inhibited` DBus prop via `gdbus` |
+| Camera                      | `log stream` event-driven                                                                      | `HKCU\…\ConsentStore\webcam` poll (2s)                  | walk `/proc/<pid>/fd/*` for `/dev/video*` (2s)                                          |
+| Idle                        | `user-idle` crate (CGEventSourceSeconds…)                                                      | `user-idle` (GetLastInputInfo)                          | `user-idle` X11; Wayland is unreliable                                                  |
+| Video                       | `pmset -g assertions` `PreventUserIdleDisplaySleep` poll (2s)                                  | `powercfg /requests` DISPLAY section poll (2s)          | `systemd-inhibit --list` poll (2s), match WHAT == `idle`                                |
+| Media pause (during breaks) | blind Play/Pause media key, gated on a display-wake assertion so it can't _start_ paused media | blind Play/Pause media key, same assertion gate         | MPRIS over `gdbus`: pause only players reporting `Playing`, resume exactly those        |
 
 The Windows WNF state name is the part most likely to need empirical verification — if Focus Assist toggling doesn't pause breaks on a Windows build, that constant is the first thing to check.
 
@@ -226,6 +227,7 @@ Configure these to enable signed/notarized builds. The workflow runs without the
 - **Auto-installing updater**: [updater.rs](../src-tauri/src/updater.rs) is a manual GitHub-releases version check, not the Tauri auto-updater plugin. Notarization (macOS) and signed-updater wiring is the remaining work.
 - **Linux DnD**: implemented for GNOME (`gsettings get org.gnome.desktop.notifications show-banners`, inverted) and KDE (the `Inhibited` DBus property on `org.freedesktop.Notifications`, read via `gdbus`). Other desktops fall through to "off" — no portable cross-DE DnD signal exists, so they fail safe. Both probes shell out and feed pure parsers (`parse_gnome_show_banners_dnd`, `parse_kde_inhibited`) that are unit-tested on every OS.
 - **Wayland idle detection**: known flaky; X11-only Linux support may be the practical limit short-term.
+- **Media pause on macOS/Windows** (`pause_media_during_breaks`): there is no portable way to enumerate players or read playback state, so the pause is a blind system Play/Pause media key. To avoid _starting_ media the user had paused (#104), it only fires when a display-wake assertion says something is likely playing (`media::media_key_pause_allowed`), and resume only reverses a toggle we ourselves sent (`media::media_key_resume_allowed`) — it never blindly hits the key on break end. It can still target the wrong player; the Settings row carries a warning InfoTip on these OSes. Linux (MPRIS) is precise and unaffected. The pause/resume path runs only from the overlay `fire_break`, never from the pre-break notification.
 
 ## Things that have bitten me
 

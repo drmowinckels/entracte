@@ -19,9 +19,14 @@
 //!   playing, so we don't accidentally *start* media that was paused; the
 //!   matching resume sends the same key again.
 //!
-//! The testable core (the gdbus output parsers and the "which players are
-//! Playing" decision) is pure and lives at module scope so it compiles
-//! and is unit-tested on every OS, mirroring [`crate::video`].
+//! The testable core is pure and lives at module scope so it compiles and
+//! is unit-tested on every OS, mirroring [`crate::video`]: the gdbus output
+//! parsers and the "which players are Playing" decision (Linux), and the
+//! "may the blind toggle fire?" guards ([`media_key_pause_allowed`] /
+//! [`media_key_resume_allowed`], macOS/Windows). The guards keep the toggle
+//! from ever *starting* media the user had paused (#104): pause only when a
+//! display-wake assertion says something is playing, and resume only a
+//! toggle we ourselves sent.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -231,11 +236,28 @@ fn platform_resume(token: &ResumeToken) {
     }
 }
 
+/// Decide whether the macOS/Windows blind Play/Pause toggle may fire on
+/// break start. The toggle has no separate "pause" key, so sending it when
+/// nothing is playing would *start* media the user had paused (issue #104).
+/// We therefore only allow it when a display-wake assertion says something
+/// is likely playing. Pure so it's unit-tested without FFI on every OS.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+fn media_key_pause_allowed(assertion_active: bool) -> bool {
+    assertion_active
+}
+
+/// Decide whether the resume toggle may fire on break end. Only reverse a
+/// toggle we actually sent — never blindly hit the media key for a break we
+/// did not pause, so we can't *start* media the user left paused (#104).
+/// Pure so it's unit-tested without FFI on every OS.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+fn media_key_resume_allowed(token: &ResumeToken) -> bool {
+    matches!(token, ResumeToken::MediaKey)
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn platform_pause() -> ResumeToken {
-    // Only toggle when something appears to be playing, so we don't start
-    // media that the user had paused.
-    if !crate::video::assertion_active() {
+    if !media_key_pause_allowed(crate::video::assertion_active()) {
         return ResumeToken::Noop;
     }
     if media_key::send_play_pause() {
@@ -248,7 +270,7 @@ fn platform_pause() -> ResumeToken {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn platform_resume(token: &ResumeToken) {
-    if matches!(token, ResumeToken::MediaKey) && media_key::send_play_pause() {
+    if media_key_resume_allowed(token) && media_key::send_play_pause() {
         log::info!("media: sent play/pause media key to resume after break");
     }
 }
@@ -631,6 +653,21 @@ mod tests {
             "org.mpris.MediaPlayer2.Player.Pause"
         );
         assert_eq!(player_method("Play"), "org.mpris.MediaPlayer2.Player.Play");
+    }
+
+    #[test]
+    fn media_key_pause_allowed_only_when_assertion_active() {
+        assert!(media_key_pause_allowed(true));
+        assert!(!media_key_pause_allowed(false));
+    }
+
+    #[test]
+    fn media_key_resume_allowed_only_for_media_key_token() {
+        assert!(media_key_resume_allowed(&ResumeToken::MediaKey));
+        assert!(!media_key_resume_allowed(&ResumeToken::Noop));
+        assert!(!media_key_resume_allowed(&ResumeToken::Mpris(vec![
+            "org.mpris.MediaPlayer2.vlc".to_string()
+        ])));
     }
 
     #[test]

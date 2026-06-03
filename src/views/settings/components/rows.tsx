@@ -11,13 +11,14 @@ import type { ClockFormat } from "../types";
 type RowLabelProps = {
   label: ReactNode;
   tip?: string;
+  tipWarn?: boolean;
 };
 
-function RowLabel({ label, tip }: RowLabelProps) {
+function RowLabel({ label, tip, tipWarn }: RowLabelProps) {
   return (
     <span>
       {label}
-      {tip && <InfoTip text={tip} />}
+      {tip && <InfoTip text={tip} warn={tipWarn} />}
     </span>
   );
 }
@@ -119,6 +120,8 @@ export type CheckboxRowProps = {
   /** Restrict the control to these platforms; on others it renders disabled with a suffix. */
   onlyOn?: Platform[];
   tip?: string;
+  /** Render the tip as a warning (caution glyph + styling) instead of plain info. */
+  tipWarn?: boolean;
 };
 
 export function CheckboxRow({
@@ -127,6 +130,7 @@ export function CheckboxRow({
   onChange,
   onlyOn,
   tip,
+  tipWarn,
 }: CheckboxRowProps) {
   const platform = usePlatform();
   const supported = !onlyOn || onlyOn.includes(platform);
@@ -135,7 +139,7 @@ export function CheckboxRow({
     : `${label} (${onlyOn!.map((p) => PLATFORM_LABELS[p]).join("/")} only)`;
   return (
     <label className={`row checkbox-row${supported ? "" : " disabled"}`}>
-      <RowLabel label={displayLabel} tip={tip} />
+      <RowLabel label={displayLabel} tip={tip} tipWarn={tipWarn} />
       <input
         type="checkbox"
         checked={value}

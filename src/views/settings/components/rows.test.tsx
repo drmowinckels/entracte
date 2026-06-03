@@ -270,4 +270,32 @@ describe("CheckboxRow", () => {
     expect(cb.disabled).toBe(false);
     expect(container.textContent).not.toMatch(/only/i);
   });
+
+  it("renders the tip as a warning when `tipWarn` is set", () => {
+    render(
+      <CheckboxRow
+        label="Pause media"
+        value={false}
+        onChange={() => {}}
+        tip="unreliable here"
+        tipWarn
+      />,
+    );
+    const tip = screen.getByRole("button", { name: /warning/i });
+    expect(tip.className).toContain("info-tip-warn");
+    expect(screen.getByRole("tooltip").textContent).toBe("unreliable here");
+  });
+
+  it("renders the tip as plain info when `tipWarn` is not set", () => {
+    render(
+      <CheckboxRow
+        label="Pause media"
+        value={false}
+        onChange={() => {}}
+        tip="works fine"
+      />,
+    );
+    const tip = screen.getByRole("button", { name: /more information/i });
+    expect(tip.className).not.toContain("info-tip-warn");
+  });
 });

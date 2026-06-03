@@ -110,4 +110,20 @@ describe("InfoTip", () => {
     const decorative = container.querySelector('[aria-hidden="true"]');
     expect(decorative?.textContent).toBe("i");
   });
+
+  it("renders a warning variant with a caution glyph and Warning label", () => {
+    const { container } = render(<InfoTip text="be careful" warn />);
+    const trigger = screen.getByRole("button", { name: /warning/i });
+    expect(trigger.className).toContain("info-tip-warn");
+    const decorative = container.querySelector('[aria-hidden="true"]');
+    expect(decorative?.textContent).toBe("!");
+  });
+
+  it("uses the plain info label and glyph when warn is not set", () => {
+    const { container } = render(<InfoTip text="just info" />);
+    const trigger = screen.getByRole("button", { name: /more information/i });
+    expect(trigger.className).not.toContain("info-tip-warn");
+    const decorative = container.querySelector('[aria-hidden="true"]');
+    expect(decorative?.textContent).toBe("i");
+  });
 });

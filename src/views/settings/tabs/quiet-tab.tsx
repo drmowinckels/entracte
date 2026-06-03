@@ -69,10 +69,11 @@ export function QuietTab({
           label="Pause media while a break is showing"
           value={settings.pause_media_during_breaks}
           onChange={(v) => update("pause_media_during_breaks", v)}
+          tipWarn={!caps.mediaPauseGranular}
           tip={
             caps.mediaPauseGranular
               ? "When a break starts, pauses whatever is playing (video or audio) and resumes it when the break ends. This targets your media players precisely."
-              : "When a break starts, pauses whatever is playing (video or audio) and resumes it when the break ends. This sends a play/pause media key as a best-effort, so it works for most players but can't guarantee the exact app."
+              : "When a break starts, pauses whatever is playing and resumes it when the break ends. It can only send a best-effort play/pause media key, so it is unreliable: it may miss the player you meant, and it will never resume anything it did not itself pause."
           }
         />
       </section>

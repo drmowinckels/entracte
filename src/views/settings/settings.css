@@ -13,6 +13,7 @@
   --pop: var(--accent-color);
   --pop-soft: var(--secondary-color);
   --on-accent: #fff;
+  --warning-fg: #f7693a;
   color-scheme: light dark;
 }
 
@@ -28,6 +29,7 @@
     --tab-border: #d8dce4;
     --accent: var(--primary-color);
     --pop: #8e3a5a;
+    --warning-fg: #c4471c;
   }
 }
 
@@ -1228,6 +1230,23 @@ body,
   color: var(--fg);
   border-color: var(--accent);
   outline: none;
+}
+
+.settings .info-tip-warn {
+  border-color: var(--warning-fg);
+  color: var(--warning-fg);
+  font-style: normal;
+  font-family: inherit;
+}
+
+.settings .info-tip-warn:hover,
+.settings .info-tip-warn:focus-visible {
+  border-color: var(--warning-fg);
+  color: var(--warning-fg);
+}
+
+.settings .info-tip-warn .info-tip-popup {
+  border-color: var(--warning-fg);
 }
 
 .settings .info-tip-popup {
