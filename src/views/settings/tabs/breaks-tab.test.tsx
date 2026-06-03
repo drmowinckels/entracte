@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
@@ -36,7 +36,10 @@ const baseSettings = {
   custom_css: "",
 } as unknown as SchedulerSettings;
 
-function renderTab(isSupporter: boolean) {
+function renderTab(
+  isSupporter: boolean,
+  update: (key: string, value: unknown) => void = () => {},
+) {
   const supporter: SupporterStatus = {
     is_supporter: isSupporter,
     masked_key: null,
@@ -45,10 +48,20 @@ function renderTab(isSupporter: boolean) {
   return render(
     <BreaksTab
       settings={baseSettings}
-      update={() => {}}
+      update={update as never}
       supporter={supporter}
     />,
   );
+}
+
+/** The <select> owning an option with the given label. */
+function selectWithOption(optionName: string): HTMLSelectElement {
+  const option = screen.getByRole("option", {
+    name: optionName,
+  }) as HTMLOptionElement;
+  const select = option.closest("select");
+  if (!select) throw new Error(`no <select> owns option "${optionName}"`);
+  return select;
 }
 
 describe("BreaksTab break ideas", () => {
@@ -59,6 +72,24 @@ describe("BreaksTab break ideas", () => {
     // "Physical only" (micro) and "Social only" (long).
     expect(screen.getByRole("option", { name: "Physical only" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Social only" })).toBeTruthy();
+  });
+
+  it("free users can switch the long mix to drop social hints", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.change(selectWithOption("Social only"), {
+      target: { value: "solo" },
+    });
+    expect(update).toHaveBeenCalledWith("long_hint_mix", "solo");
+  });
+
+  it("free users can switch the micro mix", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.change(selectWithOption("Physical only"), {
+      target: { value: "physical" },
+    });
+    expect(update).toHaveBeenCalledWith("micro_hint_mix", "physical");
   });
 
   it("hides the editable hint textareas from free users", () => {
