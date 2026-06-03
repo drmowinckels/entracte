@@ -516,7 +516,7 @@ mod windows_pipe {
                     }
                 };
                 rt.block_on(async move {
-                    log::info!("ipc: listening on {name} [dedicated-rt]");
+                    log::info!("ipc: listening on {name}");
                     // First instance uses `create` so the default DACL (current
                     // user only) is applied; subsequent instances reuse the same
                     // name to accept additional clients.
@@ -584,51 +584,52 @@ mod windows_pipe {
 
     pub fn call(body: &str) -> Result<IpcResponse, String> {
         let name = pipe_name();
-        let mut last_err: Option<String> = None;
-        // Connecting can race with the server momentarily having no
-        // available instance — retry a few times.
-        for _ in 0..5 {
-            match ClientOptions::new().open(&name) {
-                Ok(stream) => {
-                    return blocking_round_trip(stream, body);
-                }
-                Err(e) => {
-                    last_err = Some(format!("connect {name}: {e}. Is Entracte running?"));
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-        }
-        Err(last_err.unwrap_or_else(|| "named pipe connect failed".to_string()))
-    }
-
-    fn blocking_round_trip(
-        stream: tokio::net::windows::named_pipe::NamedPipeClient,
-        body: &str,
-    ) -> Result<IpcResponse, String> {
-        // The CLI process is sync — drive the async round-trip on a
-        // private runtime instead of dragging tokio through the caller.
+        // `ClientOptions::open` registers the pipe with the Tokio reactor, so
+        // it must run inside a runtime — and the round-trip that follows must
+        // run on the *same* runtime the client was created on. The CLI process
+        // is sync, so own a private current-thread runtime for the whole
+        // exchange rather than dragging tokio through the caller.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;
         rt.block_on(async move {
-            let (read_half, mut write_half) = tokio::io::split(stream);
-            write_half
-                .write_all(body.as_bytes())
-                .await
-                .map_err(|e| e.to_string())?;
-            write_half
-                .write_all(b"\n")
-                .await
-                .map_err(|e| e.to_string())?;
-            write_half.shutdown().await.map_err(|e| e.to_string())?;
-            let mut reader = TokioBufReader::new(read_half.take(MAX_REQUEST_BYTES));
-            let mut buf = String::new();
-            tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut buf)
-                .await
-                .map_err(|e| e.to_string())?;
-            serde_json::from_str(buf.trim()).map_err(|e| format!("parse response: {e}: {buf}"))
+            let mut last_err: Option<String> = None;
+            // Connecting can race with the server momentarily having no
+            // available instance — retry a few times.
+            for _ in 0..5 {
+                match ClientOptions::new().open(&name) {
+                    Ok(stream) => return round_trip(stream, body).await,
+                    Err(e) => {
+                        last_err = Some(format!("connect {name}: {e}. Is Entracte running?"));
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                }
+            }
+            Err(last_err.unwrap_or_else(|| "named pipe connect failed".to_string()))
         })
+    }
+
+    async fn round_trip(
+        stream: tokio::net::windows::named_pipe::NamedPipeClient,
+        body: &str,
+    ) -> Result<IpcResponse, String> {
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        write_half
+            .write_all(body.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        write_half
+            .write_all(b"\n")
+            .await
+            .map_err(|e| e.to_string())?;
+        write_half.shutdown().await.map_err(|e| e.to_string())?;
+        let mut reader = TokioBufReader::new(read_half.take(MAX_REQUEST_BYTES));
+        let mut buf = String::new();
+        tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut buf)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(buf.trim()).map_err(|e| format!("parse response: {e}: {buf}"))
     }
 }
 
