@@ -204,44 +204,59 @@ fn resource_sound_path(app: &AppHandle, sound_id: &str) -> Option<PathBuf> {
         .ok()
 }
 
-#[tauri::command]
-pub fn play_sound(app: AppHandle, audio: State<'_, AudioPlayer>, sound_id: String, volume: f32) {
+/// A user-supplied path, or `None` for empty input — keeps the empty-string
+/// short-circuit out of every custom-sound command.
+fn custom_path(path: String) -> Option<PathBuf> {
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+/// Play a one-shot once `path` has been resolved (bundled id or custom file).
+/// `None` path or non-positive volume is a no-op. Shared by the bundled and
+/// custom command shims so the guard logic is tested once.
+fn dispatch_once(audio: &AudioPlayer, path: Option<PathBuf>, volume: f32) {
     if volume <= 0.0 {
         return;
     }
-    if let Some(path) = resource_sound_path(&app, &sound_id) {
+    if let Some(path) = path {
         audio.set_volume(volume);
         audio.play_once(path);
     }
 }
 
-#[tauri::command]
-pub fn play_custom_sound(audio: State<'_, AudioPlayer>, path: String, volume: f32) {
-    if volume <= 0.0 || path.is_empty() {
+/// Start (or preview) an ambient loop once `path` has been resolved. `None`
+/// path or non-positive volume is a no-op.
+fn dispatch_ambient(audio: &AudioPlayer, path: Option<PathBuf>, volume: f32, preview: bool) {
+    if volume <= 0.0 {
         return;
     }
-    audio.set_volume(volume);
-    audio.play_once(PathBuf::from(path));
+    if let Some(path) = path {
+        audio.set_volume(volume);
+        if preview {
+            audio.preview_ambient(path);
+        } else {
+            audio.start_ambient(path);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn play_sound(app: AppHandle, audio: State<'_, AudioPlayer>, sound_id: String, volume: f32) {
+    dispatch_once(&audio, resource_sound_path(&app, &sound_id), volume);
+}
+
+#[tauri::command]
+pub fn play_custom_sound(audio: State<'_, AudioPlayer>, path: String, volume: f32) {
+    dispatch_once(&audio, custom_path(path), volume);
 }
 
 #[tauri::command]
 pub fn start_ambient(app: AppHandle, audio: State<'_, AudioPlayer>, sound_id: String, volume: f32) {
-    if volume <= 0.0 {
-        return;
-    }
-    if let Some(path) = resource_sound_path(&app, &sound_id) {
-        audio.set_volume(volume);
-        audio.start_ambient(path);
-    }
+    dispatch_ambient(&audio, resource_sound_path(&app, &sound_id), volume, false);
 }
 
 #[tauri::command]
 pub fn start_custom_ambient(audio: State<'_, AudioPlayer>, path: String, volume: f32) {
-    if volume <= 0.0 || path.is_empty() {
-        return;
-    }
-    audio.set_volume(volume);
-    audio.start_ambient(PathBuf::from(path));
+    dispatch_ambient(&audio, custom_path(path), volume, false);
 }
 
 #[tauri::command]
@@ -251,22 +266,12 @@ pub fn preview_ambient(
     sound_id: String,
     volume: f32,
 ) {
-    if volume <= 0.0 {
-        return;
-    }
-    if let Some(path) = resource_sound_path(&app, &sound_id) {
-        audio.set_volume(volume);
-        audio.preview_ambient(path);
-    }
+    dispatch_ambient(&audio, resource_sound_path(&app, &sound_id), volume, true);
 }
 
 #[tauri::command]
 pub fn preview_custom_ambient(audio: State<'_, AudioPlayer>, path: String, volume: f32) {
-    if volume <= 0.0 || path.is_empty() {
-        return;
-    }
-    audio.set_volume(volume);
-    audio.preview_ambient(PathBuf::from(path));
+    dispatch_ambient(&audio, custom_path(path), volume, true);
 }
 
 #[tauri::command]
@@ -325,5 +330,50 @@ mod tests {
             decode(Path::new(&path)).is_some(),
             "failed to decode bundled mp3 at {path}"
         );
+    }
+
+    #[test]
+    fn custom_path_empty_is_none_otherwise_some() {
+        assert_eq!(custom_path(String::new()), None);
+        assert_eq!(
+            custom_path("/tmp/a.wav".into()),
+            Some(PathBuf::from("/tmp/a.wav"))
+        );
+    }
+
+    // The command dispatch helpers and the `AudioPlayer` handle only enqueue
+    // commands; they never block on the audio device. In headless CI the
+    // device fails to open and the thread exits, so sends are dropped — but
+    // nothing panics, which is all these guard-coverage tests assert. A
+    // missing path keeps the player untouched.
+    const ABSENT: &str = "/no/such/audio/file.mp3";
+
+    #[test]
+    fn dispatch_once_covers_guard_and_action() {
+        let audio = AudioPlayer::spawn();
+        dispatch_once(&audio, Some(PathBuf::from(ABSENT)), 0.6);
+        dispatch_once(&audio, None, 0.6);
+        dispatch_once(&audio, Some(PathBuf::from(ABSENT)), 0.0);
+    }
+
+    #[test]
+    fn dispatch_ambient_covers_start_and_preview() {
+        let audio = AudioPlayer::spawn();
+        dispatch_ambient(&audio, Some(PathBuf::from(ABSENT)), 0.6, false);
+        dispatch_ambient(&audio, Some(PathBuf::from(ABSENT)), 0.6, true);
+        dispatch_ambient(&audio, None, 0.6, false);
+        dispatch_ambient(&audio, Some(PathBuf::from(ABSENT)), 0.0, true);
+    }
+
+    #[test]
+    fn audio_player_methods_do_not_panic() {
+        let audio = AudioPlayer::spawn();
+        audio.set_volume(0.5);
+        audio.set_volume(5.0);
+        audio.play_once(PathBuf::from(ABSENT));
+        audio.start_ambient(PathBuf::from(ABSENT));
+        audio.preview_ambient(PathBuf::from(ABSENT));
+        audio.stop_ambient();
+        audio.stop_all();
     }
 }
