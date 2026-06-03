@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Changed
+
+- **Choosing which break ideas appear is now free.** The Micro (Physical / Psychological / Both) and Long (Solo / Social / Both) **Mix** selectors moved out from behind the Supporter pack, so anyone can drop the "social" prompts (e.g. "walk over to a coworker's desk for a chat") by picking **Solo only** — handy when you work alone. Editing the hint pool text remains a Supporter pack feature. ([#118](https://github.com/drmowinckels/entracte/issues/118))
+
 ## [0.0.4] — 2026-06-01
 
 Follow-up Linux/Wayland beta from Steffi's dual-4K @ 200% testing (#67): the break overlay now sizes and places itself correctly on scaled Wayland displays, breaks fire on time when idle detection isn't available, and choosing a sound plays it straight away.
