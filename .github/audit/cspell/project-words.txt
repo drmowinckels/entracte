@@ -69,6 +69,7 @@ systemd
 XDG
 DBus
 Wayland
+Xorg
 opencode
 hovancik
 HKCU

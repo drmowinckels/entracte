@@ -1,6 +1,6 @@
 # Developer guide
 
-If you've never touched the code, **[Architecture internals](./architecture-internals)** is where to start — it covers the module map, the 1Hz run-loop walkthrough, on-disk persistence, and the concurrency model. From there, **[IPC contract](./ipc)** lists every Tauri command the renderer can call and the events the backend emits, and **[Contributing](./contributing)** is the quick reference for branch workflow, the test suites, and what CI checks.
+If you've never touched the code, **[Architecture internals](./architecture-internals)** is where to start — it covers the module map, the 1Hz run-loop walkthrough, on-disk persistence, and the concurrency model. From there, **[IPC contract](./ipc)** lists every Tauri command the renderer can call and the events the backend emits, and **[Contributing](./contributing)** is the quick reference for branch workflow, the test suites, and what CI checks. **[Cross-platform testing](./cross-platform-testing)** covers how to exercise Windows and Linux behaviour from a macOS dev machine.
 
 The user-facing [Architecture](../architecture/) section covers the high-level "how Entracte works" — useful as a refresher but not where to start when you're editing the code.
 

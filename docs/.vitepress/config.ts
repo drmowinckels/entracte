@@ -57,6 +57,10 @@ export default withMermaid({
               link: "/developer/architecture-internals",
             },
             { text: "IPC contract", link: "/developer/ipc" },
+            {
+              text: "Cross-platform testing",
+              link: "/developer/cross-platform-testing",
+            },
             { text: "Releases", link: "/developer/releases" },
           ],
         },

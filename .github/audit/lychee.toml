@@ -35,6 +35,10 @@ exclude = [
   # rather than accept 500 globally, which would mask real failures.
   '^https?://(www\.)?claude\.com',
   '^https?://(www\.)?contributor-covenant\.org',
+  # Microsoft download / dev pages (Windows 11 ARM image, dev VMs) bot-block
+  # link checkers with 403/429 but resolve fine in a browser. Same rationale
+  # as the publishers above.
+  '^https?://(.*\.)?microsoft\.com',
   # rustdoc / TypeDoc output: generated into the built site at /api/{rust,ts}/,
   # not present in source.
   '/api/(rust|ts)/',
