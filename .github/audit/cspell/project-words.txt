@@ -178,3 +178,4 @@ WASAPI
 ALSA
 GStreamer
 Symphonia
+textareas

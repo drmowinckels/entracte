@@ -7,13 +7,15 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
-### Fixed
-
-- **Break sounds now play on Linux.** Chimes and ambient tracks were silent on Linux (e.g. Ubuntu 24.04): playback went through the webview, and WebKitGTK can't decode the bundled MP3s without system GStreamer codecs that aren't installed by default. Playback now runs natively in-process, decoding the audio itself and playing through the OS audio stack (PipeWire/PulseAudio/ALSA on Linux, CoreAudio on macOS, WASAPI on Windows) — so it no longer depends on the webview or on installing extra codecs. ([#114](https://github.com/drmowinckels/entracte/issues/114))
-
 ### Changed
 
+- **Choosing which break ideas appear is now free.** The Micro (Physical / Psychological / Both) and Long (Solo / Social / Both) **Mix** selectors moved out from behind the Supporter pack, so anyone can drop the "social" prompts (e.g. "walk over to a coworker's desk for a chat") by picking **Solo only** — handy when you work alone. Editing the hint pool text remains a Supporter pack feature. ([#118](https://github.com/drmowinckels/entracte/issues/118))
 - Ambient sound auditions on the Settings page now stop with a hard cut after a few seconds instead of a brief fade-out.
+
+### Fixed
+
+- **Camera-in-use detection works again on macOS 26 (Apple Silicon).** macOS 26 stopped posting the `kCameraStream` log events Entracte watched, so breaks were no longer paused while the camera was live. Detection now also reads Control Center's aggregate "cameras changed to […]" signal — an empty list means every camera was released — which is both version-resilient and reflects all in-use cameras at once. ([#113](https://github.com/drmowinckels/entracte/issues/113))
+- **Break sounds now play on Linux.** Chimes and ambient tracks were silent on Linux (e.g. Ubuntu 24.04): playback went through the webview, and WebKitGTK can't decode the bundled MP3s without system GStreamer codecs that aren't installed by default. Playback now runs natively in-process, decoding the audio itself and playing through the OS audio stack (PipeWire/PulseAudio/ALSA on Linux, CoreAudio on macOS, WASAPI on Windows) — so it no longer depends on the webview or on installing extra codecs. ([#114](https://github.com/drmowinckels/entracte/issues/114))
 
 ## [0.0.4] — 2026-06-01
 
