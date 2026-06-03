@@ -516,7 +516,7 @@ mod windows_pipe {
                     }
                 };
                 rt.block_on(async move {
-                    log::info!("ipc: listening on {name}");
+                    log::info!("ipc: listening on {name} [dedicated-rt]");
                     // First instance uses `create` so the default DACL (current
                     // user only) is applied; subsequent instances reuse the same
                     // name to accept additional clients.
