@@ -190,7 +190,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
     let tray = TrayIconBuilder::with_id("main")
         .icon(tray_icon)
-        .icon_as_template(true)
+        .icon_as_template(icon_is_template(std::env::consts::OS))
         .menu(&menu)
         .tooltip(tooltip_for(&initial_active))
         .show_menu_on_left_click(true)
@@ -386,6 +386,17 @@ fn tray_title_for(snapshot: &TrayCountdownSnapshot, text_enabled: bool) -> Optio
     Some(format!(" {body}"))
 }
 
+/// Whether the tray icon should be registered as a template image.
+///
+/// Template mode is a macOS-only concept: AppKit recolours a monochrome
+/// template glyph to suit the light/dark menu bar. On Linux
+/// (StatusNotifierItem / AppIndicator) and Windows there is no template
+/// recolouring, so a dark monochrome glyph stays dark and vanishes against
+/// a dark panel (#86). Only macOS gets template mode.
+fn icon_is_template(os: &str) -> bool {
+    os == "macos"
+}
+
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn tray_icon_kind_for(snapshot: &TrayCountdownSnapshot) -> TrayIconKind {
     match snapshot {
@@ -410,7 +421,7 @@ fn spawn_countdown_ticker(app: AppHandle, tray: Arc<TrayIcon<tauri::Wry>>) {
             if Some(icon_kind) != last_icon {
                 if let Ok(icon) = Image::from_bytes(icon_kind.bytes()) {
                     let _ = tray.set_icon(Some(icon));
-                    let _ = tray.set_icon_as_template(true);
+                    let _ = tray.set_icon_as_template(icon_is_template(std::env::consts::OS));
                 }
                 last_icon = Some(icon_kind);
             }
@@ -552,6 +563,13 @@ mod tests {
         let secs = seconds_until_tomorrow_morning();
         assert!(secs >= 60);
         assert!(secs <= 36 * 60 * 60);
+    }
+
+    #[test]
+    fn icon_is_template_only_on_macos() {
+        assert!(icon_is_template("macos"));
+        assert!(!icon_is_template("linux"));
+        assert!(!icon_is_template("windows"));
     }
 
     #[test]
