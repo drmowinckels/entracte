@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Camera-in-use detection works again on macOS 26 (Apple Silicon).** macOS 26 stopped posting the `kCameraStream` log events Entracte watched, so breaks were no longer paused while the camera was live. Detection now also reads Control Center's aggregate "cameras changed to […]" signal — an empty list means every camera was released — which is both version-resilient and reflects all in-use cameras at once. ([#113](https://github.com/drmowinckels/entracte/issues/113))
+
 ## [0.0.4] — 2026-06-01
 
 Follow-up Linux/Wayland beta from Steffi's dual-4K @ 200% testing (#67): the break overlay now sizes and places itself correctly on scaled Wayland displays, breaks fire on time when idle detection isn't available, and choosing a sound plays it straight away.
