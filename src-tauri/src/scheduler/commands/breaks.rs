@@ -7,9 +7,7 @@ use crate::stats::{EventPayload, Outcome, SkipSource};
 
 use super::super::overlay::{deliver_break, fire_break};
 use super::super::pause::{persist_pause, PauseInfo, PauseState};
-use super::super::settings::{
-    delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode, Settings,
-};
+use super::super::settings::{delivery_for, is_windowed_mode, Settings};
 use super::super::timers::{clear_last_break, postpone_counter, reset_postpone_counter};
 use super::super::types::{BreakEvent, BreakKind, LastBreakInfo, PostponeState};
 use super::super::Scheduler;
@@ -119,11 +117,8 @@ pub async fn get_pause_info(scheduler: tauri::State<'_, Scheduler>) -> Result<Pa
 /// `*_enforceable` flag OR `strict_mode`, while sleep is always
 /// enforceable.
 pub(crate) fn test_break_enforceable(kind: BreakKind, s: &Settings) -> bool {
-    match kind {
-        BreakKind::Micro => s.micro_enforceable || s.strict_mode,
-        BreakKind::Long => s.long_enforceable || s.strict_mode,
-        BreakKind::Sleep => true,
-    }
+    s.for_kind(kind)
+        .is_none_or(|b| b.enforceable || s.strict_mode)
 }
 
 /// Fire a one-off break of the given kind right now. Shared by the
@@ -136,16 +131,8 @@ pub async fn trigger_break_from_cli<R: Runtime>(
     duration_secs: u64,
 ) {
     let s = scheduler.settings.lock().await.clone();
-    let hints = match kind {
-        BreakKind::Micro => effective_micro_hints(&s),
-        BreakKind::Long => effective_long_hints(&s),
-        BreakKind::Sleep => s.sleep_hints.clone(),
-    };
-    let manual_finish = match kind {
-        BreakKind::Micro => s.micro_manual_finish,
-        BreakKind::Long => s.long_manual_finish,
-        BreakKind::Sleep => false,
-    };
+    let hints = s.effective_hints(kind);
+    let manual_finish = s.for_kind(kind).is_some_and(|b| b.manual_finish);
     let intensity = scheduler.stats.lock().await.intensity();
     let delivery = delivery_for(kind, &s);
     let enforceable = test_break_enforceable(kind, &s);
@@ -518,20 +505,14 @@ pub async fn resume_last_break_impl<R: Runtime>(
         return Err("no break to resume".to_string());
     };
     let s = scheduler.settings.lock().await.clone();
-    let (duration_secs, enforceable, manual_finish, hints) = match kind {
-        BreakKind::Micro => (
-            s.micro_duration_secs,
-            s.micro_enforceable || s.strict_mode,
-            s.micro_manual_finish,
-            effective_micro_hints(&s),
+    let hints = s.effective_hints(kind);
+    let (duration_secs, enforceable, manual_finish) = match s.for_kind(kind) {
+        Some(b) => (
+            b.duration_secs,
+            b.enforceable || s.strict_mode,
+            b.manual_finish,
         ),
-        BreakKind::Long => (
-            s.long_duration_secs,
-            s.long_enforceable || s.strict_mode,
-            s.long_manual_finish,
-            effective_long_hints(&s),
-        ),
-        BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
+        None => (s.bedtime_duration_secs, true, false),
     };
     let intensity = scheduler.stats.lock().await.intensity();
     fire_break(

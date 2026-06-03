@@ -14,7 +14,7 @@ use super::overlay::deliver_break;
 use super::pause::{persist_pause, PauseState};
 use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind_screen_time};
 use super::session_lock;
-use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
+use super::settings::{delivery_for, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string,
     prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
@@ -566,21 +566,15 @@ async fn deliver_scheduled_break<R: Runtime>(
 /// live value from the stats lock; the helper applies the
 /// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
 fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
-    let (duration_secs, enforceable, manual_finish, hints) = match kind {
-        BreakKind::Long => (
-            s.long_duration_secs,
-            s.long_enforceable || s.strict_mode,
-            s.long_manual_finish,
-            effective_long_hints(s),
-        ),
-        BreakKind::Micro => (
-            s.micro_duration_secs,
-            s.micro_enforceable || s.strict_mode,
-            s.micro_manual_finish,
-            effective_micro_hints(s),
-        ),
-        BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
-    };
+    let b = s
+        .for_kind(kind)
+        .expect("sleep breaks use the bedtime fire path");
+    let (duration_secs, enforceable, manual_finish, hints) = (
+        b.duration_secs,
+        b.enforceable || s.strict_mode,
+        b.manual_finish,
+        s.effective_hints(kind),
+    );
     BreakEvent {
         kind,
         duration_secs,
@@ -995,17 +989,16 @@ fn log_suppressions(
     t: &super::timers::BreakTimers,
     reason: GuardReason,
 ) {
-    if s.micro_enabled && t.last_micro.elapsed() >= Duration::from_secs(s.micro_interval_secs) {
-        logger.log(EventPayload::GuardSuppress {
-            kind: BreakKind::Micro,
-            reason,
-        });
-    }
-    if s.long_enabled && t.last_long.elapsed() >= Duration::from_secs(s.long_interval_secs) {
-        logger.log(EventPayload::GuardSuppress {
-            kind: BreakKind::Long,
-            reason,
-        });
+    for (kind, last) in [
+        (BreakKind::Micro, t.last_micro),
+        (BreakKind::Long, t.last_long),
+    ] {
+        let Some(b) = s.for_kind(kind) else {
+            continue;
+        };
+        if b.enabled && last.elapsed() >= Duration::from_secs(b.interval_secs) {
+            logger.log(EventPayload::GuardSuppress { kind, reason });
+        }
     }
 }
 
@@ -1016,12 +1009,10 @@ fn log_suppressions(
 /// and gates on the kind being enabled and in a fixed-firing schedule
 /// mode. `Sleep` has no fixed-time schedule and is always `false`.
 fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
-    let (enabled, minutes) = match kind {
-        BreakKind::Long => (s.long_enabled, &s.derived.long_fixed_minutes),
-        BreakKind::Micro => (s.micro_enabled, &s.derived.micro_fixed_minutes),
-        BreakKind::Sleep => return false,
+    let Some(b) = s.for_kind(kind) else {
+        return false;
     };
-    enabled && s.fixed_active(kind) && minutes.contains(&now_min)
+    b.enabled && s.fixed_active(kind) && b.fixed_minutes.contains(&now_min)
 }
 
 // Case-insensitive token match for the app-pause list. We tokenise the
@@ -1165,7 +1156,7 @@ mod tests {
         assert_eq!(e.kind, BreakKind::Long);
         assert_eq!(e.duration_secs, s.long_duration_secs);
         assert_eq!(e.manual_finish, s.long_manual_finish);
-        assert_eq!(e.hints, effective_long_hints(&s));
+        assert_eq!(e.hints, s.effective_hints(BreakKind::Long));
         assert!(!e.hints.is_empty(), "default long hints are non-empty");
         // break_health is enabled by default → live intensity passes through.
         assert_eq!(e.health_intensity, 0.5);
@@ -1179,7 +1170,7 @@ mod tests {
         assert_eq!(e.kind, BreakKind::Micro);
         assert_eq!(e.duration_secs, s.micro_duration_secs);
         assert_eq!(e.manual_finish, s.micro_manual_finish);
-        assert_eq!(e.hints, effective_micro_hints(&s));
+        assert_eq!(e.hints, s.effective_hints(BreakKind::Micro));
         assert!(!e.hints.is_empty(), "default micro hints are non-empty");
     }
 
