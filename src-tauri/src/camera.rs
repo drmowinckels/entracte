@@ -18,15 +18,39 @@ pub fn spawn_monitor(active: Arc<AtomicBool>) {
 /// markers, matching the original `if/else if` ordering. Kept un-gated so
 /// the start/stop contract is unit-tested on every OS — only the macOS
 /// log-stream reader calls it in non-test builds.
+///
+/// Two signals are recognised:
+///   * Legacy (pre-macOS 26) `AppleCameraAssistant` posts
+///     `kCameraStreamStart`/`kCameraStreamStop` events.
+///   * macOS 26+ stopped posting those on Apple Silicon (#113). Control
+///     Center instead publishes the *full set* of in-use cameras as
+///     `Frame publisher cameras changed to [...]` — an empty `[]` means
+///     every camera was released, a non-empty list means at least one is
+///     live. This aggregate is more robust than the old per-stream events.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn classify_camera_line(line: &str) -> Option<bool> {
     if line.contains("kCameraStreamStart") {
-        Some(true)
-    } else if line.contains("kCameraStreamStop") {
-        Some(false)
-    } else {
-        None
+        return Some(true);
     }
+    if line.contains("kCameraStreamStop") {
+        return Some(false);
+    }
+    if let Some((_, rest)) = line.split_once("cameras changed to ") {
+        return classify_camera_set(rest);
+    }
+    None
+}
+
+/// Decide whether Control Center's published camera set is empty. `rest`
+/// is everything after `"cameras changed to "`. `Some(false)` for an empty
+/// list (`[]`), `Some(true)` for a non-empty one. Returns `None` when the
+/// payload is redacted (`<private>`) or otherwise has no bracketed list —
+/// we can't tell the state, so we leave it unchanged rather than guess.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn classify_camera_set(rest: &str) -> Option<bool> {
+    let open = rest.find('[')?;
+    let inner = rest[open + 1..].trim_start();
+    Some(!inner.starts_with(']'))
 }
 
 /// The Windows webcam-in-use rule: an app's `LastUsedTimeStop` of `0`
@@ -60,7 +84,8 @@ mod macos {
                     "--style",
                     "compact",
                     "--predicate",
-                    "eventMessage contains \"Post event kCameraStream\"",
+                    "eventMessage contains \"Post event kCameraStream\" \
+                     or eventMessage contains \"Frame publisher cameras changed to\"",
                     "--info",
                 ])
                 .stdout(Stdio::piped())
@@ -222,6 +247,34 @@ mod tests {
     fn classify_prefers_start_when_both_markers_present() {
         let line = "kCameraStreamStart ... kCameraStreamStop";
         assert_eq!(classify_camera_line(line), Some(true));
+    }
+
+    #[test]
+    fn classify_control_center_non_empty_set_is_on() {
+        let line = "2026-06-03 ControlCenter[1169:2621] \
+            [com.apple.controlcenter:captureFrameReceiver] Frame publisher \
+            cameras changed to [us.zoom.xos: [\"0x1000002e1a4c01\"]]";
+        assert_eq!(classify_camera_line(line), Some(true));
+    }
+
+    #[test]
+    fn classify_control_center_empty_set_is_off() {
+        let line = "2026-06-03 ControlCenter[1169:2621] \
+            [com.apple.controlcenter:captureFrameReceiver] Frame publisher \
+            cameras changed to []";
+        assert_eq!(classify_camera_line(line), Some(false));
+    }
+
+    #[test]
+    fn classify_control_center_empty_set_tolerates_inner_space() {
+        let line = "Frame publisher cameras changed to [ ]";
+        assert_eq!(classify_camera_line(line), Some(false));
+    }
+
+    #[test]
+    fn classify_control_center_redacted_set_is_unknown() {
+        let line = "Frame publisher cameras changed to <private>";
+        assert_eq!(classify_camera_line(line), None);
     }
 
     #[test]
