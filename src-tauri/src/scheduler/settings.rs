@@ -1659,12 +1659,15 @@ mod tests {
     #[test]
     fn flat_fixture_round_trips_byte_identical() {
         // Deserialise the captured pre-refactor file, then re-serialise it.
-        // The output must equal the input verbatim (modulo the trailing
-        // newline `to_string_pretty` omits), proving the refactor did not
-        // change a single wire key or value.
+        // The output must equal the input verbatim, proving the refactor did
+        // not change a single wire key or value. Line endings are normalised
+        // to LF and the trailing newline trimmed: git may check the fixture
+        // out as CRLF on Windows, but `to_string_pretty` always emits LF, and
+        // the wire-shape guarantee is about keys/values/order, not newlines.
         let s: Settings = serde_json::from_str(FLAT_FIXTURE).unwrap();
         let out = serde_json::to_string_pretty(&s).unwrap();
-        assert_eq!(out, FLAT_FIXTURE.trim_end());
+        let expected = FLAT_FIXTURE.replace("\r\n", "\n");
+        assert_eq!(out, expected.trim_end());
     }
 
     #[test]
