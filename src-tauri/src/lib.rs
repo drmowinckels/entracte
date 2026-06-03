@@ -1,3 +1,4 @@
+mod audio;
 mod camera;
 pub mod cli;
 mod config;
@@ -167,6 +168,14 @@ pub fn run() {
             platform::get_platform,
             platform::get_platform_capabilities,
             renderer_log::report_renderer_error,
+            audio::play_sound,
+            audio::play_custom_sound,
+            audio::start_ambient,
+            audio::start_custom_ambient,
+            audio::preview_ambient,
+            audio::preview_custom_ambient,
+            audio::stop_ambient,
+            audio::stop_all_sounds,
             get_supporter_status,
             verify_supporter_key,
             remove_supporter,
@@ -216,6 +225,8 @@ pub fn run() {
             let scheduler = Scheduler::new(config_path, pause_path, events_path, screen_time_path);
             scheduler.spawn(app.handle().clone());
             app.manage(scheduler);
+
+            app.manage(audio::AudioPlayer::spawn());
 
             let supporter_path = supporter::file_path(&data_dir);
             app.manage(SupporterAppState {

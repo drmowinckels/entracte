@@ -7,6 +7,14 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Break sounds now play on Linux.** Chimes and ambient tracks were silent on Linux (e.g. Ubuntu 24.04): playback went through the webview, and WebKitGTK can't decode the bundled MP3s without system GStreamer codecs that aren't installed by default. Playback now runs natively in-process, decoding the audio itself and playing through the OS audio stack (PipeWire/PulseAudio/ALSA on Linux, CoreAudio on macOS, WASAPI on Windows) — so it no longer depends on the webview or on installing extra codecs. ([#114](https://github.com/drmowinckels/entracte/issues/114))
+
+### Changed
+
+- Ambient sound auditions on the Settings page now stop with a hard cut after a few seconds instead of a brief fade-out.
+
 ## [0.0.4] — 2026-06-01
 
 Follow-up Linux/Wayland beta from Steffi's dual-4K @ 200% testing (#67): the break overlay now sizes and places itself correctly on scaled Wayland displays, breaks fire on time when idle detection isn't available, and choosing a sound plays it straight away.

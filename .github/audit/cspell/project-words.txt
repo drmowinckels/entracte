@@ -173,3 +173,8 @@ describedby
 MPRIS
 noninteractive
 autofocus
+rodio
+WASAPI
+ALSA
+GStreamer
+Symphonia
