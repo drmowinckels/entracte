@@ -54,17 +54,11 @@ function renderTab(isSupporter: boolean) {
 describe("BreaksTab break ideas", () => {
   it("shows the micro and long mix selectors to free users", () => {
     renderTab(false);
-    expect(
-      screen.getByRole("heading", { name: "Break ideas" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Break ideas" })).toBeTruthy();
     // Options unique to each mix selector prove both render for free users:
     // "Physical only" (micro) and "Social only" (long).
-    expect(
-      screen.getByRole("option", { name: "Physical only" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("option", { name: "Social only" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Physical only" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Social only" })).toBeTruthy();
   });
 
   it("hides the editable hint textareas from free users", () => {
@@ -87,11 +81,7 @@ describe("BreaksTab break ideas", () => {
     expect(
       screen.getByText("Social (call, walk together, share a coffee)"),
     ).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { name: "Bedtime" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { name: "Custom CSS" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Bedtime" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Custom CSS" })).toBeTruthy();
   });
 });
