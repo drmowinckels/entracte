@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+#[cfg(not(test))]
 use tauri_plugin_notification::NotificationExt;
 
 use super::settings::MonitorPlacement;
@@ -126,8 +127,23 @@ pub(super) fn notify_break_now<R: Runtime>(
         BreakKind::Sleep => "Bedtime reminder",
     };
     let body = format!("Take a {} break.", format_break_duration(duration_secs));
+    post_notification(app, title, body);
+}
+
+/// Post a desktop notification. Split on `cfg(test)` so the OS-posting body
+/// is compiled out of the test/coverage build: the scheduler's delivery
+/// tests drive the routing glue end to end, and without this a real
+/// `tauri_plugin_notification` would post an actual macOS notification on
+/// every `cargo test` run — attributed to the terminal, since a test binary
+/// is not an app bundle. The routing the tests assert runs before this call,
+/// so no meaningful coverage is lost.
+#[cfg(not(test))]
+pub(super) fn post_notification<R: Runtime>(app: &AppHandle<R>, title: &str, body: String) {
     let _ = app.notification().builder().title(title).body(body).show();
 }
+
+#[cfg(test)]
+pub(super) fn post_notification<R: Runtime>(_app: &AppHandle<R>, _title: &str, _body: String) {}
 
 fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::WebviewWindow<R>> {
     let label = format!("overlay-{idx}");

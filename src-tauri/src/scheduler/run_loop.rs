@@ -3,7 +3,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Runtime};
-use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 use user_idle::UserIdle;
 
@@ -963,7 +962,7 @@ fn notify_break_coming(app: &AppHandle, kind: BreakKind, seconds: u64) {
         BreakKind::Sleep => "Bedtime reminder coming up",
     };
     let body = format!("Starting in {}s", seconds);
-    let _ = app.notification().builder().title(title).body(body).show();
+    super::overlay::post_notification(app, title, body);
 }
 
 fn notify_screen_time_budget(app: &AppHandle, budget_minutes: u64) {
@@ -980,12 +979,7 @@ fn notify_screen_time_budget(app: &AppHandle, budget_minutes: u64) {
     } else {
         format!("You've been at the screen {hours}h {mins}m — time to wrap up.")
     };
-    let _ = app
-        .notification()
-        .builder()
-        .title("Time to wind down")
-        .body(body)
-        .show();
+    super::overlay::post_notification(app, "Time to wind down", body);
 }
 
 fn log_suppressions(
@@ -1095,8 +1089,11 @@ mod tests {
         settings.micro_break_mode = BreakMode::Notification;
         let (_dir, sched) = test_scheduler(settings.clone());
 
+        // No notification plugin: the cfg(test) `post_notification` is a
+        // no-op, so the delivery path must run without it. If the OS-posting
+        // body ever leaks into the test build, `app.notification()` panics
+        // here — a tripwire against reintroducing real-notification spam.
         let app = mock_builder()
-            .plugin(tauri_plugin_notification::init())
             .build(mock_context(noop_assets()))
             .expect("mock app builds");
         app.manage(sched.clone());
@@ -1130,7 +1127,6 @@ mod tests {
         }
 
         let app = mock_builder()
-            .plugin(tauri_plugin_notification::init())
             .build(mock_context(noop_assets()))
             .expect("mock app builds");
         app.manage(sched.clone());
