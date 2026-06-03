@@ -344,31 +344,36 @@ export function BreaksTab({
         </div>
       </section>
 
-      {isSupporter && (
-        <>
-          <h2>Break ideas</h2>
-          <section>
-            <p className="placeholder">
-              One idea per line. Each break picks a random starting idea from
-              the pool.
-            </p>
-            <h3>Micro breaks</h3>
-            <label className="row">
-              <span>Mix</span>
-              <select
-                value={settings.micro_hint_mix}
-                onChange={(e) =>
-                  update(
-                    "micro_hint_mix",
-                    e.target.value as typeof settings.micro_hint_mix,
-                  )
-                }
-              >
-                <option value="both">Both</option>
-                <option value="physical">Physical only</option>
-                <option value="psychological">Psychological only</option>
-              </select>
-            </label>
+      <h2>Break ideas</h2>
+      <section>
+        <p className="placeholder">
+          Choose which kinds of prompt appear during each break.
+          {isSupporter
+            ? " Edit the pools below — one idea per line; each break picks a random starting idea."
+            : ""}
+        </p>
+        <h3>Micro breaks</h3>
+        <label className="row">
+          <span>
+            Mix
+            <InfoTip text="Physical: stretches, eye rest, movement. Psychological: breathing, awareness, tension release." />
+          </span>
+          <select
+            value={settings.micro_hint_mix}
+            onChange={(e) =>
+              update(
+                "micro_hint_mix",
+                e.target.value as typeof settings.micro_hint_mix,
+              )
+            }
+          >
+            <option value="both">Both</option>
+            <option value="physical">Physical only</option>
+            <option value="psychological">Psychological only</option>
+          </select>
+        </label>
+        {isSupporter && (
+          <>
             <label className="row stacked">
               <span>Physical (stretches, eye rest, movement)</span>
               <textarea
@@ -396,26 +401,30 @@ export function BreaksTab({
                 }
               />
             </label>
-            <h3>Long breaks</h3>
-            <label className="row">
-              <span>
-                Mix
-                <InfoTip text="Solo: things to do on your own (stretch, fresh air, snack). Social: things to do with someone (call, walk together, sit outside)." />
-              </span>
-              <select
-                value={settings.long_hint_mix}
-                onChange={(e) =>
-                  update(
-                    "long_hint_mix",
-                    e.target.value as typeof settings.long_hint_mix,
-                  )
-                }
-              >
-                <option value="both">Both</option>
-                <option value="solo">Solo only</option>
-                <option value="social">Social only</option>
-              </select>
-            </label>
+          </>
+        )}
+        <h3>Long breaks</h3>
+        <label className="row">
+          <span>
+            Mix
+            <InfoTip text="Solo: things to do on your own (stretch, fresh air, snack). Social: things to do with someone (call, walk together, sit outside). Working alone? Pick Solo only to drop the social prompts." />
+          </span>
+          <select
+            value={settings.long_hint_mix}
+            onChange={(e) =>
+              update(
+                "long_hint_mix",
+                e.target.value as typeof settings.long_hint_mix,
+              )
+            }
+          >
+            <option value="both">Both</option>
+            <option value="solo">Solo only</option>
+            <option value="social">Social only</option>
+          </select>
+        </label>
+        {isSupporter && (
+          <>
             <label className="row stacked">
               <span>Solo (stretch, fresh air, snack, tidy)</span>
               <textarea
@@ -449,8 +458,12 @@ export function BreaksTab({
                 onBlur={() => update("sleep_hints", linesToList(sleep))}
               />
             </label>
-          </section>
+          </>
+        )}
+      </section>
 
+      {isSupporter && (
+        <>
           <h2>Custom CSS</h2>
           <section>
             <p className="placeholder">
