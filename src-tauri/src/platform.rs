@@ -55,21 +55,25 @@ fn capabilities_for(os: &str, wayland: bool) -> PlatformCapabilities {
     }
 }
 
-/// Whether the given session env signals Wayland. Mirrors the probe in
-/// `video.rs` / `overlay.rs`: `XDG_SESSION_TYPE=wayland` or a
-/// `WAYLAND_DISPLAY` set. Pure so the parsing is unit-testable without
-/// mutating process env.
-fn wayland_session_from_env(session_type: Option<&str>, wayland_display: bool) -> bool {
+/// Whether the given OS + session env signals a Wayland session. Off
+/// Linux the Wayland env vars are irrelevant to video detection, so this
+/// is always false there. On Linux it mirrors the probe in `video.rs` /
+/// `overlay.rs`: `XDG_SESSION_TYPE=wayland` or a `WAYLAND_DISPLAY` set.
+/// Kept pure (OS + env passed in) so every branch — including the
+/// off-Linux short-circuit — is unit-testable on the single Linux
+/// coverage runner.
+fn wayland_session_from_env(os: &str, session_type: Option<&str>, wayland_display: bool) -> bool {
+    if os != "linux" {
+        return false;
+    }
     session_type.is_some_and(|s| s.eq_ignore_ascii_case("wayland")) || wayland_display
 }
 
-/// Whether the current Linux session is Wayland. Always false off Linux,
-/// where the Wayland env vars are irrelevant to video detection.
+/// Whether the current session is Wayland. Thin shim that reads the host
+/// OS and session env vars and defers to [`wayland_session_from_env`].
 fn is_wayland_session() -> bool {
-    if std::env::consts::OS != "linux" {
-        return false;
-    }
     wayland_session_from_env(
+        std::env::consts::OS,
         std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
         std::env::var("WAYLAND_DISPLAY").is_ok(),
     )
@@ -159,25 +163,24 @@ mod tests {
 
     #[test]
     fn wayland_session_from_env_detects_session_type() {
-        assert!(wayland_session_from_env(Some("wayland"), false));
-        assert!(wayland_session_from_env(Some("Wayland"), false));
-        assert!(!wayland_session_from_env(Some("x11"), false));
-        assert!(!wayland_session_from_env(None, false));
+        assert!(wayland_session_from_env("linux", Some("wayland"), false));
+        assert!(wayland_session_from_env("linux", Some("Wayland"), false));
+        assert!(!wayland_session_from_env("linux", Some("x11"), false));
+        assert!(!wayland_session_from_env("linux", None, false));
     }
 
     #[test]
     fn wayland_session_from_env_detects_wayland_display() {
-        assert!(wayland_session_from_env(None, true));
-        assert!(wayland_session_from_env(Some("x11"), true));
+        assert!(wayland_session_from_env("linux", None, true));
+        assert!(wayland_session_from_env("linux", Some("x11"), true));
     }
 
     #[test]
-    fn is_wayland_session_is_false_off_linux() {
-        // The session helper is a no-op anywhere but Linux, regardless of
-        // any inherited Wayland env vars.
-        if std::env::consts::OS != "linux" {
-            assert!(!is_wayland_session());
-        }
+    fn wayland_session_from_env_is_false_off_linux() {
+        // Off Linux the Wayland env vars don't apply, even if inherited.
+        assert!(!wayland_session_from_env("macos", Some("wayland"), true));
+        assert!(!wayland_session_from_env("windows", Some("wayland"), true));
+        assert!(!wayland_session_from_env("freebsd", None, true));
     }
 
     #[test]
