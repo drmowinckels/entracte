@@ -898,6 +898,18 @@ impl Settings {
             BreakKind::Sleep => self.sleep_hints.clone(),
         }
     }
+
+    /// The `duration_secs` and `manual_finish` a break of `kind` fires with:
+    /// the per-kind pair for micro/long, or the bedtime duration / no
+    /// manual-finish for Sleep. The enforceability and hint pool are
+    /// resolved separately (see `test_break_enforceable` / `effective_hints`)
+    /// so the renderer and CLI paths share one enforceability rule.
+    pub fn duration_and_manual_finish(&self, kind: BreakKind) -> (u64, bool) {
+        match self.for_kind(kind) {
+            Some(b) => (b.duration_secs, b.manual_finish),
+            None => (self.bedtime_duration_secs, false),
+        }
+    }
 }
 
 /// Resolve the delivery mode for the given break kind.

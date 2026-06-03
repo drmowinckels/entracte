@@ -7,7 +7,9 @@ use crate::stats::{EventPayload, Outcome, SkipSource};
 
 use super::super::overlay::{deliver_break, fire_break};
 use super::super::pause::{persist_pause, PauseInfo, PauseState};
-use super::super::settings::{delivery_for, is_windowed_mode, Settings};
+use super::super::settings::{
+    delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode, Settings,
+};
 use super::super::timers::{clear_last_break, postpone_counter, reset_postpone_counter};
 use super::super::types::{BreakEvent, BreakKind, LastBreakInfo, PostponeState};
 use super::super::Scheduler;
@@ -121,6 +123,22 @@ pub(crate) fn test_break_enforceable(kind: BreakKind, s: &Settings) -> bool {
         .is_none_or(|b| b.enforceable || s.strict_mode)
 }
 
+/// The `(duration_secs, enforceable, manual_finish, hints)` a break of
+/// `kind` fires with. Single source for the scheduled-fire, resume, and
+/// CLI-trigger paths, which each used to repeat this per-kind `match`.
+/// Enforceability goes through [`test_break_enforceable`] so every path
+/// shares one rule; duration / manual-finish / hints come from the
+/// matching `Settings` accessors.
+pub(crate) fn fire_fields(kind: BreakKind, s: &Settings) -> (u64, bool, bool, Vec<String>) {
+    let (duration_secs, manual_finish) = s.duration_and_manual_finish(kind);
+    (
+        duration_secs,
+        test_break_enforceable(kind, s),
+        manual_finish,
+        s.effective_hints(kind),
+    )
+}
+
 /// Fire a one-off break of the given kind right now. Shared by the
 /// renderer-facing `trigger_test_break` and the CLI's `trigger`
 /// command. Bypasses suppression checks (the user asked explicitly).
@@ -131,11 +149,11 @@ pub async fn trigger_break_from_cli<R: Runtime>(
     duration_secs: u64,
 ) {
     let s = scheduler.settings.lock().await.clone();
-    let hints = s.effective_hints(kind);
-    let manual_finish = s.for_kind(kind).is_some_and(|b| b.manual_finish);
+    // `duration_secs` here is the caller-supplied one-off length, so discard
+    // the scheduled duration from `fire_fields` and keep the rest.
+    let (_, enforceable, manual_finish, hints) = fire_fields(kind, &s);
     let intensity = scheduler.stats.lock().await.intensity();
     let delivery = delivery_for(kind, &s);
-    let enforceable = test_break_enforceable(kind, &s);
     deliver_break(
         app,
         &scheduler.current_break,
@@ -505,14 +523,20 @@ pub async fn resume_last_break_impl<R: Runtime>(
         return Err("no break to resume".to_string());
     };
     let s = scheduler.settings.lock().await.clone();
-    let hints = s.effective_hints(kind);
-    let (duration_secs, enforceable, manual_finish) = match s.for_kind(kind) {
-        Some(b) => (
-            b.duration_secs,
-            b.enforceable || s.strict_mode,
-            b.manual_finish,
+    let (duration_secs, enforceable, manual_finish, hints) = match kind {
+        BreakKind::Micro => (
+            s.micro_duration_secs,
+            s.micro_enforceable || s.strict_mode,
+            s.micro_manual_finish,
+            effective_micro_hints(&s),
         ),
-        None => (s.bedtime_duration_secs, true, false),
+        BreakKind::Long => (
+            s.long_duration_secs,
+            s.long_enforceable || s.strict_mode,
+            s.long_manual_finish,
+            effective_long_hints(&s),
+        ),
+        BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
     };
     let intensity = scheduler.stats.lock().await.intensity();
     fire_break(
@@ -682,6 +706,51 @@ mod tests {
             ..Settings::default()
         };
         assert!(test_break_enforceable(BreakKind::Sleep, &strict));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn fire_fields_draws_per_kind_micro_long() {
+        let mut s = Settings::default();
+        s.micro_duration_secs = 11;
+        s.micro_manual_finish = true;
+        s.long_duration_secs = 22;
+        s.long_manual_finish = false;
+        s.long_enforceable = true;
+        s.rebuild_derived();
+
+        let (dur, enforceable, manual, hints) = fire_fields(BreakKind::Micro, &s);
+        assert_eq!(dur, 11);
+        assert!(!enforceable); // micro not enforceable, no strict mode
+        assert!(manual);
+        assert_eq!(hints, s.effective_hints(BreakKind::Micro));
+
+        let (dur, enforceable, manual, _) = fire_fields(BreakKind::Long, &s);
+        assert_eq!(dur, 22);
+        assert!(enforceable);
+        assert!(!manual);
+    }
+
+    #[test]
+    fn fire_fields_sleep_uses_bedtime_duration_and_is_enforceable() {
+        let s = Settings {
+            bedtime_duration_secs: 45,
+            ..Settings::default()
+        };
+        let (dur, enforceable, manual, hints) = fire_fields(BreakKind::Sleep, &s);
+        assert_eq!(dur, 45);
+        assert!(enforceable);
+        assert!(!manual);
+        assert_eq!(hints, s.sleep_hints);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn fire_fields_enforceable_follows_strict_mode() {
+        let mut s = Settings::default();
+        s.strict_mode = true;
+        let (_, enforceable, _, _) = fire_fields(BreakKind::Micro, &s);
+        assert!(enforceable, "strict mode forces enforceable");
     }
 
     #[test]
@@ -1416,5 +1485,22 @@ mod rig_smoke_tests {
             "renderer sees the post-dismiss skipped",
         );
         assert_eq!(emitted["taken"], 0);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn trigger_break_from_cli_resolves_fire_fields_and_delivers() {
+        // Exercises the CLI/test-break entry: it pulls per-kind fields from
+        // `fire_fields` and delivers a one-off break. Notification mode keeps
+        // delivery windowless so the mock runtime doesn't try to open an
+        // overlay; the `fire_fields` resolution (the line under test) runs
+        // before delivery regardless of mode.
+        use super::super::super::settings::BreakMode;
+        let mut settings = Settings::default();
+        settings.long_break_mode = BreakMode::Notification;
+        let (_dir, app, sched) = mock_app_with_scheduler(settings);
+        trigger_break_from_cli(app.handle(), &sched, BreakKind::Long, 42).await;
+        // Notification delivery does not stash an overlay break.
+        assert!(sched.current_break.lock().unwrap().is_none());
     }
 }

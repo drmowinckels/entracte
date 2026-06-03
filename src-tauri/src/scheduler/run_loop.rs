@@ -566,15 +566,14 @@ async fn deliver_scheduled_break<R: Runtime>(
 /// live value from the stats lock; the helper applies the
 /// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
 fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
-    let b = s
-        .for_kind(kind)
-        .expect("sleep breaks use the bedtime fire path");
-    let (duration_secs, enforceable, manual_finish, hints) = (
-        b.duration_secs,
-        b.enforceable || s.strict_mode,
-        b.manual_finish,
-        s.effective_hints(kind),
+    // Sleep is delivered through the bedtime path, never here; enforce that
+    // invariant with a panic rather than silently firing the bedtime fields.
+    assert!(
+        s.for_kind(kind).is_some(),
+        "sleep breaks use the bedtime fire path"
     );
+    let (duration_secs, enforceable, manual_finish, hints) =
+        super::commands::breaks::fire_fields(kind, s);
     BreakEvent {
         kind,
         duration_secs,
