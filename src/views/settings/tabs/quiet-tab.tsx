@@ -59,7 +59,12 @@ export function QuietTab({
           label="Fullscreen video is playing"
           value={settings.pause_during_video}
           onChange={(v) => update("pause_during_video", v)}
-          tip="Suppresses breaks while a fullscreen video is detected."
+          tipWarn={!caps.videoPauseReliable}
+          tip={
+            caps.videoPauseReliable
+              ? "Suppresses breaks while a fullscreen video is detected. Confirms a real fullscreen window, so a small background video won't hold your breaks."
+              : "Suppresses breaks while a fullscreen video is detected. On Wayland there is no way to confirm a fullscreen window, so detection is unreliable: it falls back to any media keeping the display awake, which may suppress breaks for a small background video."
+          }
         />
       </section>
 

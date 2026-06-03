@@ -33,6 +33,7 @@ let currentCaps: PlatformCapabilities = {
   supportsDndRead: true,
   mediaPauseGranular: false,
   installerUnsignedWarning: false,
+  videoPauseReliable: true,
 };
 vi.mock("../../../lib/platform", async () => {
   const actual = await vi.importActual<typeof import("../../../lib/platform")>(
@@ -88,6 +89,7 @@ afterEach(() => {
     supportsDndRead: true,
     mediaPauseGranular: false,
     installerUnsignedWarning: false,
+    videoPauseReliable: true,
   };
   mockUpdate = {
     info: null,

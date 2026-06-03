@@ -189,6 +189,7 @@ describe("usePlatformCapabilities", () => {
       supportsDndRead: true,
       mediaPauseGranular: true,
       installerUnsignedWarning: false,
+      videoPauseReliable: false,
     });
 
     const { usePlatformCapabilities } = await import("./platform");
@@ -196,8 +197,10 @@ describe("usePlatformCapabilities", () => {
 
     expect(result.current.installerUnsignedWarning).toBe(true); // UA fallback
     expect(result.current.mediaPauseGranular).toBe(false);
+    expect(result.current.videoPauseReliable).toBe(true); // UA fallback (Windows)
     await waitFor(() => expect(result.current.mediaPauseGranular).toBe(true));
     expect(result.current.installerUnsignedWarning).toBe(false);
+    expect(result.current.videoPauseReliable).toBe(false); // Rust: Linux Wayland
     expect(invokeMock).toHaveBeenCalledWith("get_platform_capabilities");
   });
 
@@ -212,9 +215,12 @@ describe("usePlatformCapabilities", () => {
     const { result } = renderHook(() => usePlatformCapabilities());
 
     // Linux fallback: DnD read + granular media pause, no installer warning.
+    // The UA fallback can't see the session type, so it optimistically
+    // reports video pause as reliable on Linux.
     expect(result.current.supportsDndRead).toBe(true);
     expect(result.current.mediaPauseGranular).toBe(true);
     expect(result.current.installerUnsignedWarning).toBe(false);
+    expect(result.current.videoPauseReliable).toBe(true);
     await act(async () => {
       await Promise.resolve();
     });

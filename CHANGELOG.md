@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **"Fullscreen video is playing" now warns where detection is unreliable.** The Quiet times → Auto-pause toggle that suppresses breaks during fullscreen video carries a caution marker on Linux Wayland, where there is no portable way to confirm a fullscreen window: detection there falls back to "any media is keeping the display awake", so it can suppress breaks for a small background video. macOS, Windows and X11 Linux confirm a real fullscreen window and show a plain info tip. ([#103](https://github.com/drmowinckels/entracte/issues/103))
+
 ### Changed
 
 - **Choosing which break ideas appear is now free.** The Micro (Physical / Psychological / Both) and Long (Solo / Social / Both) **Mix** selectors moved out from behind the Supporter pack, so anyone can drop the "social" prompts (e.g. "walk over to a coworker's desk for a chat") by picking **Solo only** — handy when you work alone. Editing the hint pool text remains a Supporter pack feature. ([#118](https://github.com/drmowinckels/entracte/issues/118))

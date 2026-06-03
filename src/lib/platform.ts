@@ -96,6 +96,7 @@ export interface PlatformCapabilities {
   supportsDndRead: boolean;
   mediaPauseGranular: boolean;
   installerUnsignedWarning: boolean;
+  videoPauseReliable: boolean;
 }
 
 /** Derive the conservative fallback capabilities from a UA-guessed
@@ -108,6 +109,11 @@ function fallbackCapabilities(platform: Platform): PlatformCapabilities {
       platform === "macos" || platform === "windows" || platform === "linux",
     mediaPauseGranular: platform === "linux",
     installerUnsignedWarning: platform === "windows",
+    // The UA fallback can't see the Linux session type (X11 vs Wayland),
+    // so it optimistically assumes reliable on the known desktops; the
+    // authoritative Rust answer downgrades Linux Wayland once it resolves.
+    videoPauseReliable:
+      platform === "macos" || platform === "windows" || platform === "linux",
   };
 }
 
