@@ -75,9 +75,6 @@ jobs:
           # server from ever starting.
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
           WEBKIT_DISABLE_DMABUF_RENDERER: "1"
-          # Temporary: capture a full backtrace for the Windows IPC startup
-          # panic under investigation (#119).
-          RUST_BACKTRACE: "full"
         run: |
           set -uo pipefail
 

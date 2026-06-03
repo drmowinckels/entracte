@@ -494,62 +494,37 @@ mod windows_pipe {
 
     pub fn spawn_server(app: AppHandle, token: String) {
         let name = pipe_name();
-        // The pipe server must be created and driven inside a Tokio runtime
-        // with the IO reactor enabled, and every async op on a given pipe must
-        // run on the runtime that created it. `tauri::async_runtime::spawn`
-        // doesn't satisfy this on Windows — `ServerOptions::create` panics with
-        // "there is no reactor running" — so own a dedicated thread + runtime
-        // here. (The Unix path avoids the issue by using a blocking std
-        // listener and only offloading per-client work.)
-        let spawned = std::thread::Builder::new()
-            .name("ipc-pipe".into())
-            .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
+        tauri::async_runtime::spawn(async move {
+            log::info!("ipc: listening on {name}");
+            // First instance uses `create` so the default DACL (current
+            // user only) is applied; subsequent instances reuse the same
+            // name to accept additional clients.
+            let mut first = true;
+            loop {
+                let server_res = if first {
+                    ServerOptions::new().first_pipe_instance(true).create(&name)
+                } else {
+                    ServerOptions::new().create(&name)
+                };
+                let server = match server_res {
+                    Ok(s) => s,
                     Err(e) => {
-                        log::warn!("ipc: failed to build pipe runtime: {e}");
+                        log::warn!("ipc: pipe create failed: {e}");
                         return;
                     }
                 };
-                rt.block_on(async move {
-                    log::info!("ipc: listening on {name}");
-                    // First instance uses `create` so the default DACL (current
-                    // user only) is applied; subsequent instances reuse the same
-                    // name to accept additional clients.
-                    let mut first = true;
-                    loop {
-                        let server_res = if first {
-                            ServerOptions::new().first_pipe_instance(true).create(&name)
-                        } else {
-                            ServerOptions::new().create(&name)
-                        };
-                        let server = match server_res {
-                            Ok(s) => s,
-                            Err(e) => {
-                                log::warn!("ipc: pipe create failed: {e}");
-                                return;
-                            }
-                        };
-                        first = false;
-                        if let Err(e) = server.connect().await {
-                            log::warn!("ipc: pipe connect failed: {e}");
-                            continue;
-                        }
-                        let app = app.clone();
-                        let token = token.clone();
-                        tokio::task::spawn(async move {
-                            handle_client(server, app, token).await;
-                        });
-                    }
+                first = false;
+                if let Err(e) = server.connect().await {
+                    log::warn!("ipc: pipe connect failed: {e}");
+                    continue;
+                }
+                let app = app.clone();
+                let token = token.clone();
+                tauri::async_runtime::spawn(async move {
+                    handle_client(server, app, token).await;
                 });
-            });
-        if let Err(e) = spawned {
-            log::warn!("ipc: failed to spawn pipe thread: {e}");
-        }
+            }
+        });
     }
 
     async fn handle_client(server: NamedPipeServer, app: AppHandle, expected_token: String) {
