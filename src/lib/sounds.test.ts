@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Sound } from "./sounds";
 
-// `convertFileSrc` is what bridges user-supplied filesystem paths into
-// the Tauri asset protocol. The lib uses it for the custom-sound
-// variants below — mocked here so tests don't need a Tauri runtime.
+// Playback runs natively in Rust via Tauri commands; the lib just forwards
+// to `invoke`. Mock it so tests assert which command fires with which args
+// without needing a Tauri runtime.
+const invoke = vi.fn().mockResolvedValue(undefined);
 vi.mock("@tauri-apps/api/core", () => ({
-  convertFileSrc: (p: string) => `mocked-asset://${p}`,
+  invoke: (...args: unknown[]) => invoke(...args),
 }));
 
 const {
@@ -78,407 +79,124 @@ describe("soundById", () => {
   });
 });
 
-// Audio playback covers the side-effecty paths. We stub the global
-// Audio constructor with a controllable fake so we can drive `ended` /
-// `error` events and assert volume / play / loop behavior.
+// Playback wrappers: assert the right Tauri command fires with the right
+// args, and that the cheap client-side short-circuits skip the IPC entirely.
 
-class FakeAudio {
-  src: string;
-  volume = 1;
-  loop = false;
-  currentTime = 0;
-  play: ReturnType<typeof vi.fn>;
-  pause = vi.fn();
-  private handlers = new Map<string, Set<() => void>>();
-
-  constructor(url: string) {
-    this.src = url;
-    this.play = vi.fn(FakeAudio.playBehavior);
-    createdAudios.push(this);
-    // Test fake tracks its own latest instance so assertions can reach it.
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    lastAudio = this;
-  }
-
-  static playBehavior: () => Promise<void> = async () => undefined;
-
-  addEventListener(event: string, handler: () => void) {
-    if (!this.handlers.has(event)) this.handlers.set(event, new Set());
-    this.handlers.get(event)!.add(handler);
-  }
-
-  removeEventListener(event: string, handler: () => void) {
-    this.handlers.get(event)?.delete(handler);
-  }
-
-  fire(event: "ended" | "error") {
-    const set = this.handlers.get(event);
-    if (!set) return;
-    for (const h of [...set]) h();
-  }
-}
-
-let lastAudio: FakeAudio | null = null;
-const createdAudios: FakeAudio[] = [];
-
-function installFakeAudio(
-  playBehavior: () => Promise<void> = async () => undefined,
-) {
-  createdAudios.length = 0;
-  lastAudio = null;
-  FakeAudio.playBehavior = playBehavior;
-  vi.stubGlobal("Audio", FakeAudio);
-}
-
-function restoreAudio() {
-  vi.unstubAllGlobals();
-}
-
-// The Vite-lazy URL loader resolves over several event-loop turns
-// (not just microtasks); wait on macrotasks for the constructor to fire.
-async function waitForAudio(): Promise<FakeAudio> {
-  for (let i = 0; i < 50; i += 1) {
-    if (lastAudio) return lastAudio;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  throw new Error("Audio was never constructed");
-}
+beforeEach(() => {
+  invoke.mockClear();
+});
 
 describe("playSound", () => {
-  beforeEach(() => {
-    installFakeAudio();
-  });
-
-  afterEach(() => {
-    restoreAudio();
-  });
-
-  it("is a no-op when volume is zero (returns without constructing Audio)", async () => {
-    await playSound("398496", 0);
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("is a no-op when volume is negative", async () => {
-    await playSound("398496", -0.5);
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("is a no-op when the sound id is unknown (no Audio constructed)", async () => {
-    await playSound("not-a-real-id", 0.5);
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("constructs an Audio, sets volume, and resolves when 'ended' fires", async () => {
-    const promise = playSound("398496", 0.5);
-    const audio = await waitForAudio();
-    expect(audio.volume).toBe(0.5);
-    expect(audio.play).toHaveBeenCalledTimes(1);
-
-    audio.fire("ended");
-    await expect(promise).resolves.toBeUndefined();
-  });
-
-  it("clamps the volume to [0, 1]", async () => {
-    const promise = playSound("398496", 5);
-    const audio = await waitForAudio();
-    expect(audio.volume).toBe(1);
-    audio.fire("ended");
-    await promise;
-  });
-
-  it("resolves on 'error' as well as 'ended'", async () => {
-    const promise = playSound("398496", 0.5);
-    const audio = await waitForAudio();
-    audio.fire("error");
-    await expect(promise).resolves.toBeUndefined();
-  });
-
-  it("resolves when play() rejects (autoplay-blocked, missing codec, etc.)", async () => {
-    installFakeAudio(async () => {
-      throw new Error("autoplay blocked");
+  it("invokes play_sound with the id and volume", async () => {
+    await playSound("337048", 0.7);
+    expect(invoke).toHaveBeenCalledWith("play_sound", {
+      soundId: "337048",
+      volume: 0.7,
     });
-    const promise = playSound("398496", 0.5);
-    await expect(promise).resolves.toBeUndefined();
   });
 
-  it("tears down the element when play() rejects so a deferred play can't resume later", async () => {
-    installFakeAudio(async () => {
-      throw new Error("autoplay blocked");
+  it("is a no-op when volume is zero or negative", async () => {
+    await playSound("337048", 0);
+    await playSound("337048", -1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("playCustomSound", () => {
+  it("invokes play_custom_sound with the path and volume", async () => {
+    await playCustomSound("/tmp/chime.wav", 0.5);
+    expect(invoke).toHaveBeenCalledWith("play_custom_sound", {
+      path: "/tmp/chime.wav",
+      volume: 0.5,
     });
-    const promise = playSound("398496", 0.5);
-    const audio = await waitForAudio();
-    await promise;
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.src).toBe("");
   });
 
-  it("resolves via the safety timeout even if neither 'ended' nor 'error' ever fires", async () => {
-    // Critical invariant: the breakSoundFor caller awaits playSound and
-    // must not hang forever if the Audio element gets wedged (e.g. a
-    // codec stalls). Documented timeout: 2.5s.
-    const promise = playSound("398496", 0.5);
-    const audio = await waitForAudio();
-    // Don't fire ended/error — let the safety timer carry it home.
-    await expect(
-      Promise.race([
-        promise,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("playSound hung past safety timeout")),
-            3500,
-          ),
-        ),
-      ]),
-    ).resolves.toBeUndefined();
-    // The safety timeout must also tear the element down — a chime that
-    // never started while the overlay was visible would otherwise resume
-    // and bleed into the start of the next break (issue #62).
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.src).toBe("");
-  }, 5000);
+  it("is a no-op when volume is zero or the path is empty", async () => {
+    await playCustomSound("/tmp/chime.wav", 0);
+    await playCustomSound("", 0.5);
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });
 
 describe("stopAllSounds", () => {
-  beforeEach(() => {
-    installFakeAudio();
-  });
-
-  afterEach(() => {
-    restoreAudio();
-  });
-
-  it("stops a one-shot playback still in flight and clears its src", async () => {
-    const promise = playSound("398496", 0.5);
-    const audio = await waitForAudio();
-    // Neither 'ended' nor 'error' has fired — the chime is still live.
+  it("invokes stop_all_sounds", () => {
     stopAllSounds();
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.src).toBe("");
-    // Settle the still-pending promise so the test leaves nothing hanging.
-    audio.fire("ended");
-    await promise;
-  });
-
-  it("is a no-op when nothing is playing", () => {
-    expect(() => stopAllSounds()).not.toThrow();
-    expect(createdAudios.length).toBe(0);
+    expect(invoke).toHaveBeenCalledWith("stop_all_sounds");
   });
 });
 
 describe("startAmbient", () => {
-  beforeEach(() => {
-    installFakeAudio();
-  });
-
-  afterEach(() => {
-    restoreAudio();
-  });
-
-  it("returns null when volume is zero (no Audio constructed)", () => {
-    expect(startAmbient("398496", 0)).toBeNull();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("returns a handle and loops the audio once the URL resolves", async () => {
-    const handle = startAmbient("398496", 0.4);
+  it("invokes start_ambient and returns a handle", () => {
+    const handle = startAmbient("180732", 0.4);
     expect(handle).not.toBeNull();
-    const audio = await waitForAudio();
-    expect(audio.loop).toBe(true);
-    expect(audio.volume).toBe(0.4);
+    expect(invoke).toHaveBeenCalledWith("start_ambient", {
+      soundId: "180732",
+      volume: 0.4,
+    });
   });
 
-  it("stop() pauses the audio and clears its src", async () => {
-    const handle = startAmbient("398496", 0.4);
-    const audio = await waitForAudio();
-    handle!.stop();
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.src).toBe("");
+  it("returns null and skips IPC when volume is zero", () => {
+    expect(startAmbient("180732", 0)).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
   });
 
-  it("stop() before the URL resolves prevents Audio from ever being constructed", async () => {
-    const handle = startAmbient("398496", 0.4);
-    handle!.stop();
-    // Drain enough microtasks that the URL loader would have fired.
-    for (let i = 0; i < 50; i += 1) await Promise.resolve();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("stop() is idempotent", async () => {
-    const handle = startAmbient("398496", 0.4);
-    const audio = await waitForAudio();
-    handle!.stop();
-    expect(() => handle!.stop()).not.toThrow();
-    expect(audio.pause).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("previewAmbient", () => {
-  beforeEach(() => {
-    installFakeAudio();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    restoreAudio();
-  });
-
-  it("returns null when volume is zero", () => {
-    expect(previewAmbient("398496", 0)).toBeNull();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("starts looping audio at the requested volume", async () => {
-    const handle = previewAmbient("398496", 0.6, 2, 0.5);
-    expect(handle).not.toBeNull();
-    const audio = await waitForAudio();
-    expect(audio.volume).toBe(0.6);
-    expect(audio.loop).toBe(true);
-  });
-
-  it("auto-stops after maxSecs by fading volume to zero and calling pause", async () => {
-    // Use a small maxSecs so we can just wait wall-clock for it.
-    // Fake timers can't drive Vite's lazy URL loader, so real timers
-    // throughout this test.
-    const maxSecs = 0.15;
-    const fadeSecs = 0.05;
-    const handle = previewAmbient("398496", 0.6, maxSecs, fadeSecs);
-    const audio = await waitForAudio();
-    expect(handle).not.toBeNull();
-
-    await new Promise((r) => setTimeout(r, (maxSecs + 0.1) * 1000));
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.volume).toBeCloseTo(0, 1);
-  });
-
-  it("manual stop() before fade clears the pending fade (single pause())", async () => {
-    // Long maxSecs so the fade never fires on its own during this test.
-    const handle = previewAmbient("398496", 0.6, 10, 0.5);
-    const audio = await waitForAudio();
-    handle!.stop();
-    expect(audio.pause).toHaveBeenCalledTimes(1);
-
-    // Wait a beat — if stop() failed to cancel the pending fade timer,
-    // the fade would later fire and call pause() a second time.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(audio.pause).toHaveBeenCalledTimes(1);
-  });
-});
-
-// -- Custom-file (Supporter-pack) variants. Same playback semantics as
-//    the bundled-id variants above, but the URL is resolved through
-//    `convertFileSrc` (mocked to `mocked-asset://${path}` at the top of
-//    this file) instead of Vite's lazy URL loader.
-
-describe("playCustomSound", () => {
-  beforeEach(() => {
-    installFakeAudio();
-  });
-
-  afterEach(() => {
-    restoreAudio();
-  });
-
-  it("is a no-op when volume is zero", async () => {
-    await playCustomSound("/Users/me/chime.mp3", 0);
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("is a no-op when the path is empty", async () => {
-    await playCustomSound("", 0.5);
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("resolves the path through the asset protocol and plays once", async () => {
-    const promise = playCustomSound("/Users/me/chime.mp3", 0.5);
-    const audio = await waitForAudio();
-    expect(audio.src).toBe("mocked-asset:///Users/me/chime.mp3");
-    expect(audio.volume).toBe(0.5);
-    audio.fire("ended");
-    await expect(promise).resolves.toBeUndefined();
+  it("handle.stop() invokes stop_ambient, and is idempotent", () => {
+    const handle = startAmbient("180732", 0.4);
+    invoke.mockClear();
+    handle?.stop();
+    handle?.stop();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("stop_ambient");
   });
 });
 
 describe("startCustomAmbient", () => {
-  beforeEach(() => {
-    installFakeAudio();
+  it("invokes start_custom_ambient with the path", () => {
+    const handle = startCustomAmbient("/tmp/rain.ogg", 0.6);
+    expect(handle).not.toBeNull();
+    expect(invoke).toHaveBeenCalledWith("start_custom_ambient", {
+      path: "/tmp/rain.ogg",
+      volume: 0.6,
+    });
   });
 
-  afterEach(() => {
-    restoreAudio();
+  it("returns null when volume is zero or the path is empty", () => {
+    expect(startCustomAmbient("/tmp/rain.ogg", 0)).toBeNull();
+    expect(startCustomAmbient("", 0.6)).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("previewAmbient", () => {
+  it("invokes preview_ambient and returns a stoppable handle", () => {
+    const handle = previewAmbient("180732", 0.5);
+    expect(invoke).toHaveBeenCalledWith("preview_ambient", {
+      soundId: "180732",
+      volume: 0.5,
+    });
+    invoke.mockClear();
+    handle?.stop();
+    expect(invoke).toHaveBeenCalledWith("stop_ambient");
   });
 
   it("returns null when volume is zero", () => {
-    expect(startCustomAmbient("/Users/me/loop.mp3", 0)).toBeNull();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("returns null when the path is empty", () => {
-    expect(startCustomAmbient("", 0.4)).toBeNull();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("loops the asset-protocol URL at the requested volume", async () => {
-    const handle = startCustomAmbient("/Users/me/loop.mp3", 0.3);
-    expect(handle).not.toBeNull();
-    const audio = await waitForAudio();
-    expect(audio.src).toBe("mocked-asset:///Users/me/loop.mp3");
-    expect(audio.loop).toBe(true);
-    expect(audio.volume).toBe(0.3);
-    handle!.stop();
-  });
-
-  it("stop() pauses the audio and clears src", async () => {
-    const handle = startCustomAmbient("/Users/me/loop.mp3", 0.3);
-    const audio = await waitForAudio();
-    handle!.stop();
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.src).toBe("");
+    expect(previewAmbient("180732", 0)).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
 
 describe("previewCustomAmbient", () => {
-  beforeEach(() => {
-    installFakeAudio();
+  it("invokes preview_custom_ambient with the path", () => {
+    previewCustomAmbient("/tmp/rain.ogg", 0.5);
+    expect(invoke).toHaveBeenCalledWith("preview_custom_ambient", {
+      path: "/tmp/rain.ogg",
+      volume: 0.5,
+    });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    restoreAudio();
-  });
-
-  it("returns null when volume is zero", () => {
-    expect(previewCustomAmbient("/Users/me/loop.mp3", 0)).toBeNull();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("returns null when the path is empty", () => {
-    expect(previewCustomAmbient("", 0.6)).toBeNull();
-    expect(createdAudios.length).toBe(0);
-  });
-
-  it("starts looping the asset-protocol URL at the requested volume", async () => {
-    const handle = previewCustomAmbient("/Users/me/loop.mp3", 0.6, 2, 0.5);
-    expect(handle).not.toBeNull();
-    const audio = await waitForAudio();
-    expect(audio.src).toBe("mocked-asset:///Users/me/loop.mp3");
-    expect(audio.loop).toBe(true);
-    expect(audio.volume).toBe(0.6);
-    handle!.stop();
-  });
-
-  it("auto-stops after maxSecs by fading and pausing", async () => {
-    const maxSecs = 0.15;
-    const fadeSecs = 0.05;
-    const handle = previewCustomAmbient(
-      "/Users/me/loop.mp3",
-      0.6,
-      maxSecs,
-      fadeSecs,
-    );
-    const audio = await waitForAudio();
-    expect(handle).not.toBeNull();
-    await new Promise((r) => setTimeout(r, (maxSecs + 0.1) * 1000));
-    expect(audio.pause).toHaveBeenCalled();
-    expect(audio.volume).toBeCloseTo(0, 1);
+  it("returns null when volume is zero or the path is empty", () => {
+    expect(previewCustomAmbient("/tmp/rain.ogg", 0)).toBeNull();
+    expect(previewCustomAmbient("", 0.5)).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

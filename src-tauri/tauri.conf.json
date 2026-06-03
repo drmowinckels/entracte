@@ -46,6 +46,17 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../src/assets/sounds/*.mp3": "sounds/"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libasound2"]
+      },
+      "rpm": {
+        "depends": ["alsa-lib"]
+      }
+    },
     "createUpdaterArtifacts": true
   },
   "plugins": {

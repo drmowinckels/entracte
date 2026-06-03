@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import credits from "../assets/sounds/credits.json";
 
 /** Buckets the bundled sounds fall into. Drives which sounds are
@@ -27,18 +27,6 @@ export function soundDisplayName(s: Sound): string {
 /** Full bundled sound catalogue. */
 const SOUNDS: Sound[] = credits as Sound[];
 
-const urlLoaders = import.meta.glob("../assets/sounds/*.mp3", {
-  eager: false,
-  query: "?url",
-  import: "default",
-}) as Record<string, () => Promise<string>>;
-
-const loaderByFile: Record<string, () => Promise<string>> = {};
-for (const [path, loader] of Object.entries(urlLoaders)) {
-  const file = path.split("/").pop();
-  if (file) loaderByFile[file] = loader;
-}
-
 /** Short, single-event tracks suitable as an end-of-break chime. */
 const END_CHIME_CATEGORIES: readonly SoundCategory[] = ["chime", "bowl"];
 
@@ -60,101 +48,48 @@ export function soundById(id: string): Sound | undefined {
   return SOUNDS.find((s) => s.id === id);
 }
 
-/** Vite-resolved URL for the audio file backing `id`, or `undefined`
- * when the id isn't in the catalogue. Lazily loads the chunk on first
- * call so unused chimes stay out of the initial bundle. */
-async function soundUrl(id: string): Promise<string | undefined> {
-  const sound = soundById(id);
-  if (!sound) return undefined;
-  const loader = loaderByFile[sound.file];
-  if (!loader) return undefined;
-  return loader();
-}
+// Playback runs natively in Rust (see `src-tauri/src/audio.rs`): the webview
+// decodes MP3 inconsistently across platforms — WebKitGTK on Linux can't play
+// it at all without system codecs (#114) — so these are thin wrappers around
+// Tauri commands that hand the work to an in-process `rodio` audio thread.
+// Volume is clamped and the catalogue is resolved on the Rust side; the
+// `volume <= 0` / empty-path short-circuits here just avoid a pointless IPC
+// round-trip.
 
-/** Tauri asset URL for a user-supplied sound file (Supporter pack).
- * `path` must be an absolute filesystem path returned by the dialog
- * plugin. Returns the empty string for empty input so callers can
- * short-circuit. */
-function customSoundUrl(path: string): string {
-  if (!path) return "";
-  return convertFileSrc(path);
-}
-
-function clampVolume(volume: number): number {
-  return Math.min(1, Math.max(0, volume));
-}
-
-const livePlaybacks = new Set<HTMLAudioElement>();
-const PLAYBACK_TIMEOUT_MS = 2500;
-
-function teardownPlayback(audio: HTMLAudioElement): void {
+/** Fire a sound command without waiting for it. Sound is best-effort: a
+ * backend hiccup — or no Tauri runtime at all, as in unit tests — must never
+ * surface as an unhandled rejection in the overlay. The command is dispatched
+ * synchronously so callers can assert it fired; only the result is swallowed. */
+function fire(cmd: string, args?: Record<string, unknown>): void {
   try {
-    audio.pause();
-    audio.currentTime = 0;
-    audio.src = "";
+    const result = (
+      args === undefined ? invoke(cmd) : invoke(cmd, args)
+    ) as unknown;
+    if (result instanceof Promise) result.catch(() => {});
   } catch {
-    // ignore — element may already be torn down
+    // No IPC available (e.g. test/jsdom) — nothing to play, nothing to do.
   }
 }
 
-async function playUrlOnce(url: string, volume: number): Promise<void> {
-  const audio = new Audio(url);
-  audio.volume = clampVolume(volume);
-  livePlaybacks.add(audio);
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    // `stop` is true when we're giving up on a playback that never
-    // finished cleanly (safety timeout, or `play()` rejected). A break
-    // overlay can suspend its webview's media when it hides; an
-    // untorn-down element with a deferred `play()` then resumes and the
-    // chime bleeds into the *start* of the next break. Tearing it down
-    // here makes a missed chime stay missed instead of mistimed.
-    const finish = (stop: boolean) => {
-      if (settled) return;
-      settled = true;
-      if (stop) teardownPlayback(audio);
-      livePlaybacks.delete(audio);
-      resolve();
-    };
-    audio.addEventListener("ended", () => finish(false), { once: true });
-    audio.addEventListener("error", () => finish(false), { once: true });
-    const timeoutId = setTimeout(() => finish(true), PLAYBACK_TIMEOUT_MS);
-    audio.addEventListener("ended", () => clearTimeout(timeoutId), {
-      once: true,
-    });
-    audio.play().catch(() => finish(true));
-  });
-}
-
-/** Immediately stop and discard any one-shot playbacks still in flight.
- * Called when a new break overlay opens so a chime that's still playing
- * (or was deferred by the previous overlay hiding) can't bleed into the
- * new break. Ambient loops manage their own lifecycle and are untouched. */
-export function stopAllSounds(): void {
-  for (const audio of livePlaybacks) {
-    teardownPlayback(audio);
-  }
-  livePlaybacks.clear();
-}
-
-/** Play a sound once. Resolves when the audio ends, errors, or the
- * 2.5s safety timeout fires (whichever comes first). No-op when
- * `volume <= 0` or the id is unknown. */
-export async function playSound(id: string, volume: number): Promise<void> {
+/** Play a bundled sound once (end-of-break chime, or an audition). No-op
+ * when `volume <= 0`; an unknown id is ignored by the backend. */
+export function playSound(id: string, volume: number): void {
   if (volume <= 0) return;
-  const url = await soundUrl(id);
-  if (!url) return;
-  return playUrlOnce(url, volume);
+  fire("play_sound", { soundId: id, volume });
 }
 
-/** Play a user-supplied audio file once. Same semantics as
- * {@link playSound} but resolves the URL via Tauri's asset protocol. */
-export async function playCustomSound(
-  path: string,
-  volume: number,
-): Promise<void> {
+/** Play a user-supplied audio file once (Supporter pack). `path` is an
+ * absolute filesystem path the backend opens directly. */
+export function playCustomSound(path: string, volume: number): void {
   if (volume <= 0 || !path) return;
-  return playUrlOnce(customSoundUrl(path), volume);
+  fire("play_custom_sound", { path, volume });
+}
+
+/** Stop any one-shot sounds still playing. Called when a new break overlay
+ * opens so a lingering chime can't bleed into the next break. Ambient loops
+ * manage their own lifecycle and are untouched. */
+export function stopAllSounds(): void {
+  fire("stop_all_sounds");
 }
 
 /** Handle returned by ambient-play functions — call `stop()` to end
@@ -163,129 +98,54 @@ export type AmbientHandle = {
   stop(): void;
 };
 
-function startLoop(
-  urlPromise: Promise<string | undefined>,
-  volume: number,
-): AmbientHandle {
+/** A handle whose `stop()` asks the backend to end the single ambient loop.
+ * Idempotent: repeated calls send at most one stop. */
+function ambientHandle(): AmbientHandle {
   let stopped = false;
-  let audio: HTMLAudioElement | null = null;
-  void urlPromise.then((url) => {
-    if (stopped || !url) return;
-    audio = new Audio(url);
-    audio.volume = clampVolume(volume);
-    audio.loop = true;
-    audio.play().catch(() => {});
-  });
   return {
     stop() {
       if (stopped) return;
       stopped = true;
-      if (!audio) return;
-      try {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.src = "";
-      } catch {
-        // ignore — audio may already be torn down
-      }
+      fire("stop_ambient");
     },
   };
 }
 
-/** Start looping ambient audio. Returns `null` when volume is zero.
- * The URL is resolved lazily — `stop()` is safe to call before the
- * audio actually starts playing. */
+/** Start looping ambient audio. Returns `null` when volume is zero. */
 export function startAmbient(id: string, volume: number): AmbientHandle | null {
   if (volume <= 0) return null;
-  return startLoop(soundUrl(id), volume);
+  fire("start_ambient", { soundId: id, volume });
+  return ambientHandle();
 }
 
-/** Start looping a user-supplied audio file. Same semantics as
- * {@link startAmbient} but resolves the URL via Tauri's asset protocol. */
+/** Start looping a user-supplied audio file (Supporter pack). */
 export function startCustomAmbient(
   path: string,
   volume: number,
 ): AmbientHandle | null {
   if (volume <= 0 || !path) return null;
-  return startLoop(Promise.resolve(customSoundUrl(path)), volume);
+  fire("start_custom_ambient", { path, volume });
+  return ambientHandle();
 }
 
-function previewLoop(
-  urlPromise: Promise<string | undefined>,
-  volume: number,
-  maxSecs: number,
-  fadeSecs: number,
-): AmbientHandle {
-  const targetVolume = clampVolume(volume);
-  let stopped = false;
-  let audio: HTMLAudioElement | null = null;
-  let fadeTimer: ReturnType<typeof setInterval> | null = null;
-  let fadeStartTimer: ReturnType<typeof setTimeout> | null = null;
-  const stop = () => {
-    if (stopped) return;
-    stopped = true;
-    if (fadeTimer !== null) clearInterval(fadeTimer);
-    if (fadeStartTimer !== null) clearTimeout(fadeStartTimer);
-    if (!audio) return;
-    try {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.src = "";
-    } catch {
-      // ignore
-    }
-  };
-  void urlPromise.then((url) => {
-    if (stopped || !url) return;
-    audio = new Audio(url);
-    audio.volume = targetVolume;
-    audio.loop = true;
-    audio.play().catch(() => {});
-    const fadeStartMs = Math.max(0, (maxSecs - fadeSecs) * 1000);
-    fadeStartTimer = setTimeout(() => {
-      if (stopped || !audio) return;
-      const steps = 10;
-      const stepMs = (fadeSecs * 1000) / steps;
-      let i = 0;
-      fadeTimer = setInterval(() => {
-        i += 1;
-        if (audio) audio.volume = Math.max(0, targetVolume * (1 - i / steps));
-        if (i >= steps) {
-          if (fadeTimer !== null) clearInterval(fadeTimer);
-          stop();
-        }
-      }, stepMs);
-    }, fadeStartMs);
-  });
-  return { stop };
-}
-
-/** Preview an ambient sound on the Settings page with a hard time
- * cap (default 6s) and a brief fade-out (default 0.5s) so the page
- * never leaks audio that lasts "forever". */
+/** Audition an ambient sound on the Settings page. The backend caps the
+ * preview at a few seconds so it never loops forever. */
 export function previewAmbient(
   id: string,
   volume: number,
-  maxSecs = 6,
-  fadeSecs = 0.5,
 ): AmbientHandle | null {
   if (volume <= 0) return null;
-  return previewLoop(soundUrl(id), volume, maxSecs, fadeSecs);
+  fire("preview_ambient", { soundId: id, volume });
+  return ambientHandle();
 }
 
-/** Preview a user-supplied ambient file with the same time/fade caps
- * as {@link previewAmbient}. */
+/** Audition a user-supplied ambient file with the same time cap as
+ * {@link previewAmbient}. */
 export function previewCustomAmbient(
   path: string,
   volume: number,
-  maxSecs = 6,
-  fadeSecs = 0.5,
 ): AmbientHandle | null {
   if (volume <= 0 || !path) return null;
-  return previewLoop(
-    Promise.resolve(customSoundUrl(path)),
-    volume,
-    maxSecs,
-    fadeSecs,
-  );
+  fire("preview_custom_ambient", { path, volume });
+  return ambientHandle();
 }

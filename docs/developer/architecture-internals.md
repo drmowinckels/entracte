@@ -31,6 +31,8 @@ scheduler/              Break scheduling (the largest module)
 
 camera.rs / video.rs    Per-OS detection threads (macOS uses log stream / pmset,
                         Linux walks /proc, Windows reads the registry / WnfStateData)
+audio.rs                Native rodio playback thread + sound commands (decodes
+                        in-process, so it's webview/codec-independent)
 dnd.rs                  Do-Not-Disturb / Focus detection (macOS, Windows)
 hooks.rs                Shell-command execution model (off by default)
 platform.rs             get_platform Tauri command (renderer asks Rust what OS this is)
@@ -64,7 +66,8 @@ views/
     components/         InfoTip, Advanced, SoundControls, Rows, etc.
     tabs/               one component per tab (about/breaks/insights/profiles/quiet/schedule/system)
 
-lib/                    Pure utilities (color, time, sounds, platform, ...)
+lib/                    Utilities (color, time, platform, ...) + sounds.ts,
+                        thin wrappers over the native audio Tauri commands
 ```
 
 ## The 1Hz run loop
