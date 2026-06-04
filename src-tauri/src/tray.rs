@@ -878,7 +878,7 @@ mod tests {
     fn outline_glyph_preserves_anti_aliased_body_alpha() {
         let (w, h) = (3u32, 3u32);
         let mut rgba = vec![0u8; (w * h * 4) as usize];
-        let centre = ((1 * w + 1) * 4) as usize;
+        let centre = ((w + 1) * 4) as usize;
         rgba[centre + 3] = 128;
         let out = outline_glyph(&rgba, w, h, 1, [242, 242, 242], [20, 20, 20]);
         assert_eq!(&out[centre..centre + 4], &[242, 242, 242, 128]);
