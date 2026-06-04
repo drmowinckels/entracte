@@ -287,6 +287,8 @@ fn platform_resume(_token: &ResumeToken) {}
 mod linux {
     use std::process::Command;
 
+    use crate::proc::{CommandTimeoutExt, PROBE_TIMEOUT};
+
     // Absolute path so a planted `gdbus` earlier in `$PATH` can't
     // intercept the session-bus calls. `/usr/bin/gdbus` ships in
     // glib2/libglib2.0-bin on every distro we target.
@@ -317,7 +319,7 @@ mod linux {
         for arg in args {
             cmd.arg(arg);
         }
-        let out = cmd.output().ok()?;
+        let out = cmd.output_timeout(PROBE_TIMEOUT).ok()?;
         if !out.status.success() {
             return None;
         }

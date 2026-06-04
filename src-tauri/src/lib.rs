@@ -10,6 +10,7 @@ mod license_redact;
 mod media;
 mod pause_store;
 mod platform;
+mod proc;
 mod renderer_log;
 mod scheduler;
 mod screen_time_store;
