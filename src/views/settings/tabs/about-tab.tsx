@@ -180,6 +180,20 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
         </p>
       </section>
 
+      <h2>Companion app</h2>
+      <section>
+        <p className="about-meta">
+          Tracking your work hours too? <strong>Cairn</strong> is Entracte's
+          sibling — local-first time tracking that quietly notices what you work
+          on.
+        </p>
+        <div className="actions inline">
+          <button onClick={() => openUrl("https://cairn.drmowinckels.io/")}>
+            Try Cairn →
+          </button>
+        </div>
+      </section>
+
       <div className="section-heading">
         <h2>Diagnostics</h2>
         <button onClick={onCopyDiagnosticsReport}>
