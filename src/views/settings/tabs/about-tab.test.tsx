@@ -211,4 +211,11 @@ describe("AboutTab — diagnostics & author links", () => {
       "https://buymeacoffee.com/drmowinckels",
     );
   });
+
+  it("opens the Cairn companion-app link", async () => {
+    const user = userEvent.setup();
+    render(<AboutTab supporter={supporterStub()} />);
+    await user.click(screen.getByRole("button", { name: /try cairn/i }));
+    expect(openUrlMock).toHaveBeenCalledWith("https://cairn.drmowinckels.io/");
+  });
 });
