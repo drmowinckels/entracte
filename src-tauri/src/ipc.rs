@@ -295,12 +295,16 @@ async fn dispatch(app: &AppHandle, req: IpcRequest) -> IpcResponse {
 /// Merge a single `key`/`value` override into `current` and return the
 /// resulting `Settings`, ready to store.
 ///
-/// Pure (no locks, no runtime), so the JSON round-trip + cache rebuild is
+/// Pure (no locks, no runtime), so the JSON round-trip + clamp is
 /// unit-testable without driving the production `AppHandle<Wry>` IPC path.
 /// Serialises `current` to JSON, validates the key exists, swaps in
-/// `value`, deserialises back, and rebuilds the `#[serde(skip)]` `derived`
-/// cache (which arrives empty from a wholesale deserialise). Errors are the
-/// user-facing strings the IPC handler returns verbatim.
+/// `value`, deserialises back, and runs `clamp()` — the same normalisation
+/// the GUI `update_settings` command applies. Without it the IPC/CLI path
+/// could persist out-of-range values the GUI forbids (e.g. a 0s interval
+/// that makes a break fire every tick) and skip `custom_css`/fixed-time
+/// sanitisation. `clamp()` rebuilds the `#[serde(skip)]` `derived` cache as
+/// its final step, so the wholesale-deserialise's empty cache is repopulated.
+/// Errors are the user-facing strings the IPC handler returns verbatim.
 fn apply_settings_key(
     current: &Settings,
     key: &str,
@@ -313,7 +317,7 @@ fn apply_settings_key(
     v[key] = value;
     let mut next: Settings =
         serde_json::from_value(v).map_err(|e| format!("type mismatch: {e}"))?;
-    next.rebuild_derived();
+    next.clamp();
     Ok(next)
 }
 
@@ -644,6 +648,19 @@ mod tests {
         assert_eq!(next.micro_fixed_times, vec!["09:30", "14:00"]);
         // "09:30" → 570, "14:00" → 840.
         assert_eq!(next.derived.micro_fixed_minutes, vec![570, 840]);
+    }
+
+    #[test]
+    fn apply_settings_key_clamps_out_of_range_value() {
+        // A 0s interval would make the run loop fire a break every tick;
+        // the IPC path must clamp it to the same 30s floor the GUI enforces.
+        let next = apply_settings_key(
+            &Settings::default(),
+            "micro_interval_secs",
+            serde_json::json!(0),
+        )
+        .expect("valid key + value");
+        assert_eq!(next.micro_interval_secs, 30);
     }
 
     #[test]
