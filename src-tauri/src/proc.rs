@@ -11,7 +11,7 @@
 //! already treat as "signal absent".
 
 use std::io::{self, Read};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,9 +22,35 @@ use std::time::{Duration, Instant};
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often to check whether the child has exited while waiting. 10 ms is
-/// fine-grained next to a 2 s timeout and a 10 s poll loop, and keeps the
+/// fine-grained next to the timeouts and poll loops it guards, and keeps the
 /// wait off a busy spin.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Poll `child` until it exits or `deadline` passes. On overrun the child is
+/// killed and reaped (so it can't linger as a zombie) and `Ok(None)` is
+/// returned; otherwise `Ok(Some(status))`.
+fn wait_until(child: &mut Child, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Wait for an already-spawned `child` up to `timeout`, killing and reaping
+/// it if it overruns. Returns `Ok(Some(status))` if it exited on its own, or
+/// `Ok(None)` if it was killed for exceeding the timeout. Either way the
+/// child is reaped, so a fire-and-forget caller can't leak a zombie or a
+/// runaway process.
+pub fn reap_or_kill(child: &mut Child, timeout: Duration) -> io::Result<Option<ExitStatus>> {
+    wait_until(child, Instant::now() + timeout)
+}
 
 /// Drop-in replacement for [`Command::output`] that bounds the wait.
 pub trait CommandTimeoutExt {
@@ -53,30 +79,16 @@ impl CommandTimeoutExt for Command {
             buf
         });
 
-        let deadline = Instant::now() + timeout;
-        let status = loop {
-            if let Some(status) = child.try_wait()? {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                // Deliberately don't join the reader threads here: a killed
-                // process whose child inherited the stdout/stderr pipe (e.g.
-                // a shell that spawned the real tool) can keep them blocked
-                // on `read_to_end`, and the caller must not wait on that.
-                // Dropping the handles detaches them; a reader then outlives
-                // this call until its pipe write-end finally closes — for a
-                // wedged pipe-holding grandchild, only when that process dies
-                // or the app exits. An accepted, bounded cost on the probe
-                // path (the probed tools don't fork such children), not a
-                // guarantee of prompt cleanup.
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "command exceeded timeout",
-                ));
-            }
-            thread::sleep(POLL_INTERVAL);
+        let Some(status) = wait_until(&mut child, Instant::now() + timeout)? else {
+            // Timed out: the child was killed and reaped. Deliberately don't
+            // join the reader threads — a killed process whose child inherited
+            // the pipe (e.g. a shell that spawned the real tool) can keep them
+            // blocked on `read_to_end`, and the caller must not wait on that.
+            // They EOF and exit on their own once the pipe finally closes.
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "command exceeded timeout",
+            ));
         };
 
         let stdout = stdout_reader.join().unwrap_or_default();
@@ -156,5 +168,25 @@ mod tests {
             .output_timeout(Duration::from_secs(1))
             .unwrap_err();
         assert_ne!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn reap_or_kill_reaps_a_fast_child() {
+        let mut child = echo_hello().stdout(Stdio::null()).spawn().unwrap();
+        let status = reap_or_kill(&mut child, Duration::from_secs(5)).unwrap();
+        assert!(status.expect("child exited on its own").success());
+    }
+
+    #[test]
+    fn reap_or_kill_kills_a_child_that_overruns() {
+        let started = Instant::now();
+        let mut child = sleep_five_seconds().stdout(Stdio::null()).spawn().unwrap();
+        let status = reap_or_kill(&mut child, Duration::from_millis(150)).unwrap();
+        let elapsed = started.elapsed();
+        assert!(status.is_none(), "an overrunning child should be killed");
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "should return shortly after the timeout, took {elapsed:?}"
+        );
     }
 }

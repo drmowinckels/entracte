@@ -7,6 +7,7 @@
 //! `hooks_enabled` toggle is the sole trust boundary.
 
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,13 @@ use crate::scheduler::{BreakKind, Settings};
 /// fork-bomb the host on every break boundary. 32 is well above any
 /// realistic per-event subscription count.
 pub const MAX_HOOKS_PER_EVENT: usize = 32;
+
+/// Hard cap on how long a hook child may run before it's killed. Hooks are
+/// fire-and-forget, so a hung one — an accidental infinite loop, a read that
+/// blocks despite the null stdin — would otherwise live until the app exits.
+/// 30s is generous for the quick notify/log commands hooks are meant for
+/// while still bounding a runaway.
+const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The scheduler events a hook can subscribe to. Serialised as the
 /// lowercase snake-case name (also the value passed in `$ENTRACTE_EVENT`).
@@ -147,8 +155,9 @@ pub fn matching_hooks(settings: &Settings, event: HookEvent) -> Vec<&Hook> {
 }
 
 /// Fire every matching hook for `event`. Each child runs on its own
-/// std::thread and inherits stdio from `/dev/null`. Fire-and-forget:
-/// we never block on the child or capture its output.
+/// std::thread with stdio set to `/dev/null`. We don't capture output, but
+/// the thread does reap the child (and kill it after [`HOOK_TIMEOUT`]) so a
+/// fire-and-forget hook can't leave a zombie or a runaway behind.
 ///
 /// Capped at [`MAX_HOOKS_PER_EVENT`] — anything beyond is dropped with
 /// a warning. See [`run_hooks_with`] for a test-friendly version that
@@ -197,6 +206,10 @@ pub fn run_hooks_with(
 }
 
 pub(crate) fn spawn_hook(command: &str, env: &[(String, String)]) {
+    spawn_hook_with_timeout(command, env, HOOK_TIMEOUT);
+}
+
+fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Duration) {
     let argv = match shell_words::split(command) {
         Ok(v) => v,
         Err(e) => {
@@ -229,10 +242,24 @@ pub(crate) fn spawn_hook(command: &str, env: &[(String, String)]) {
     for (k, v) in env {
         cmd.env(k, v);
     }
-    if let Err(e) = cmd.spawn() {
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            warn!(
+                "hooks: failed to spawn {program_basename} (argc={}): {e}",
+                args.len()
+            );
+            return;
+        }
+    };
+    // We're on a detached per-hook thread (see `run_hooks`), so blocking here
+    // to reap the child is fine — and necessary, or a fire-and-forget hook
+    // leaves a zombie. A child that overruns `timeout` is killed; a `try_wait`
+    // error (extraordinarily rare) just means we stop waiting on it.
+    if let Ok(None) = crate::proc::reap_or_kill(&mut child, timeout) {
         warn!(
-            "hooks: failed to spawn {program_basename} (argc={}): {e}",
-            args.len()
+            "hooks: killed {program_basename} after exceeding {}s",
+            timeout.as_secs()
         );
     }
 }
@@ -621,6 +648,40 @@ mod tests {
         assert!(body.contains("ENTRACTE_EVENT=break_start"), "got: {body}");
         assert!(body.contains("ENTRACTE_KIND=long"), "got: {body}");
         assert!(body.contains("ENTRACTE_DURATION_SECS=1200"), "got: {body}");
+    }
+
+    #[cfg(unix)]
+    fn sleeping_hook_command() -> String {
+        "/bin/sleep 5".to_string()
+    }
+
+    #[cfg(windows)]
+    fn sleeping_hook_command() -> String {
+        // ping spaces its probes ~1s apart, so -n 6 sleeps ~5s.
+        "cmd /c ping -n 6 127.0.0.1".to_string()
+    }
+
+    #[test]
+    fn spawn_hook_handles_unspawnable_command_without_panic() {
+        // Parses fine, but the program doesn't exist — must hit the
+        // spawn-error arm and return cleanly rather than panic.
+        spawn_hook("/nonexistent/entracte-hook-binary arg1", &[]);
+    }
+
+    #[test]
+    fn spawn_hook_kills_a_child_that_overruns_its_timeout() {
+        let started = std::time::Instant::now();
+        spawn_hook_with_timeout(
+            &sleeping_hook_command(),
+            &[],
+            std::time::Duration::from_millis(150),
+        );
+        // The call blocks only until the overrun kill, not the full 5s sleep.
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "spawn_hook should kill the overrunning child, took {elapsed:?}"
+        );
     }
 
     #[test]
