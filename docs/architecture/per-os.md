@@ -19,3 +19,9 @@ Three signals — Do Not Disturb, camera in use, and idle time — are read dire
 ## Activation policy
 
 macOS uses `ActivationPolicy::Accessory` — no Dock icon, no app menu in the menu bar. The tray icon is the only entry point. The tray uses `trayIconTemplate.png` as a template image so AppKit auto-tints it for light/dark menu bars. Don't replace it with a coloured PNG.
+
+## Tray icon contrast (Linux/Windows)
+
+The tray PNGs are pure-black glyphs with alpha (the macOS "template" convention). Only macOS recolours a template for the active menu-bar theme; Linux (StatusNotifierItem / AppIndicator) and Windows render the raw pixels, so a black glyph vanishes on a dark panel — notably the GNOME top bar, which is black regardless of the GTK light/dark theme (#86).
+
+`tray_image()` in [`src-tauri/src/tray.rs`](../../src-tauri/src/tray.rs) handles this: on macOS it passes the raw template through for AppKit to tint; on every other OS it recolours at runtime via `outline_glyph_for_panels()` — the glyph body becomes near-white (visible on the dark GNOME bar) and gains a near-black outline ring (visible on light KDE/XFCE/Windows panels). The recolour is a pure function over RGBA bytes, so there are no extra PNG assets to keep in sync.

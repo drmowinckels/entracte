@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tray icon is now visible on dark Linux/Windows panels.** The menu-bar glyph is a black template image that only macOS recolours for its menu bar; on Linux and Windows the raw black pixels were drawn as-is and disappeared against a dark panel — notably the GNOME top bar, which is black whatever the GTK theme. Off macOS the glyph is now recoloured at runtime to a near-white body with a near-black outline, so it reads on both dark and light panels. ([#86](https://github.com/drmowinckels/entracte/issues/86))
+
 ## [0.0.5] — 2026-06-04
 
 Cross-platform fixes from beta feedback: camera detection keeps pausing breaks on macOS 26, break sounds finally play on Linux, picking which break ideas you see is now free, and the fullscreen-video auto-pause flags where it's unreliable.

@@ -186,7 +186,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let resume_for_click = resume.clone();
     let resume_break_for_event = resume_break.clone();
 
-    let tray_icon = Image::from_bytes(TRAY_ICON_BYTES)?;
+    let tray_icon = tray_image(TrayIconKind::Normal, std::env::consts::OS)?;
 
     let tray = TrayIconBuilder::with_id("main")
         .icon(tray_icon)
@@ -397,6 +397,100 @@ fn icon_is_template(os: &str) -> bool {
     os == "macos"
 }
 
+// Panel-agnostic recolouring of the monochrome template glyph for
+// platforms without template support (Linux/Windows). The glyph body is
+// painted near-white so it reads on the dark GNOME top bar — which is
+// black regardless of the GTK light/dark theme — and ringed with a
+// near-black outline so it still reads on light KDE/XFCE/Windows panels.
+// #86: turning template mode off alone left the glyph pure black, so it
+// stayed invisible on the dark panel that prompted the report.
+const TRAY_FILL_RGB: [u8; 3] = [0xF2, 0xF2, 0xF2];
+const TRAY_OUTLINE_RGB: [u8; 3] = [0x14, 0x14, 0x14];
+// Radius in source pixels. The PNGs are 200×200 and the panel renders
+// them ~22px tall, so this ~8px ring survives the downscale as a ~1px halo.
+const TRAY_OUTLINE_RADIUS: i32 = 8;
+// Pixels at/above this alpha count as glyph body; below is background.
+const TRAY_ALPHA_THRESHOLD: u8 = 16;
+
+/// Repaint a monochrome glyph's body to `fill` and ring it with `outline`,
+/// so it contrasts against both light and dark panels. Glyph-body alpha is
+/// preserved (anti-aliased edges stay smooth); the outline ring is fully
+/// opaque; everything else stays transparent.
+fn outline_glyph(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    radius: i32,
+    fill: [u8; 3],
+    outline: [u8; 3],
+) -> Vec<u8> {
+    let w = width as i32;
+    let h = height as i32;
+    let is_body = |x: i32, y: i32| -> bool {
+        if x < 0 || y < 0 || x >= w || y >= h {
+            return false;
+        }
+        rgba[((y * w + x) as usize) * 4 + 3] >= TRAY_ALPHA_THRESHOLD
+    };
+    let r2 = radius * radius;
+    let mut out = vec![0u8; rgba.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) as usize) * 4;
+            let a = rgba[i + 3];
+            if a >= TRAY_ALPHA_THRESHOLD {
+                out[i] = fill[0];
+                out[i + 1] = fill[1];
+                out[i + 2] = fill[2];
+                out[i + 3] = a;
+                continue;
+            }
+            let mut near = false;
+            'scan: for dy in -radius..=radius {
+                for dx in -radius..=radius {
+                    if dx * dx + dy * dy > r2 {
+                        continue;
+                    }
+                    if is_body(x + dx, y + dy) {
+                        near = true;
+                        break 'scan;
+                    }
+                }
+            }
+            if near {
+                out[i] = outline[0];
+                out[i + 1] = outline[1];
+                out[i + 2] = outline[2];
+                out[i + 3] = 255;
+            }
+        }
+    }
+    out
+}
+
+fn outline_glyph_for_panels(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    outline_glyph(
+        rgba,
+        width,
+        height,
+        TRAY_OUTLINE_RADIUS,
+        TRAY_FILL_RGB,
+        TRAY_OUTLINE_RGB,
+    )
+}
+
+/// Decode a tray-icon asset and adapt it to the platform: macOS keeps the
+/// raw black template (AppKit tints it), every other OS gets the
+/// light-fill/dark-outline recolour so the glyph survives a dark panel (#86).
+fn tray_image(kind: TrayIconKind, os: &str) -> tauri::Result<Image<'static>> {
+    let base = Image::from_bytes(kind.bytes())?;
+    if icon_is_template(os) {
+        return Ok(base);
+    }
+    let rgba = outline_glyph_for_panels(base.rgba(), base.width(), base.height());
+    Ok(Image::new_owned(rgba, base.width(), base.height()))
+}
+
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn tray_icon_kind_for(snapshot: &TrayCountdownSnapshot) -> TrayIconKind {
     match snapshot {
@@ -419,7 +513,7 @@ fn spawn_countdown_ticker(app: AppHandle, tray: Arc<TrayIcon<tauri::Wry>>) {
             let (snapshot, text_enabled) = scheduler.tray_countdown_snapshot().await;
             let icon_kind = tray_icon_kind_for(&snapshot);
             if Some(icon_kind) != last_icon {
-                if let Ok(icon) = Image::from_bytes(icon_kind.bytes()) {
+                if let Ok(icon) = tray_image(icon_kind, std::env::consts::OS) {
                     let _ = tray.set_icon(Some(icon));
                     let _ = tray.set_icon_as_template(icon_is_template(std::env::consts::OS));
                 }
@@ -752,6 +846,82 @@ mod tests {
                 "{snap:?} should use the normal icon"
             );
         }
+    }
+
+    #[test]
+    fn outline_glyph_recolours_body_and_rings_it() {
+        // 5×5 with a single opaque body pixel at the centre, radius 1.
+        let (w, h) = (5u32, 5u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        let idx = |x: u32, y: u32| ((y * w + x) * 4) as usize;
+        rgba[idx(2, 2) + 3] = 255;
+
+        let out = outline_glyph(&rgba, w, h, 1, [200, 200, 200], [10, 10, 10]);
+
+        // Body becomes fill, alpha preserved.
+        assert_eq!(&out[idx(2, 2)..idx(2, 2) + 4], &[200, 200, 200, 255]);
+        // Orthogonal neighbours (dx²+dy² ≤ 1) become opaque outline.
+        for (x, y) in [(1, 2), (3, 2), (2, 1), (2, 3)] {
+            assert_eq!(
+                &out[idx(x, y)..idx(x, y) + 4],
+                &[10, 10, 10, 255],
+                "({x},{y}) should be outline"
+            );
+        }
+        // Diagonals (dx²+dy² = 2 > 1) and far corners stay transparent.
+        for (x, y) in [(1, 1), (3, 3), (0, 0), (4, 4)] {
+            assert_eq!(out[idx(x, y) + 3], 0, "({x},{y}) should stay transparent");
+        }
+    }
+
+    #[test]
+    fn outline_glyph_preserves_anti_aliased_body_alpha() {
+        let (w, h) = (3u32, 3u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        let centre = ((1 * w + 1) * 4) as usize;
+        rgba[centre + 3] = 128;
+        let out = outline_glyph(&rgba, w, h, 1, [242, 242, 242], [20, 20, 20]);
+        assert_eq!(&out[centre..centre + 4], &[242, 242, 242, 128]);
+    }
+
+    #[test]
+    fn outline_for_panels_gives_real_glyph_both_fill_and_outline() {
+        let img = Image::from_bytes(TRAY_ICON_BYTES).unwrap();
+        let out = outline_glyph_for_panels(img.rgba(), img.width(), img.height());
+        assert_eq!(out.len(), img.rgba().len(), "dimensions must be preserved");
+        let has_fill = out
+            .chunks_exact(4)
+            .any(|p| p[3] > 0 && p[0] > 0xE0 && p[1] > 0xE0 && p[2] > 0xE0);
+        let has_outline = out
+            .chunks_exact(4)
+            .any(|p| p[3] == 255 && p[0] < 0x30 && p[1] < 0x30 && p[2] < 0x30);
+        assert!(
+            has_fill,
+            "recoloured glyph must contain near-white body pixels"
+        );
+        assert!(
+            has_outline,
+            "recoloured glyph must contain a near-black outline ring"
+        );
+    }
+
+    #[test]
+    fn tray_image_recolours_off_macos_but_not_on_macos() {
+        let raw = Image::from_bytes(TRAY_ICON_BYTES).unwrap();
+        let mac = tray_image(TrayIconKind::Normal, "macos").unwrap();
+        assert_eq!(
+            mac.rgba(),
+            raw.rgba(),
+            "macOS keeps the raw template for AppKit to tint"
+        );
+        let linux = tray_image(TrayIconKind::Normal, "linux").unwrap();
+        assert_ne!(
+            linux.rgba(),
+            raw.rgba(),
+            "Linux must recolour so the glyph survives a dark panel"
+        );
+        assert_eq!(linux.width(), raw.width());
+        assert_eq!(linux.height(), raw.height());
     }
 
     #[test]
