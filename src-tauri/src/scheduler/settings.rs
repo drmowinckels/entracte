@@ -624,17 +624,68 @@ impl Default for Settings {
     }
 }
 
+/// A borrowed, per-kind view over the `micro_*` / `long_*` field pairs of
+/// a [`Settings`]. Built by [`Settings::for_kind`] to collapse the
+/// `match kind { Micro => s.micro_x, Long => s.long_x, … }` ladders that
+/// recur across `scheduler/` into a single `s.for_kind(kind)?.x` read.
+///
+/// Borrowing keeps this off the wire entirely: the owning `Settings` keeps
+/// its flat `micro_*` / `long_*` fields and its derived serde, so the
+/// on-disk `settings.json` shape and the Rust↔TS IPC contract are
+/// unchanged. Only Micro and Long have these paired fields; Sleep has its
+/// own dedicated fields (`bedtime_duration_secs`, `sleep_hints`, …) and so
+/// [`Settings::for_kind`] returns `None` for it.
+#[derive(Debug, Clone, Copy)]
+pub struct BreakKindSettings<'a> {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub duration_secs: u64,
+    pub enforceable: bool,
+    pub manual_finish: bool,
+    pub mode: BreakMode,
+    pub schedule_mode: ScheduleMode,
+    /// The pre-parsed fixed-time minutes for this kind (see
+    /// [`DerivedCaches`]).
+    pub fixed_minutes: &'a [u32],
+}
+
 impl Settings {
+    /// Borrowed per-kind view collapsing the `micro_*` / `long_*` field
+    /// pairs (see [`BreakKindSettings`]). Returns `None` for
+    /// [`BreakKind::Sleep`], which has no interval/duration/mode pair —
+    /// callers handle the sleep case with its dedicated fields.
+    pub fn for_kind(&self, kind: BreakKind) -> Option<BreakKindSettings<'_>> {
+        match kind {
+            BreakKind::Micro => Some(BreakKindSettings {
+                enabled: self.micro_enabled,
+                interval_secs: self.micro_interval_secs,
+                duration_secs: self.micro_duration_secs,
+                enforceable: self.micro_enforceable,
+                manual_finish: self.micro_manual_finish,
+                mode: self.micro_break_mode,
+                schedule_mode: self.micro_schedule_mode,
+                fixed_minutes: &self.derived.micro_fixed_minutes,
+            }),
+            BreakKind::Long => Some(BreakKindSettings {
+                enabled: self.long_enabled,
+                interval_secs: self.long_interval_secs,
+                duration_secs: self.long_duration_secs,
+                enforceable: self.long_enforceable,
+                manual_finish: self.long_manual_finish,
+                mode: self.long_break_mode,
+                schedule_mode: self.long_schedule_mode,
+                fixed_minutes: &self.derived.long_fixed_minutes,
+            }),
+            BreakKind::Sleep => None,
+        }
+    }
+
     /// The [`ScheduleMode`] for the given break kind. Sleep has no
     /// interval/fixed split, so its mode never participates in either
     /// active-check — both report false (see `interval_active` /
     /// `fixed_active`).
     fn schedule_mode_for(&self, kind: BreakKind) -> Option<ScheduleMode> {
-        match kind {
-            BreakKind::Micro => Some(self.micro_schedule_mode),
-            BreakKind::Long => Some(self.long_schedule_mode),
-            BreakKind::Sleep => None,
-        }
+        self.for_kind(kind).map(|b| b.schedule_mode)
     }
 
     /// True iff this break kind's schedule fires on a repeating interval.
@@ -835,16 +886,39 @@ pub fn effective_long_hints(s: &Settings) -> Vec<String> {
     s.derived.long_hints_resolved.clone()
 }
 
+impl Settings {
+    /// The resolved hint pool to show for `kind`: the per-kind cache for
+    /// micro/long (honouring its hint mix), or the sleep pool for Sleep.
+    /// Collapses the `match kind { Micro => effective_micro_hints(s), … }`
+    /// ladder the fire paths used to repeat.
+    pub fn effective_hints(&self, kind: BreakKind) -> Vec<String> {
+        match kind {
+            BreakKind::Micro => effective_micro_hints(self),
+            BreakKind::Long => effective_long_hints(self),
+            BreakKind::Sleep => self.sleep_hints.clone(),
+        }
+    }
+
+    /// The `duration_secs` and `manual_finish` a break of `kind` fires with:
+    /// the per-kind pair for micro/long, or the bedtime duration / no
+    /// manual-finish for Sleep. The enforceability and hint pool are
+    /// resolved separately (see `test_break_enforceable` / `effective_hints`)
+    /// so the renderer and CLI paths share one enforceability rule.
+    pub fn duration_and_manual_finish(&self, kind: BreakKind) -> (u64, bool) {
+        match self.for_kind(kind) {
+            Some(b) => (b.duration_secs, b.manual_finish),
+            None => (self.bedtime_duration_secs, false),
+        }
+    }
+}
+
 /// Resolve the delivery mode for the given break kind.
 ///
 /// Sleep breaks always use `Overlay` (bedtime reminders ignore the
 /// per-kind mode); micro/long dispatch straight off their `BreakMode`.
 pub fn delivery_for(kind: BreakKind, s: &Settings) -> BreakDelivery {
-    match kind {
-        BreakKind::Micro => s.micro_break_mode.delivery(),
-        BreakKind::Long => s.long_break_mode.delivery(),
-        BreakKind::Sleep => BreakDelivery::Overlay,
-    }
+    s.for_kind(kind)
+        .map_or(BreakDelivery::Overlay, |b| b.mode.delivery())
 }
 
 /// True iff the given break kind is currently configured for the
@@ -1572,6 +1646,120 @@ mod tests {
         assert_eq!(s.typing_grace_secs, 10);
         assert_eq!(s.typing_max_deferral_secs, 60);
         assert!(s.pause_countdown_if_typing);
+    }
+
+    /// A flat `settings.json` captured before the `BreakKindSettings`
+    /// refactor. Proves the on-disk / IPC wire shape stays flat
+    /// (`micro_enabled`, `long_interval_secs`, …) — never nested into
+    /// `{ "micro": { … } }` — so existing settings files and the React
+    /// frontend keep loading unchanged.
+    const FLAT_FIXTURE: &str = include_str!("fixtures/default_settings_flat.json");
+
+    #[test]
+    fn flat_fixture_deserialises_into_settings() {
+        let s: Settings = serde_json::from_str(FLAT_FIXTURE).unwrap();
+        // Spot-check a per-kind pair survived the round-trip into the
+        // (still flat) struct fields.
+        assert_eq!(s.micro_interval_secs, 1200);
+        assert_eq!(s.long_duration_secs, 600);
+        assert!(s.micro_enabled);
+        assert!(s.long_enforceable);
+        assert_eq!(s.micro_break_mode, BreakMode::Overlay);
+        assert_eq!(s.long_schedule_mode, ScheduleMode::Interval);
+    }
+
+    #[test]
+    fn flat_fixture_round_trips_byte_identical() {
+        // Deserialise the captured pre-refactor file, then re-serialise it.
+        // The output must equal the input verbatim, proving the refactor did
+        // not change a single wire key or value. Line endings are normalised
+        // to LF and the trailing newline trimmed: git may check the fixture
+        // out as CRLF on Windows, but `to_string_pretty` always emits LF, and
+        // the wire-shape guarantee is about keys/values/order, not newlines.
+        let s: Settings = serde_json::from_str(FLAT_FIXTURE).unwrap();
+        let out = serde_json::to_string_pretty(&s).unwrap();
+        let expected = FLAT_FIXTURE.replace("\r\n", "\n");
+        assert_eq!(out, expected.trim_end());
+    }
+
+    #[test]
+    fn settings_serialises_with_flat_keys_not_nested_substructs() {
+        // Guards against an accidental switch to plain serde nesting,
+        // which would emit `{"micro": {"enabled": …}}` and break every
+        // `settings.micro_*` reader in the frontend and on disk.
+        let value = serde_json::to_value(Settings::default()).unwrap();
+        let obj = value.as_object().unwrap();
+        assert!(obj.contains_key("micro_enabled"));
+        assert!(obj.contains_key("long_interval_secs"));
+        assert!(!obj.contains_key("micro"), "wire shape must stay flat");
+        assert!(!obj.contains_key("long"), "wire shape must stay flat");
+    }
+
+    #[test]
+    fn for_kind_maps_micro_and_long_fields() {
+        let mut s = Settings {
+            micro_enabled: true,
+            micro_duration_secs: 42,
+            micro_enforceable: true,
+            micro_manual_finish: true,
+            micro_break_mode: BreakMode::Windowed,
+            micro_schedule_mode: ScheduleMode::Fixed,
+            long_enabled: false,
+            long_duration_secs: 99,
+            long_break_mode: BreakMode::Notification,
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+
+        let micro = s.for_kind(BreakKind::Micro).unwrap();
+        assert!(micro.enabled);
+        assert_eq!(micro.duration_secs, 42);
+        assert!(micro.enforceable);
+        assert!(micro.manual_finish);
+        assert_eq!(micro.mode, BreakMode::Windowed);
+        assert_eq!(micro.schedule_mode, ScheduleMode::Fixed);
+
+        let long = s.for_kind(BreakKind::Long).unwrap();
+        assert!(!long.enabled);
+        assert_eq!(long.duration_secs, 99);
+        assert_eq!(long.mode, BreakMode::Notification);
+    }
+
+    #[test]
+    fn for_kind_returns_none_for_sleep() {
+        assert!(Settings::default().for_kind(BreakKind::Sleep).is_none());
+    }
+
+    #[test]
+    fn for_kind_exposes_fixed_minutes_cache_per_kind() {
+        let mut s = Settings {
+            micro_fixed_times: vec!["09:00".into()],
+            long_fixed_times: vec!["18:30".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+
+        assert_eq!(s.for_kind(BreakKind::Micro).unwrap().fixed_minutes, [540]);
+        assert_eq!(s.for_kind(BreakKind::Long).unwrap().fixed_minutes, [1110]);
+    }
+
+    #[test]
+    fn effective_hints_dispatches_per_kind() {
+        let mut s = Settings {
+            micro_physical_hints: vec!["m".into()],
+            micro_psychological_hints: vec![],
+            micro_hint_mix: HintMix::Physical,
+            long_hints: vec!["l".into()],
+            long_social_hints: vec![],
+            long_hint_mix: HintMix::Solo,
+            sleep_hints: vec!["z".into()],
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+
+        assert_eq!(s.effective_hints(BreakKind::Micro), ["m"]);
+        assert_eq!(s.effective_hints(BreakKind::Long), ["l"]);
+        assert_eq!(s.effective_hints(BreakKind::Sleep), ["z"]);
     }
 }
 

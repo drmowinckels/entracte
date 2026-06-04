@@ -14,7 +14,7 @@ use super::overlay::deliver_break;
 use super::pause::{persist_pause, PauseState};
 use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind_screen_time};
 use super::session_lock;
-use super::settings::{delivery_for, effective_long_hints, effective_micro_hints, Settings};
+use super::settings::{delivery_for, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string,
     prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
@@ -566,21 +566,14 @@ async fn deliver_scheduled_break<R: Runtime>(
 /// live value from the stats lock; the helper applies the
 /// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
 fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
-    let (duration_secs, enforceable, manual_finish, hints) = match kind {
-        BreakKind::Long => (
-            s.long_duration_secs,
-            s.long_enforceable || s.strict_mode,
-            s.long_manual_finish,
-            effective_long_hints(s),
-        ),
-        BreakKind::Micro => (
-            s.micro_duration_secs,
-            s.micro_enforceable || s.strict_mode,
-            s.micro_manual_finish,
-            effective_micro_hints(s),
-        ),
-        BreakKind::Sleep => unreachable!("sleep breaks use the bedtime fire path"),
-    };
+    // Sleep is delivered through the bedtime path, never here; enforce that
+    // invariant with a panic rather than silently firing the bedtime fields.
+    assert!(
+        s.for_kind(kind).is_some(),
+        "sleep breaks use the bedtime fire path"
+    );
+    let (duration_secs, enforceable, manual_finish, hints) =
+        super::commands::breaks::fire_fields(kind, s);
     BreakEvent {
         kind,
         duration_secs,
@@ -989,23 +982,31 @@ fn notify_screen_time_budget<R: Runtime>(app: &AppHandle<R>, budget_minutes: u64
     super::overlay::post_notification(app, "Time to wind down", screen_time_body(budget_minutes));
 }
 
+/// Pure decision: which break kinds were due (enabled and past their
+/// interval) at this tick and so are being suppressed by a guard. Split
+/// out from [`log_suppressions`] so the per-kind logic is unit-testable
+/// without a `Logger`.
+fn suppressed_kinds(s: &Settings, t: &super::timers::BreakTimers) -> Vec<BreakKind> {
+    [
+        (BreakKind::Micro, t.last_micro),
+        (BreakKind::Long, t.last_long),
+    ]
+    .into_iter()
+    .filter_map(|(kind, last)| {
+        let b = s.for_kind(kind)?;
+        (b.enabled && last.elapsed() >= Duration::from_secs(b.interval_secs)).then_some(kind)
+    })
+    .collect()
+}
+
 fn log_suppressions(
     logger: &Logger,
     s: &Settings,
     t: &super::timers::BreakTimers,
     reason: GuardReason,
 ) {
-    if s.micro_enabled && t.last_micro.elapsed() >= Duration::from_secs(s.micro_interval_secs) {
-        logger.log(EventPayload::GuardSuppress {
-            kind: BreakKind::Micro,
-            reason,
-        });
-    }
-    if s.long_enabled && t.last_long.elapsed() >= Duration::from_secs(s.long_interval_secs) {
-        logger.log(EventPayload::GuardSuppress {
-            kind: BreakKind::Long,
-            reason,
-        });
+    for kind in suppressed_kinds(s, t) {
+        logger.log(EventPayload::GuardSuppress { kind, reason });
     }
 }
 
@@ -1016,12 +1017,10 @@ fn log_suppressions(
 /// and gates on the kind being enabled and in a fixed-firing schedule
 /// mode. `Sleep` has no fixed-time schedule and is always `false`.
 fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
-    let (enabled, minutes) = match kind {
-        BreakKind::Long => (s.long_enabled, &s.derived.long_fixed_minutes),
-        BreakKind::Micro => (s.micro_enabled, &s.derived.micro_fixed_minutes),
-        BreakKind::Sleep => return false,
+    let Some(b) = s.for_kind(kind) else {
+        return false;
     };
-    enabled && s.fixed_active(kind) && minutes.contains(&now_min)
+    b.enabled && s.fixed_active(kind) && b.fixed_minutes.contains(&now_min)
 }
 
 // Case-insensitive token match for the app-pause list. We tokenise the
@@ -1165,7 +1164,7 @@ mod tests {
         assert_eq!(e.kind, BreakKind::Long);
         assert_eq!(e.duration_secs, s.long_duration_secs);
         assert_eq!(e.manual_finish, s.long_manual_finish);
-        assert_eq!(e.hints, effective_long_hints(&s));
+        assert_eq!(e.hints, s.effective_hints(BreakKind::Long));
         assert!(!e.hints.is_empty(), "default long hints are non-empty");
         // break_health is enabled by default → live intensity passes through.
         assert_eq!(e.health_intensity, 0.5);
@@ -1179,7 +1178,7 @@ mod tests {
         assert_eq!(e.kind, BreakKind::Micro);
         assert_eq!(e.duration_secs, s.micro_duration_secs);
         assert_eq!(e.manual_finish, s.micro_manual_finish);
-        assert_eq!(e.hints, effective_micro_hints(&s));
+        assert_eq!(e.hints, s.effective_hints(BreakKind::Micro));
         assert!(!e.hints.is_empty(), "default micro hints are non-empty");
     }
 
@@ -2004,5 +2003,61 @@ mod tests {
         let s = settings_for_guards(true, true, true, true, true);
         let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true).unwrap();
         assert_eq!(outcome.reason, SuppressReason::AppPause);
+    }
+
+    /// Settings whose micro/long intervals are zero so `last.elapsed() >= 0`
+    /// is always true with fresh timers — makes "overdue" hold regardless
+    /// of the CI monotonic clock's age (no wall-time back-dating, which a
+    /// young clock could turn into a no-op or panic).
+    #[allow(clippy::field_reassign_with_default)]
+    fn zero_interval_settings() -> Settings {
+        let mut s = Settings::default();
+        s.micro_interval_secs = 0;
+        s.long_interval_secs = 0;
+        s.rebuild_derived();
+        s
+    }
+
+    #[test]
+    fn suppressed_kinds_reports_both_when_enabled_and_overdue() {
+        let s = zero_interval_settings();
+        assert_eq!(
+            suppressed_kinds(&s, &super::super::timers::BreakTimers::new()),
+            vec![BreakKind::Micro, BreakKind::Long]
+        );
+    }
+
+    #[test]
+    fn suppressed_kinds_skips_disabled_kinds() {
+        let mut s = zero_interval_settings();
+        s.micro_enabled = false;
+        assert_eq!(
+            suppressed_kinds(&s, &super::super::timers::BreakTimers::new()),
+            vec![BreakKind::Long]
+        );
+    }
+
+    #[test]
+    fn suppressed_kinds_empty_when_not_yet_due() {
+        // Default intervals are 1200s+ and fresh timers are anchored at now,
+        // so neither kind has elapsed long enough to be due.
+        let mut s = Settings::default();
+        s.rebuild_derived();
+        assert!(suppressed_kinds(&s, &super::super::timers::BreakTimers::new()).is_empty());
+    }
+
+    #[test]
+    fn log_suppressions_logs_each_suppressed_kind() {
+        use crate::test_support::test_scheduler;
+        let s = zero_interval_settings();
+        let (_dir, sched) = test_scheduler(s.clone());
+        // Exercises the thin logging wrapper: both kinds are due, so it
+        // forwards a GuardSuppress event for each to the logger.
+        log_suppressions(
+            &sched.logger,
+            &s,
+            &super::super::timers::BreakTimers::new(),
+            GuardReason::Idle,
+        );
     }
 }
