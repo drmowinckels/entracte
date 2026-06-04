@@ -427,10 +427,11 @@ fn outline_glyph(
     let w = width as i32;
     let h = height as i32;
     let is_body = |x: i32, y: i32| -> bool {
-        if x < 0 || y < 0 || x >= w || y >= h {
-            return false;
-        }
-        rgba[((y * w + x) as usize) * 4 + 3] >= TRAY_ALPHA_THRESHOLD
+        x >= 0
+            && y >= 0
+            && x < w
+            && y < h
+            && rgba[((y * w + x) as usize) * 4 + 3] >= TRAY_ALPHA_THRESHOLD
     };
     let r2 = radius * radius;
     let mut out = vec![0u8; rgba.len()];
