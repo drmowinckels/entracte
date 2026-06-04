@@ -245,10 +245,8 @@ fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Dur
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
-            warn!(
-                "hooks: failed to spawn {program_basename} (argc={}): {e}",
-                args.len()
-            );
+            let argc = args.len();
+            warn!("hooks: failed to spawn {program_basename} (argc={argc}): {e}");
             return;
         }
     };
@@ -257,10 +255,8 @@ fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Dur
     // leaves a zombie. A child that overruns `timeout` is killed; a `try_wait`
     // error (extraordinarily rare) just means we stop waiting on it.
     if let Ok(None) = crate::proc::reap_or_kill(&mut child, timeout) {
-        warn!(
-            "hooks: killed {program_basename} after exceeding {}s",
-            timeout.as_secs()
-        );
+        let secs = timeout.as_secs();
+        warn!("hooks: killed {program_basename} after exceeding {secs}s");
     }
 }
 
