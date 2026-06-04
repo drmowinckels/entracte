@@ -49,7 +49,7 @@ The Breaks tab covers what breaks look and sound like, and the escape hatches.
 
 The Quiet times tab covers when breaks should _not_ fire.
 
-- **Auto-pause** — suppress breaks while Do Not Disturb / Focus is on (macOS, Windows), while the camera is in use (all OSes), or while fullscreen video is playing.
+- **Auto-pause** — suppress breaks while Do Not Disturb / Focus is on (macOS, Windows), while the camera is in use (all OSes), or while fullscreen video is playing. On macOS, Windows and X11 Linux the fullscreen-video check confirms a real fullscreen window, so a small background video won't hold your breaks. On Linux Wayland there is no portable way to confirm a fullscreen window, so the toggle shows a caution marker: detection falls back to "any media is keeping the display awake" and may suppress breaks for a small background video.
 - **During breaks** — _Pause media while a break is showing_ quiets whatever is playing (video or audio) when a break starts and resumes it when the break ends. On Linux this targets your media players precisely (via MPRIS); on macOS and Windows it sends a play/pause media key as a best-effort, so it works for most players but can't guarantee the exact app.
 - **Pause for specific apps** — toggle on and list app name fragments (one per line, partial case-insensitive match). Whenever any listed app is running, breaks are suppressed. A quick-add chip row offers common candidates for your platform.
 - **Manual pause** — shows the current pause state and a Resume button when you've paused from the tray icon.
