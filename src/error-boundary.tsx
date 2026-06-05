@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { redactRendererPayload } from "./lib/redact";
 
 type Props = {
   children: ReactNode;
@@ -76,18 +77,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
-/**
- * Strip LemonSqueezy-shaped licence keys and `ENT1-…` manual tokens
- * from a payload before shipping it to the Rust log. A stack trace
- * that captured local variables can leak credentials otherwise. The
- * Rust side redacts again as defense-in-depth (see
- * `renderer_log.rs::redact_license_shapes`).
- */
-export function redactRendererPayload(input: string): string {
-  return input
-    .replace(/ENT1-[A-Za-z0-9_-]{8,}/g, "[REDACTED-MANUAL-TOKEN]")
-    .replace(/[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{4}){3,}/g, "[REDACTED-LS-KEY]");
-}
+export { redactRendererPayload } from "./lib/redact";
 
 let globalReportersInstalled = false;
 
