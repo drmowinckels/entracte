@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Changed
+
+- **`entracte settings set …` now clamps out-of-range values like the Settings window.** Writing a setting through the CLI (or the underlying IPC channel) previously skipped the range-clamping and `custom_css`/fixed-time sanitisation the GUI applies, so e.g. `entracte settings set micro_interval_secs 0` persisted a 0-second interval that fired a break every tick. The CLI/IPC path now runs the same normalisation — flooring intervals at 30s, capping durations, and scrubbing custom CSS.
+
 ### Fixed
 
 - **Tray icon is now visible on dark Linux/Windows panels.** The menu-bar glyph is a black template image that only macOS recolours for its menu bar; on Linux and Windows the raw black pixels were drawn as-is and disappeared against a dark panel — notably the GNOME top bar, which is black whatever the GTK theme. Off macOS the glyph is now recoloured at runtime to a near-white body with a near-black outline, so it reads on both dark and light panels. ([#86](https://github.com/drmowinckels/entracte/issues/86))
