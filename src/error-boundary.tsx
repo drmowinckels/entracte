@@ -77,8 +77,6 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
-export { redactRendererPayload } from "./lib/redact";
-
 let globalReportersInstalled = false;
 
 /**
