@@ -85,15 +85,34 @@ impl<'de> Deserialize<'de> for Profile {
 pub struct ProfilesFile {
     pub profiles: Vec<Profile>,
     pub active: String,
+    /// Whether the first-run onboarding wizard has been completed (or
+    /// skipped). App-global rather than per-profile: onboarding is about
+    /// the install, not a single profile. A fresh install starts `false`
+    /// so the wizard shows once; any file that already exists on disk —
+    /// including one upgraded from a version that predates this field —
+    /// loads as `true` so existing users are never re-onboarded.
+    pub onboarding_completed: bool,
 }
 
 impl Default for ProfilesFile {
     fn default() -> Self {
-        Self::single(DEFAULT_PROFILE_NAME.to_string(), Settings::default())
+        // Reached when no settings file exists yet (genuine first run), so
+        // onboarding has not been completed.
+        Self {
+            profiles: vec![Profile {
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                settings: Settings::default(),
+            }],
+            active: DEFAULT_PROFILE_NAME.to_string(),
+            onboarding_completed: false,
+        }
     }
 }
 
 impl ProfilesFile {
+    /// Wrap a single profile. Used when migrating an existing flat/legacy
+    /// settings file, so `onboarding_completed` is `true`: the user already
+    /// has settings on disk and should not be onboarded.
     pub fn single(name: String, settings: Settings) -> Self {
         Self {
             profiles: vec![Profile {
@@ -101,6 +120,7 @@ impl ProfilesFile {
                 settings,
             }],
             active: name,
+            onboarding_completed: true,
         }
     }
 
@@ -156,7 +176,18 @@ impl<'de> Deserialize<'de> for ProfilesFile {
                         .map(String::from)
                         .or_else(|| profiles.first().map(|p| p.name.clone()))
                         .unwrap_or_else(|| DEFAULT_PROFILE_NAME.to_string());
-                    Ok(ProfilesFile { profiles, active })
+                    // A file already on disk means the user has used the app
+                    // before; default to onboarded when the field is absent
+                    // (file written before onboarding existed).
+                    let onboarding_completed = raw_value
+                        .get("onboarding_completed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    Ok(ProfilesFile {
+                        profiles,
+                        active,
+                        onboarding_completed,
+                    })
                 } else {
                     let mut raw_value = raw_value;
                     migrate_legacy_settings(&mut raw_value);
@@ -255,6 +286,7 @@ mod tests {
                 },
             ],
             active: "Home".to_string(),
+            ..ProfilesFile::default()
         };
         save(&path, &file).unwrap();
         let loaded = load(&path);
@@ -518,6 +550,67 @@ mod tests {
     }
 
     #[test]
+    fn load_missing_marks_onboarding_incomplete() {
+        let dir = temp_dir();
+        let path = dir.path().join("does-not-exist.json");
+        assert!(
+            !load(&path).onboarding_completed,
+            "a genuine first run must show onboarding"
+        );
+    }
+
+    #[test]
+    fn load_legacy_flat_settings_marks_onboarding_complete() {
+        let (_dir, path) = temp_file();
+        fs::write(&path, r#"{"micro_interval_secs": 99}"#).unwrap();
+        assert!(
+            load(&path).onboarding_completed,
+            "an existing legacy file must not re-onboard the user"
+        );
+    }
+
+    #[test]
+    fn load_profiles_file_without_flag_marks_onboarding_complete() {
+        let (_dir, path) = temp_file();
+        fs::write(
+            &path,
+            r#"{"profiles":[{"name":"Default","settings":{}}],"active":"Default"}"#,
+        )
+        .unwrap();
+        assert!(
+            load(&path).onboarding_completed,
+            "a pre-onboarding profiles file must not re-onboard the user"
+        );
+    }
+
+    #[test]
+    fn load_profiles_file_honours_explicit_flag() {
+        let (_dir, path) = temp_file();
+        fs::write(
+            &path,
+            r#"{"profiles":[{"name":"Default","settings":{}}],"active":"Default","onboarding_completed":false}"#,
+        )
+        .unwrap();
+        assert!(
+            !load(&path).onboarding_completed,
+            "an explicit false must be honoured (onboarding still pending)"
+        );
+    }
+
+    #[test]
+    fn onboarding_flag_round_trips_through_save() {
+        let (_dir, path) = temp_file();
+        let mut file = ProfilesFile::default();
+        assert!(!file.onboarding_completed);
+        file.onboarding_completed = true;
+        save(&path, &file).unwrap();
+        assert!(load(&path).onboarding_completed);
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"onboarding_completed\""));
+    }
+
+    #[test]
     fn active_settings_falls_back_to_first_when_missing() {
         let file = ProfilesFile {
             profiles: vec![Profile {
@@ -525,6 +618,7 @@ mod tests {
                 settings: Settings::default(),
             }],
             active: "Missing".to_string(),
+            ..ProfilesFile::default()
         };
         let s = file.active_settings();
         assert_eq!(

@@ -335,6 +335,7 @@ mod tests {
             }])),
             active_profile_name: Arc::new(TokioMutex::new(DEFAULT_PROFILE_NAME.to_string())),
             hook_dialog_busy: Arc::new(AtomicBool::new(false)),
+            onboarding_completed: Arc::new(AtomicBool::new(true)),
             import_in_progress: Arc::new(AtomicBool::new(false)),
         };
         (dir, sched)

@@ -496,6 +496,10 @@ async fn apply_bundle_to_scheduler<R: Runtime>(
         let mut active = scheduler.active_profile_name.lock().await;
         *active = profiles_file.active.clone();
     }
+    scheduler.onboarding_completed.store(
+        profiles_file.onboarding_completed,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     {
         let mut settings = scheduler.settings.lock().await;
         // `active_settings` rebuilds the `#[serde(skip)]` `derived` cache
@@ -690,6 +694,7 @@ mod tests {
         bundle.files.settings_json = serde_json::to_string(&ProfilesFile {
             profiles: vec![],
             active: String::new(),
+            ..ProfilesFile::default()
         })
         .unwrap();
         let err = validate_bundle(&bundle).expect_err("empty profiles is rejected");
@@ -705,6 +710,7 @@ mod tests {
                 settings: Settings::default(),
             }],
             active: "Nonexistent".to_string(),
+            ..ProfilesFile::default()
         })
         .unwrap();
         let err = validate_bundle(&bundle).expect_err("dangling active profile is rejected");

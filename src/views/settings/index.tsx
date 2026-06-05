@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useCustomStylesheet } from "../../lib/use-custom-stylesheet";
+import { OnboardingWizard } from "./components/onboarding/onboarding-wizard";
 import { TABS } from "./constants";
 import { useHooks } from "./hooks/use-hooks";
+import { useOnboarding } from "./hooks/use-onboarding";
 import { usePause } from "./hooks/use-pause";
 import { useProfiles } from "./hooks/use-profiles";
 import { useRovingTabList } from "./hooks/use-roving-tab-list";
@@ -35,6 +37,7 @@ export default function Settings() {
   const profiles = useProfiles();
   const hooks = useHooks(settings, reloadFromActive);
   const supporter = useSupporter();
+  const onboarding = useOnboarding();
   useCustomStylesheet(settings?.custom_css ?? "");
   const { tablistProps, tabProps } = useRovingTabList<Tab>({
     ids: TAB_IDS,
@@ -48,6 +51,14 @@ export default function Settings() {
         Skip to settings content
       </a>
       <main className="settings">
+        {settings && onboarding.needed && (
+          <OnboardingWizard
+            settings={settings}
+            update={update}
+            setAutostart={setAutostart}
+            onFinish={onboarding.complete}
+          />
+        )}
         <header className="settings-header">
           <div
             className="tabs"

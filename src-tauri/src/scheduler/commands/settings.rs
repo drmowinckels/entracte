@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use crate::config;
 use crate::supporter;
 use crate::SupporterAppState;
@@ -62,6 +64,31 @@ pub async fn update_settings(
     Ok(())
 }
 
+/// Whether the first-run onboarding wizard still needs to be shown. The
+/// renderer calls this on mount and only mounts the wizard when it
+/// returns `false`.
+#[tauri::command]
+pub async fn get_onboarding_completed(
+    scheduler: tauri::State<'_, Scheduler>,
+) -> Result<bool, String> {
+    Ok(scheduler.onboarding_completed.load(Ordering::Relaxed))
+}
+
+/// Mark onboarding as done (the user finished or skipped the wizard) and
+/// persist it so the wizard never shows again. Idempotent.
+#[tauri::command]
+pub async fn complete_onboarding(scheduler: tauri::State<'_, Scheduler>) -> Result<(), String> {
+    complete_onboarding_impl(scheduler.inner()).await;
+    Ok(())
+}
+
+async fn complete_onboarding_impl(scheduler: &Scheduler) {
+    scheduler
+        .onboarding_completed
+        .store(true, Ordering::Relaxed);
+    super::super::persist_profiles(scheduler).await;
+}
+
 // Hooks must never be set through `update_settings` — they require explicit
 // confirmation. Anything coming over the renderer IPC has its hook fields
 // overwritten with whatever is currently persisted before merge.
@@ -84,7 +111,40 @@ fn gate_custom_css(mut new: Settings, current: &Settings, is_supporter: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DEFAULT_PROFILE_NAME;
     use crate::hooks::{Hook, HookEvent};
+    use crate::test_support::test_scheduler_with_profiles;
+
+    fn one_profile() -> Vec<config::Profile> {
+        vec![config::Profile {
+            name: DEFAULT_PROFILE_NAME.to_string(),
+            settings: Settings::default(),
+        }]
+    }
+
+    #[tokio::test]
+    async fn complete_onboarding_sets_flag_and_persists() {
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
+        // Simulate a fresh install where onboarding is still pending.
+        sched.onboarding_completed.store(false, Ordering::Relaxed);
+
+        complete_onboarding_impl(&sched).await;
+
+        assert!(sched.onboarding_completed.load(Ordering::Relaxed));
+        let reloaded = config::load(&sched.config_path);
+        assert!(
+            reloaded.onboarding_completed,
+            "completion must survive a reload from disk"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_onboarding_is_idempotent() {
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
+        complete_onboarding_impl(&sched).await;
+        complete_onboarding_impl(&sched).await;
+        assert!(sched.onboarding_completed.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn strip_hooks_keeps_current_hook_fields_and_takes_other_fields_from_new() {
