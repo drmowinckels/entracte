@@ -9,7 +9,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Added
 
-- **First-run onboarding wizard.** A new install now opens a short guided setup over the Settings window — start-at-login, working hours, wellness-hint mix, and wind-down — with every control writing through the same settings the tabs use, so finishing leaves the app configured. It shows once: completion (or skipping) is persisted, and any existing install — including settings files written before this version — is treated as already onboarded, so upgraders never see it.
+- **First-run onboarding wizard.** A new install now opens a short guided setup over the Settings window — start-at-login, working hours, wellness-hint mix, and wind-down — with every control writing through the same settings the tabs use, so finishing leaves the app configured. It shows once: completion (or skipping) is persisted, and any existing install — including settings files written before this version — is treated as already onboarded, so people upgrading never see it.
 
 ### Changed
 

@@ -103,6 +103,10 @@ const TAURI_SHIM = `
   const responses = {
     get_settings: DEFAULT_SETTINGS,
     update_settings: null,
+    // Already onboarded, so the first-run wizard never overlays the tabs
+    // this audit walks. (Wizard a11y is exercised by its own component test.)
+    get_onboarding_completed: true,
+    complete_onboarding: null,
     get_platform: "macos",
     get_platform_capabilities: {
       supportsDndRead: true,

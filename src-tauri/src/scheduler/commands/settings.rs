@@ -113,7 +113,8 @@ mod tests {
     use super::*;
     use crate::config::DEFAULT_PROFILE_NAME;
     use crate::hooks::{Hook, HookEvent};
-    use crate::test_support::test_scheduler_with_profiles;
+    use crate::test_support::{test_scheduler_with_profiles, wrap_in_mock_app};
+    use tauri::Manager;
 
     fn one_profile() -> Vec<config::Profile> {
         vec![config::Profile {
@@ -144,6 +145,43 @@ mod tests {
         complete_onboarding_impl(&sched).await;
         complete_onboarding_impl(&sched).await;
         assert!(sched.onboarding_completed.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn get_onboarding_completed_command_reflects_the_flag() {
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
+        sched.onboarding_completed.store(false, Ordering::Relaxed);
+        let app = wrap_in_mock_app(sched.clone());
+
+        assert!(
+            !get_onboarding_completed(app.state::<Scheduler>())
+                .await
+                .unwrap(),
+            "a pending install reports incomplete"
+        );
+
+        sched.onboarding_completed.store(true, Ordering::Relaxed);
+        assert!(
+            get_onboarding_completed(app.state::<Scheduler>())
+                .await
+                .unwrap(),
+            "once flipped, the command reports complete"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_onboarding_command_sets_and_persists_the_flag() {
+        let (_dir, sched) = test_scheduler_with_profiles(one_profile(), DEFAULT_PROFILE_NAME);
+        sched.onboarding_completed.store(false, Ordering::Relaxed);
+        let app = wrap_in_mock_app(sched.clone());
+
+        complete_onboarding(app.state::<Scheduler>()).await.unwrap();
+
+        assert!(sched.onboarding_completed.load(Ordering::Relaxed));
+        assert!(
+            config::load(&sched.config_path).onboarding_completed,
+            "the command persists completion to disk"
+        );
     }
 
     #[test]

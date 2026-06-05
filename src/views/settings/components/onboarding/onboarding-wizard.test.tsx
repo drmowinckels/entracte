@@ -100,6 +100,22 @@ describe("OnboardingWizard", () => {
     expect(screen.getByText("End of day")).toBeTruthy();
   });
 
+  it("editing the working-hours times commits the new minutes", async () => {
+    const user = userEvent.setup();
+    const { update } = renderWizard({ work_window_enabled: true });
+    await advanceTo(user, 2);
+    const start = screen.getByDisplayValue("09:00");
+    await user.clear(start);
+    await user.type(start, "10:30");
+    await user.tab();
+    expect(update).toHaveBeenCalledWith("work_start_minutes", 10 * 60 + 30);
+    const end = screen.getByDisplayValue("17:00");
+    await user.clear(end);
+    await user.type(end, "18:00");
+    await user.tab();
+    expect(update).toHaveBeenCalledWith("work_end_minutes", 18 * 60);
+  });
+
   it("choosing the solo worker option updates long_hint_mix", async () => {
     const user = userEvent.setup();
     const { update } = renderWizard();
@@ -113,6 +129,72 @@ describe("OnboardingWizard", () => {
     renderWizard({ show_hint: false });
     await advanceTo(user, 3);
     expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("toggling the wellness-hint checkbox updates show_hint", async () => {
+    const user = userEvent.setup();
+    const { update } = renderWizard();
+    await advanceTo(user, 3);
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /Show a wellness hint during breaks/,
+      }),
+    );
+    expect(update).toHaveBeenCalledWith("show_hint", false);
+  });
+
+  it("enabling wind-down reminders updates bedtime_enabled", async () => {
+    const user = userEvent.setup();
+    const { update } = renderWizard();
+    await advanceTo(user, 4);
+    expect(screen.queryByText("Wind-down starts")).toBeNull();
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /Remind me to wind down before bed/,
+      }),
+    );
+    expect(update).toHaveBeenCalledWith("bedtime_enabled", true);
+  });
+
+  it("shows the wind-down time fields when bedtime is already enabled", async () => {
+    const user = userEvent.setup();
+    renderWizard({ bedtime_enabled: true });
+    await advanceTo(user, 4);
+    expect(screen.getByText("Wind-down starts")).toBeTruthy();
+    expect(screen.getByText("Wind-down ends")).toBeTruthy();
+  });
+
+  it("editing the wind-down times commits the new minutes", async () => {
+    const user = userEvent.setup();
+    const { update } = renderWizard({ bedtime_enabled: true });
+    await advanceTo(user, 4);
+    const start = screen.getByDisplayValue("22:00");
+    await user.clear(start);
+    await user.type(start, "21:15");
+    await user.tab();
+    expect(update).toHaveBeenCalledWith("bedtime_start_minutes", 21 * 60 + 15);
+    const end = screen.getByDisplayValue("23:00");
+    await user.clear(end);
+    await user.type(end, "23:30");
+    await user.tab();
+    expect(update).toHaveBeenCalledWith("bedtime_end_minutes", 23 * 60 + 30);
+  });
+
+  it("marks completed steps as done in the progress dots", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <OnboardingWizard
+        settings={baseSettings()}
+        update={vi.fn()}
+        setAutostart={vi.fn()}
+        onFinish={vi.fn()}
+      />,
+    );
+    await advanceTo(user, 2);
+    expect(container.querySelectorAll(".onboarding-dot.done")).toHaveLength(2);
+    expect(container.querySelectorAll(".onboarding-dot.current")).toHaveLength(
+      1,
+    );
   });
 
   it("toggling strict mode on the wind-down step updates the setting", async () => {
