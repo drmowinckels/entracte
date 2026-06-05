@@ -211,6 +211,27 @@ describe("useBreakState", () => {
     expect(result.current.appearance).toEqual(DEFAULT_OVERLAY_SETTINGS);
   });
 
+  it("falls back gracefully when the settings/postpone fetches reject", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "get_current_break") return sampleBreak;
+      // get_settings and get_postpone_state both reject (IPC down).
+      throw new Error("ipc unavailable");
+    });
+    const { listen } = makeListener();
+    const { result } = renderHook(() =>
+      useBreakState({
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
+      }),
+    );
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    // The break still shows; appearance stays default, postpone is cleared.
+    expect(result.current.appearance).toEqual(DEFAULT_OVERLAY_SETTINGS);
+    expect(result.current.postponeState).toBeNull();
+  });
+
   it("drops postpone state when the response is malformed", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
