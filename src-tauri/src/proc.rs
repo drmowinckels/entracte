@@ -84,7 +84,12 @@ impl CommandTimeoutExt for Command {
             // join the reader threads — a killed process whose child inherited
             // the pipe (e.g. a shell that spawned the real tool) can keep them
             // blocked on `read_to_end`, and the caller must not wait on that.
-            // They EOF and exit on their own once the pipe finally closes.
+            // Dropping the handles detaches them; a reader then outlives this
+            // call until its pipe write-end finally closes — for a wedged
+            // pipe-holding grandchild, only when that process dies or the app
+            // exits. An accepted, bounded cost on the probe path (the probed
+            // tools don't fork such children), not a guarantee of prompt
+            // cleanup.
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "command exceeded timeout",

@@ -252,8 +252,11 @@ fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Dur
     };
     // We're on a detached per-hook thread (see `run_hooks`), so blocking here
     // to reap the child is fine — and necessary, or a fire-and-forget hook
-    // leaves a zombie. A child that overruns `timeout` is killed; a `try_wait`
-    // error (extraordinarily rare) just means we stop waiting on it.
+    // leaves a zombie. A child that overruns `timeout` is killed and reaped.
+    // On a `try_wait` error (extraordinarily rare for a child we own) we stop
+    // waiting AND leave the child un-reaped — the one zombie this can't
+    // prevent — but it's not worth special-casing an essentially-unreachable
+    // path.
     if let Ok(None) = crate::proc::reap_or_kill(&mut child, timeout) {
         let secs = timeout.as_secs();
         warn!("hooks: killed {program_basename} after exceeding {secs}s");
