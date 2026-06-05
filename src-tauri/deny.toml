@@ -11,6 +11,12 @@ all-features = false
 version = 2
 yanked = "deny"
 unmaintained = "workspace"
+# Enforce `unsound` informational advisories. "all" (not "workspace") so
+# transitive crates are covered — the unsound advisory we actually care
+# about (glib, RUSTSEC-2024-0429, below) reaches us only transitively via
+# Tauri's GTK3 backend, so a workspace-only scope would never surface it
+# and the ignore below would be dead config.
+unsound = "all"
 ignore = [
   # RUSTSEC-2024-0429: glib's VariantStrIter has unsound Iterator /
   # DoubleEndedIterator impls. No patched glib version exists yet; it is a
