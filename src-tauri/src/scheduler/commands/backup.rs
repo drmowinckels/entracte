@@ -96,16 +96,27 @@ fn read_optional_text(path: &Path, max_bytes: u64) -> Result<Option<String>, Str
     }
 }
 
-fn validate_events_jsonl(events_jsonl: &str) -> Result<(), String> {
-    for (idx, line) in events_jsonl.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        serde_json::from_str::<LoggedEvent>(line)
-            .map_err(|e| format!("events_jsonl line {} is invalid JSON: {e}", idx + 1))?;
+/// Events are checked *leniently*: a line we can't parse — e.g. an event
+/// `type` written by a newer Entracte — must not brick the whole import.
+/// The events file is written verbatim and the stats reader
+/// ([`crate::stats::read_all`]) already drops lines it can't parse, so
+/// unknown events are preserved on disk and simply ignored when computing
+/// stats. We only count and warn so the drop isn't silent — matching the
+/// runtime reader's tolerance rather than the old all-or-nothing reject.
+fn warn_on_unparseable_events(events_jsonl: &str) {
+    let unparseable = events_jsonl
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| serde_json::from_str::<LoggedEvent>(line).is_err())
+        .count();
+    if unparseable > 0 {
+        log::warn!(
+            "backup import: {unparseable} events line(s) didn't parse \
+             (e.g. event types from a newer Entracte) and will be ignored \
+             when computing stats; importing the rest"
+        );
     }
-    Ok(())
 }
 
 fn validate_bundle(bundle: &BackupBundle) -> Result<(), String> {
@@ -137,7 +148,7 @@ fn validate_bundle(bundle: &BackupBundle) -> Result<(), String> {
             profiles_file.active,
         ));
     }
-    validate_events_jsonl(&bundle.files.events_jsonl)?;
+    warn_on_unparseable_events(&bundle.files.events_jsonl);
 
     if let Some(pause_json) = &bundle.files.pause_json {
         serde_json::from_str::<PauseSnapshot>(pause_json)
@@ -701,11 +712,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_bundle_rejects_invalid_events_line() {
+    fn validate_bundle_tolerates_unparseable_events_line() {
+        // A line we can't parse — here an event `type` from a hypothetical
+        // newer Entracte — must not brick the import. It's preserved on disk
+        // and dropped by the stats reader, so the bundle still validates.
         let mut bundle = valid_bundle();
-        bundle.files.events_jsonl = r#"{"bad":"event"}"#.to_string();
-        let err = validate_bundle(&bundle).expect_err("bad event is rejected");
-        assert!(err.contains("events_jsonl"));
+        bundle.files.events_jsonl =
+            r#"{"t":"2026-01-01T00:00:00Z","type":"future_event_from_newer_build"}"#.to_string();
+        validate_bundle(&bundle).expect("unknown event line is tolerated, not rejected");
     }
 
     #[test]
@@ -741,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_events_jsonl_skips_blank_lines() {
+    fn validate_bundle_skips_blank_event_lines() {
         let mut bundle = valid_bundle();
         bundle.files.events_jsonl = "\n   \n".to_string();
         validate_bundle(&bundle).expect("blank lines are tolerated");
