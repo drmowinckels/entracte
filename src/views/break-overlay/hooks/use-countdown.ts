@@ -49,6 +49,24 @@ function endChimeConfig(
  * `clearBreak()` runs. The end-chime config is captured via a ref so
  * mid-break setting changes are picked up without re-arming the
  * 1-second timer on every appearance change.
+ *
+ * This countdown is **authoritative** for when an auto-completing break
+ * ends — there is no backend watchdog. Reaching zero here is what fires the
+ * `end_break` IPC (via `dismiss`), which emits `break:end`. The number is
+ * deliberately a plain per-second decrement, NOT a wall-clock
+ * `remaining = end - now`, because the decrement makes the typing-pause free
+ * — a paused second is just a skipped tick (see `paused` below) — whereas an
+ * `end - now` model would keep counting through a pause and need separate
+ * paused-time accounting to stay correct.
+ *
+ * The trade-off: if the OS throttles the renderer's timers — the machine
+ * sleeps mid-break, or a non-enforcing overlay is backgrounded — the tick
+ * stretches, so the break can end *late* by roughly the throttled gap.
+ * Enforcing breaks hold the foreground (not throttled); the residual case is
+ * sleep during a break. A robust fix would be a backend deadline that ends
+ * the break regardless of the renderer; see issue tracker. Until then this is
+ * a known limitation, documented so a "fix" that switches to wall-clock
+ * doesn't silently reintroduce the typing-pause bug.
  */
 export function useCountdown(
   active: BreakEvent | null,
