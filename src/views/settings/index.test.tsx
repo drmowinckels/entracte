@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { SchedulerSettings } from "./types";
 
 let mockSettings: SchedulerSettings | null = null;
+let mockOnboardingNeeded = false;
 
 vi.mock("./hooks/use-settings", () => ({
   useSettings: () => ({
@@ -13,6 +14,9 @@ vi.mock("./hooks/use-settings", () => ({
     reloadFromActive: vi.fn(),
     setAutostart: vi.fn(),
   }),
+}));
+vi.mock("./hooks/use-onboarding", () => ({
+  useOnboarding: () => ({ needed: mockOnboardingNeeded, complete: vi.fn() }),
 }));
 vi.mock("./hooks/use-pause", () => ({ usePause: () => ({ paused: false }) }));
 vi.mock("./hooks/use-stats", () => ({
@@ -237,6 +241,30 @@ describe("Settings shell ARIA + keyboard", () => {
       expect(panel?.textContent).toBe(expected);
     },
   );
+
+  it("shows the onboarding wizard when needed and settings are loaded", () => {
+    mockSettings = hydratedSettings;
+    mockOnboardingNeeded = true;
+    render(<Settings />);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("Step 1 of 6")).toBeTruthy();
+    mockOnboardingNeeded = false;
+  });
+
+  it("does not show the wizard before settings have loaded", () => {
+    mockSettings = null;
+    mockOnboardingNeeded = true;
+    render(<Settings />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    mockOnboardingNeeded = false;
+  });
+
+  it("does not show the wizard for a returning user", () => {
+    mockSettings = hydratedSettings;
+    mockOnboardingNeeded = false;
+    render(<Settings />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 
   // Held-arrow-key regression — fireEvent because userEvent always
   // waits for React to flush between events.

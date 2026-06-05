@@ -134,6 +134,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scheduler::get_settings,
             scheduler::update_settings,
+            scheduler::get_onboarding_completed,
+            scheduler::complete_onboarding,
             scheduler::set_hooks,
             scheduler::pause,
             scheduler::resume,

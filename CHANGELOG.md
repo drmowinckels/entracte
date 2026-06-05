@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **First-run onboarding wizard.** A new install now opens a short guided setup over the Settings window — start-at-login, working hours, wellness-hint mix, and wind-down — with every control writing through the same settings the tabs use, so finishing leaves the app configured. It shows once: completion (or skipping) is persisted, and any existing install — including settings files written before this version — is treated as already onboarded, so people upgrading never see it.
+
 ### Changed
 
 - **`entracte settings set …` now clamps out-of-range values like the Settings window.** Writing a setting through the CLI (or the underlying IPC channel) previously skipped the range-clamping and `custom_css`/fixed-time sanitisation the GUI applies, so e.g. `entracte settings set micro_interval_secs 0` persisted a 0-second interval that fired a break every tick. The CLI/IPC path now runs the same normalisation — flooring intervals at 30s, capping durations, and scrubbing custom CSS.

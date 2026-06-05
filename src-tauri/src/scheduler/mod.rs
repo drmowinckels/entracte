@@ -11,7 +11,7 @@ mod tray_countdown;
 mod types;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU8};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use log::warn;
@@ -142,6 +142,11 @@ pub struct Scheduler {
     pub profiles: Arc<Mutex<Vec<Profile>>>,
     pub active_profile_name: Arc<Mutex<String>>,
     pub hook_dialog_busy: Arc<AtomicBool>,
+    /// Whether first-run onboarding has been completed. Mirrors
+    /// `ProfilesFile::onboarding_completed`; persisted back to disk via
+    /// `snapshot_profiles_file`. Atomic so the IPC commands can read and
+    /// flip it without taking the profiles lock.
+    pub onboarding_completed: Arc<AtomicBool>,
     /// Set by the backup-import flow while it's mid-restore. The run
     /// loop short-circuits each tick while this is true so it can't
     /// fire a break with mid-write state (e.g. new events.jsonl on
@@ -189,6 +194,7 @@ impl Scheduler {
             screen_time: Arc::new(Mutex::new(screen_time)),
             current_break: Arc::new(std::sync::Mutex::new(None)),
             logger,
+            onboarding_completed: Arc::new(AtomicBool::new(profiles_file.onboarding_completed)),
             profiles: Arc::new(Mutex::new(profiles_file.profiles)),
             active_profile_name: Arc::new(Mutex::new(active_name)),
             hook_dialog_busy: Arc::new(AtomicBool::new(false)),
@@ -242,6 +248,7 @@ impl Scheduler {
             ))),
             current_break: Arc::new(std::sync::Mutex::new(None)),
             logger: Logger::spawn(events_path),
+            onboarding_completed: Arc::new(AtomicBool::new(true)),
             profiles: Arc::new(Mutex::new(profiles)),
             active_profile_name: Arc::new(Mutex::new(active.to_string())),
             hook_dialog_busy: Arc::new(AtomicBool::new(false)),
@@ -255,6 +262,7 @@ impl Scheduler {
         ProfilesFile {
             profiles: self.profiles.lock().await.clone(),
             active: self.active_profile_name.lock().await.clone(),
+            onboarding_completed: self.onboarding_completed.load(Ordering::Relaxed),
         }
     }
 }
