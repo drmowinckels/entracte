@@ -180,6 +180,7 @@ mod linux {
     use std::process::Command;
 
     use super::{parse_gnome_show_banners_dnd, parse_kde_inhibited};
+    use crate::proc::{CommandTimeoutExt, PROBE_TIMEOUT};
 
     // Absolute paths so a planted `gsettings` / `gdbus` earlier in `$PATH`
     // can't intercept the probe. These are the canonical locations on the
@@ -199,7 +200,7 @@ mod linux {
     fn gnome_dnd_active() -> bool {
         let Ok(output) = Command::new(GSETTINGS_BIN)
             .args(["get", "org.gnome.desktop.notifications", "show-banners"])
-            .output()
+            .output_timeout(PROBE_TIMEOUT)
         else {
             return false;
         };
@@ -226,7 +227,7 @@ mod linux {
                 "org.freedesktop.Notifications",
                 "Inhibited",
             ])
-            .output()
+            .output_timeout(PROBE_TIMEOUT)
         else {
             return false;
         };

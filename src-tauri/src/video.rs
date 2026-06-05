@@ -235,6 +235,8 @@ mod macos {
     use std::sync::Arc;
     use std::thread;
 
+    use crate::proc::CommandTimeoutExt;
+
     use core_foundation::array::{CFArray, CFArrayRef};
     use core_foundation::base::{TCFType, ToVoid};
     use core_foundation::dictionary::CFDictionary;
@@ -274,7 +276,10 @@ mod macos {
     }
 
     pub(super) fn display_assertion_active() -> bool {
-        let Ok(output) = Command::new(PMSET_BIN).args(["-g", "assertions"]).output() else {
+        let Ok(output) = Command::new(PMSET_BIN)
+            .args(["-g", "assertions"])
+            .output_timeout(crate::proc::PROBE_TIMEOUT)
+        else {
             return false;
         };
         if !output.status.success() {
@@ -375,6 +380,8 @@ mod macos {
 mod windows {
     use std::process::Command;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    use crate::proc::CommandTimeoutExt;
     use std::sync::Arc;
     use std::thread;
 
@@ -412,7 +419,10 @@ mod windows {
     }
 
     pub(super) fn display_request_active() -> bool {
-        let Ok(output) = Command::new(POWERCFG_BIN).arg("/requests").output() else {
+        let Ok(output) = Command::new(POWERCFG_BIN)
+            .arg("/requests")
+            .output_timeout(crate::proc::PROBE_TIMEOUT)
+        else {
             return false;
         };
         if !output.status.success() {
@@ -504,6 +514,8 @@ mod windows {
 mod linux {
     use std::env;
     use std::process::Command;
+
+    use crate::proc::CommandTimeoutExt;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::sync::OnceLock;
@@ -549,7 +561,7 @@ mod linux {
     fn inhibitor_active() -> bool {
         let Ok(output) = Command::new(SYSTEMD_INHIBIT_BIN)
             .args(["--list", "--no-pager", "--no-legend"])
-            .output()
+            .output_timeout(crate::proc::PROBE_TIMEOUT)
         else {
             return false;
         };
@@ -594,7 +606,7 @@ mod linux {
     fn xprop_active_window_id() -> Option<String> {
         let out = Command::new(XPROP_BIN)
             .args(["-root", "_NET_ACTIVE_WINDOW"])
-            .output()
+            .output_timeout(crate::proc::PROBE_TIMEOUT)
             .ok()?;
         if !out.status.success() {
             return None;
@@ -606,7 +618,7 @@ mod linux {
     fn xprop_window_state(id: &str) -> Option<String> {
         let out = Command::new(XPROP_BIN)
             .args(["-id", id, "_NET_WM_STATE"])
-            .output()
+            .output_timeout(crate::proc::PROBE_TIMEOUT)
             .ok()?;
         if !out.status.success() {
             return None;
