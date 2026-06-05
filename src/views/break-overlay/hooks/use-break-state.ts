@@ -9,6 +9,11 @@ import {
   type OverlaySettings,
   type PostponeState,
 } from "../types";
+import {
+  breakEventSchema,
+  overlaySettingsSchema,
+  postponeStateSchema,
+} from "../schemas";
 
 function resolveTheme(setting: string, previous: string): string {
   if (setting === "rotate") return pickRotationTheme(previous);
@@ -61,47 +66,47 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
 
   useEffect(() => {
     let cancelled = false;
-    const applyBreak = async (payload: BreakEvent) => {
+    const applyBreak = async (rawPayload: unknown) => {
+      // The payload arrives untrusted (a backend event or get_current_break
+      // response). Validate before driving the overlay; a malformed one is
+      // dropped rather than rendered.
+      const parsedPayload = breakEventSchema.safeParse(rawPayload);
+      if (!parsedPayload.success || cancelled) return;
+      const payload = parsedPayload.data;
+
       // Flush any chime still in flight from a previous break before the
       // new overlay takes over, so a deferred end-sound can't play here.
       stopAllSoundsFn();
       try {
-        const s = await invokeFn<OverlaySettings>("get_settings");
+        const raw = await invokeFn("get_settings");
         if (cancelled) return;
-        const next: OverlaySettings = {
-          overlay_opacity: s.overlay_opacity,
-          overlay_color: s.overlay_color,
-          overlay_custom_rgb: s.overlay_custom_rgb,
-          overlay_high_contrast: s.overlay_high_contrast,
-          overlay_font_scale: s.overlay_font_scale,
-          show_hint: s.show_hint,
-          show_current_time: s.show_current_time,
-          clock_format: s.clock_format,
-          micro_sound: s.micro_sound,
-          long_sound: s.long_sound,
-          sound_volume: s.sound_volume,
-          pause_countdown_if_typing: s.pause_countdown_if_typing,
-          strict_mode: s.strict_mode,
-          custom_css: s.custom_css,
-        };
-        setAppearance(next);
-        setResolvedTheme((prev) => resolveTheme(next.overlay_color, prev));
+        // get_settings returns the full Settings; the schema validates and
+        // keeps only the overlay-relevant subset.
+        const parsed = overlaySettingsSchema.safeParse(raw);
+        if (parsed.success) {
+          const next: OverlaySettings = parsed.data;
+          setAppearance(next);
+          setResolvedTheme((prev) => resolveTheme(next.overlay_color, prev));
+        }
+        // on parse failure keep the previous (or default) appearance
       } catch {
         // keep previous settings if the IPC fetch fails
       }
       if (cancelled) return;
-      const hints = Array.isArray(payload.hints) ? payload.hints : [];
       const initialIndex =
-        hints.length > 0 ? Math.floor(Math.random() * hints.length) : 0;
+        payload.hints.length > 0
+          ? Math.floor(Math.random() * payload.hints.length)
+          : 0;
       setHintIndex(initialIndex);
       setFinished(false);
-      setActive({ ...payload, hints });
+      setActive(payload);
       setRemaining(payload.duration_secs);
       try {
-        const ps = await invokeFn<PostponeState>("get_postpone_state", {
+        const raw = await invokeFn("get_postpone_state", {
           kind: payload.kind,
         });
-        if (!cancelled) setPostponeState(ps);
+        const parsed = postponeStateSchema.safeParse(raw);
+        if (!cancelled) setPostponeState(parsed.success ? parsed.data : null);
       } catch {
         if (!cancelled) setPostponeState(null);
       }
@@ -114,10 +119,10 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
     let unlistenStartFn: UnlistenFn | undefined;
     let unlistenEndFn: UnlistenFn | undefined;
 
-    listenFn<BreakEvent>("break:start", (e) => {
-      console.info(
-        `[overlay] break:start kind=${e.payload.kind} duration=${e.payload.duration_secs}`,
-      );
+    // Payloads are validated inside applyBreak, so the listener and the
+    // bootstrap fetch both hand it the raw value untyped rather than casting.
+    listenFn("break:start", (e) => {
+      console.info("[overlay] break:start");
       applyBreak(e.payload);
     }).then((fn) => {
       if (cancelled) fn();
@@ -131,9 +136,9 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
       else unlistenEndFn = fn;
     });
 
-    invokeFn<BreakEvent | null>("get_current_break")
+    invokeFn("get_current_break")
       .then((cur) => {
-        if (!cancelled && cur) applyBreak(cur);
+        if (!cancelled) applyBreak(cur);
       })
       .catch(() => {});
 
