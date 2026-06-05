@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke, type InvokeArgs } from "@tauri-apps/api/core";
 import type { ZodIssue, ZodType } from "zod";
+import { redactRendererPayload, stringifyForLog } from "./redact";
 
 export class IpcError extends Error {
   readonly command: string;
@@ -28,7 +29,15 @@ export async function invoke<T>(
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const err = new IpcError(cmd, parsed.error.issues, raw);
-    console.error(err.message, { issues: err.issues, received: raw });
+    // Redact the raw payload before it hits the devtools console — a
+    // malformed backend response could carry a licence key, and this is the
+    // one place the renderer logs a backend value verbatim. `received` is
+    // kept raw on the error itself (never transmitted; callers inspect it
+    // in-process).
+    console.error(err.message, {
+      issues: err.issues,
+      received: redactRendererPayload(stringifyForLog(raw)),
+    });
     throw err;
   }
   return parsed.data;

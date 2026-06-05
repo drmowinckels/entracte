@@ -4,33 +4,12 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import {
   ErrorBoundary,
   installGlobalRendererErrorReporters,
-  redactRendererPayload,
 } from "./error-boundary";
 
 const invokeMock = vi.fn(async (..._args: unknown[]) => undefined);
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args: unknown) => invokeMock(cmd, args),
 }));
-
-describe("redactRendererPayload", () => {
-  it("masks LemonSqueezy-shaped licence keys", () => {
-    const out = redactRendererPayload("activated ABCD-1111-2222-3333 ok");
-    expect(out).not.toContain("ABCD-1111-2222-3333");
-    expect(out).toContain("[REDACTED-LS-KEY]");
-  });
-
-  it("masks ENT1 manual tokens", () => {
-    const out = redactRendererPayload("token=ENT1-AAAAAAAAAAAA_BBBB done");
-    expect(out).not.toContain("ENT1-AAAA");
-    expect(out).toContain("[REDACTED-MANUAL-TOKEN]");
-  });
-
-  it("passes innocent strings through", () => {
-    expect(
-      redactRendererPayload("Error: bar is not a function (foo.js:42)"),
-    ).toBe("Error: bar is not a function (foo.js:42)");
-  });
-});
 
 describe("installGlobalRendererErrorReporters", () => {
   beforeEach(() => {

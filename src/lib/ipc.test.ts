@@ -54,6 +54,20 @@ describe("ipc.invoke", () => {
     }
   });
 
+  it("redacts licence-shaped secrets from the logged payload", async () => {
+    const secret = "ENT1-abcdef0123456789";
+    invokeMock.mockResolvedValue({ ok: true, token: secret });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await invoke("some_cmd", undefined, schema).catch(() => {});
+      const logged = errSpy.mock.calls[0]?.[1] as { received: string };
+      expect(logged.received).not.toContain(secret);
+      expect(logged.received).toContain("[REDACTED-MANUAL-TOKEN]");
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
   it("propagates underlying invoke rejections unchanged", async () => {
     const boom = new Error("backend went bang");
     invokeMock.mockRejectedValue(boom);
