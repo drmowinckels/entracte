@@ -289,6 +289,7 @@ pub fn fire_break<R: Runtime>(
 ) {
     let mut payload = event;
     payload.postpone_available = payload.postpone_available && !payload.enforceable;
+    payload.skip_available = payload.skip_available && !payload.enforceable;
     *super::lock_current_break(current_break) = Some(payload.clone());
 
     // Quiet any playing media for the duration of the break (#77). No-op

@@ -165,7 +165,8 @@ pub async fn trigger_break_from_cli<R: Runtime>(
             duration_secs,
             enforceable,
             manual_finish,
-            postpone_available: s.postpone_enabled && !s.strict_mode,
+            postpone_available: s.postpone_available_for(kind),
+            skip_available: s.skip_available_for(kind),
             hints,
             hint_rotate_seconds: s.hint_rotate_seconds,
             health_intensity: if s.break_health_enabled {
@@ -308,7 +309,7 @@ pub async fn postpone_break_impl(
     kind: BreakKind,
 ) -> Result<PostponeOutcome, String> {
     let s = scheduler.settings.lock().await.clone();
-    if s.strict_mode || !s.postpone_enabled {
+    if !s.postpone_available_for(kind) {
         return Err("postpone disabled".to_string());
     }
     let counter_before = {
@@ -514,6 +515,39 @@ pub async fn get_last_break_info(
 /// profile's full settings (duration, hints, enforceability). Shared
 /// by the renderer command and the tray menu handler. Errors with
 /// `"no break to resume"` when the slot is empty.
+fn resume_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
+    let (duration_secs, enforceable, manual_finish, hints) = match kind {
+        BreakKind::Micro => (
+            s.micro_duration_secs,
+            s.micro_enforceable || s.strict_mode,
+            s.micro_manual_finish,
+            effective_micro_hints(s),
+        ),
+        BreakKind::Long => (
+            s.long_duration_secs,
+            s.long_enforceable || s.strict_mode,
+            s.long_manual_finish,
+            effective_long_hints(s),
+        ),
+        BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
+    };
+    BreakEvent {
+        kind,
+        duration_secs,
+        enforceable,
+        manual_finish,
+        postpone_available: s.postpone_available_for(kind),
+        skip_available: s.skip_available_for(kind),
+        hints,
+        hint_rotate_seconds: s.hint_rotate_seconds,
+        health_intensity: if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
+    }
+}
+
 pub async fn resume_last_break_impl<R: Runtime>(
     app: &AppHandle<R>,
     scheduler: &Scheduler,
@@ -526,39 +560,13 @@ pub async fn resume_last_break_impl<R: Runtime>(
         return Err("no break to resume".to_string());
     };
     let s = scheduler.settings.lock().await.clone();
-    let (duration_secs, enforceable, manual_finish, hints) = match kind {
-        BreakKind::Micro => (
-            s.micro_duration_secs,
-            s.micro_enforceable || s.strict_mode,
-            s.micro_manual_finish,
-            effective_micro_hints(&s),
-        ),
-        BreakKind::Long => (
-            s.long_duration_secs,
-            s.long_enforceable || s.strict_mode,
-            s.long_manual_finish,
-            effective_long_hints(&s),
-        ),
-        BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
-    };
     let intensity = scheduler.stats.lock().await.intensity();
+    let event = resume_break_event(kind, &s, intensity);
+    let duration_secs = event.duration_secs;
     fire_break(
         app,
         &scheduler.current_break,
-        BreakEvent {
-            kind,
-            duration_secs,
-            enforceable,
-            manual_finish,
-            postpone_available: s.postpone_enabled && !s.strict_mode,
-            hints,
-            hint_rotate_seconds: s.hint_rotate_seconds,
-            health_intensity: if s.break_health_enabled {
-                intensity
-            } else {
-                0.0
-            },
-        },
+        event,
         s.monitor_placement,
         is_windowed_mode(kind, &s),
     );
@@ -1048,6 +1056,29 @@ mod tests {
             .await
             .expect_err("postpone_enabled=false blocks postpone");
         assert_eq!(err, "postpone disabled");
+    }
+
+    #[tokio::test]
+    async fn postpone_break_blocked_when_only_that_kind_disabled() {
+        // Global master on, long postpone on, micro postpone off: the
+        // micro request is rejected while the long path stays open.
+        let settings = Settings {
+            strict_mode: false,
+            postpone_enabled: true,
+            micro_postpone_enabled: false,
+            long_postpone_enabled: true,
+            postpone_escalation_enabled: false,
+            ..Settings::default()
+        };
+        let (_dir, sched) = test_scheduler(settings);
+        let err = postpone_break_impl(&sched, BreakKind::Micro)
+            .await
+            .expect_err("per-kind micro postpone off blocks postpone");
+        assert_eq!(err, "postpone disabled");
+
+        postpone_break_impl(&sched, BreakKind::Long)
+            .await
+            .expect("long postpone still allowed");
     }
 
     #[tokio::test]
@@ -1607,5 +1638,38 @@ mod rig_smoke_tests {
         trigger_break_from_cli(app.handle(), &sched, BreakKind::Long, 42).await;
         // Notification delivery does not stash an overlay break.
         assert!(sched.current_break.lock().unwrap().is_none());
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn resume_break_event_resolves_per_kind_postpone_and_skip() {
+        // The resume fire site builds its BreakEvent via this helper, which
+        // resolves postpone/skip per kind. Driving `resume_last_break_impl`
+        // end-to-end isn't possible under the mock runtime (it calls
+        // `fire_break`, which enumerates monitors), so the resolution lives
+        // here where it's directly testable.
+        let mut s = Settings::default();
+        s.postpone_enabled = true;
+        s.micro_postpone_enabled = true;
+        s.micro_skip_enabled = false;
+        s.long_postpone_enabled = false;
+        s.long_skip_enabled = true;
+
+        let micro = resume_break_event(BreakKind::Micro, &s, 0.0);
+        assert!(micro.postpone_available, "micro postpone enabled per-kind");
+        assert!(!micro.skip_available, "micro skip disabled per-kind");
+
+        let long = resume_break_event(BreakKind::Long, &s, 0.0);
+        assert!(!long.postpone_available, "long postpone disabled per-kind");
+        assert!(long.skip_available, "long skip enabled per-kind");
+    }
+
+    #[tokio::test]
+    async fn resume_last_break_impl_errors_without_a_stashed_break() {
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        let err = resume_last_break_impl(app.handle(), &sched)
+            .await
+            .expect_err("nothing to resume");
+        assert_eq!(err, "no break to resume");
     }
 }

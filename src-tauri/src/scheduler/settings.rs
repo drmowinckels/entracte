@@ -300,6 +300,10 @@ fn default_tray_countdown_target() -> String {
     "next".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_clock_format() -> String {
     "24h".to_string()
 }
@@ -476,6 +480,23 @@ pub struct Settings {
     pub monitor_placement: MonitorPlacement,
     pub strict_mode: bool,
     pub postpone_enabled: bool,
+    /// Per-kind postpone master switch, ANDed with the global
+    /// `postpone_enabled` so an upgrading user with postpone globally off
+    /// still has it off everywhere. Defaults `true` so existing on-disk
+    /// settings (which predate these keys) keep their prior behaviour:
+    /// the global flag alone decided postpone, and `true && global ==
+    /// global`.
+    #[serde(default = "default_true")]
+    pub micro_postpone_enabled: bool,
+    #[serde(default = "default_true")]
+    pub long_postpone_enabled: bool,
+    /// Per-kind skip (overlay dismiss) switch. Defaults `true` to match
+    /// the pre-split behaviour where any non-enforceable break could be
+    /// skipped.
+    #[serde(default = "default_true")]
+    pub micro_skip_enabled: bool,
+    #[serde(default = "default_true")]
+    pub long_skip_enabled: bool,
     pub postpone_minutes: u32,
     pub show_current_time: bool,
     #[serde(default = "default_clock_format")]
@@ -577,6 +598,10 @@ impl Default for Settings {
             monitor_placement: MonitorPlacement::Primary,
             strict_mode: false,
             postpone_enabled: true,
+            micro_postpone_enabled: true,
+            long_postpone_enabled: true,
+            micro_skip_enabled: true,
+            long_skip_enabled: true,
             postpone_minutes: 5,
             show_current_time: true,
             clock_format: default_clock_format(),
@@ -644,6 +669,14 @@ pub struct BreakKindSettings<'a> {
     pub manual_finish: bool,
     pub mode: BreakMode,
     pub schedule_mode: ScheduleMode,
+    /// Whether postpone is enabled for this kind, before the global
+    /// `postpone_enabled` / `strict_mode` gates are applied. Use
+    /// [`Settings::postpone_available_for`] for the fully-resolved value.
+    pub postpone_enabled: bool,
+    /// Whether the overlay skip (dismiss) control is enabled for this
+    /// kind, before the enforceable / strict gate. Use
+    /// [`Settings::skip_available_for`] for the fully-resolved value.
+    pub skip_enabled: bool,
     /// The pre-parsed fixed-time minutes for this kind (see
     /// [`DerivedCaches`]).
     pub fixed_minutes: &'a [u32],
@@ -664,6 +697,8 @@ impl Settings {
                 manual_finish: self.micro_manual_finish,
                 mode: self.micro_break_mode,
                 schedule_mode: self.micro_schedule_mode,
+                postpone_enabled: self.micro_postpone_enabled,
+                skip_enabled: self.micro_skip_enabled,
                 fixed_minutes: &self.derived.micro_fixed_minutes,
             }),
             BreakKind::Long => Some(BreakKindSettings {
@@ -674,6 +709,8 @@ impl Settings {
                 manual_finish: self.long_manual_finish,
                 mode: self.long_break_mode,
                 schedule_mode: self.long_schedule_mode,
+                postpone_enabled: self.long_postpone_enabled,
+                skip_enabled: self.long_skip_enabled,
                 fixed_minutes: &self.derived.long_fixed_minutes,
             }),
             BreakKind::Sleep => None,
@@ -700,6 +737,27 @@ impl Settings {
     pub fn fixed_active(&self, kind: BreakKind) -> bool {
         self.schedule_mode_for(kind)
             .is_some_and(ScheduleMode::fixed_active)
+    }
+
+    /// Fully-resolved postpone availability for this kind: the per-kind
+    /// switch ANDed with the global `postpone_enabled` master and gated by
+    /// `strict_mode`. Sleep has no per-kind pair, so it falls back to the
+    /// global master alone — preserving the pre-split behaviour where the
+    /// bedtime postpone path was governed by `postpone_enabled` only.
+    pub fn postpone_available_for(&self, kind: BreakKind) -> bool {
+        self.postpone_enabled
+            && !self.strict_mode
+            && self.for_kind(kind).is_none_or(|b| b.postpone_enabled)
+    }
+
+    /// Fully-resolved overlay-skip availability for this kind: the
+    /// per-kind switch gated by `strict_mode`. Sleep has no per-kind pair
+    /// and is never skippable via the overlay (the sleep fire site sets
+    /// `skip_available: false` directly), so it falls back to `false`
+    /// here. The `enforceable` gate is applied separately at the overlay
+    /// fire site (an enforceable break can't be dismissed regardless).
+    pub fn skip_available_for(&self, kind: BreakKind) -> bool {
+        !self.strict_mode && self.for_kind(kind).is_some_and(|b| b.skip_enabled)
     }
 
     /// Re-derive the `derived` cache from the current source fields.
@@ -1728,6 +1786,109 @@ mod tests {
     #[test]
     fn for_kind_returns_none_for_sleep() {
         assert!(Settings::default().for_kind(BreakKind::Sleep).is_none());
+    }
+
+    #[test]
+    fn for_kind_exposes_per_kind_postpone_and_skip_flags() {
+        let mut s = Settings {
+            micro_postpone_enabled: false,
+            micro_skip_enabled: true,
+            long_postpone_enabled: true,
+            long_skip_enabled: false,
+            ..Settings::default()
+        };
+        s.rebuild_derived();
+
+        let micro = s.for_kind(BreakKind::Micro).unwrap();
+        assert!(!micro.postpone_enabled);
+        assert!(micro.skip_enabled);
+
+        let long = s.for_kind(BreakKind::Long).unwrap();
+        assert!(long.postpone_enabled);
+        assert!(!long.skip_enabled);
+    }
+
+    #[test]
+    fn per_kind_postpone_skip_default_true_for_legacy_settings() {
+        // A settings.json written before #132 has none of the four keys.
+        // They must deserialise to `true` so an upgrading user keeps the
+        // pre-split behaviour: postpone governed by the global master,
+        // skip available on any non-enforceable break.
+        let legacy = r#"{ "postpone_enabled": true }"#;
+        let s: Settings = serde_json::from_str(legacy).unwrap();
+        assert!(s.micro_postpone_enabled);
+        assert!(s.long_postpone_enabled);
+        assert!(s.micro_skip_enabled);
+        assert!(s.long_skip_enabled);
+    }
+
+    #[test]
+    fn legacy_global_postpone_off_keeps_postpone_off_for_both_kinds() {
+        // The per-kind switches default `true`, but the global master is
+        // ANDed in, so a legacy user with postpone globally off still has
+        // it off everywhere — no behaviour change on upgrade.
+        let legacy = r#"{ "postpone_enabled": false }"#;
+        let s: Settings = serde_json::from_str(legacy).unwrap();
+        assert!(!s.postpone_available_for(BreakKind::Micro));
+        assert!(!s.postpone_available_for(BreakKind::Long));
+    }
+
+    #[test]
+    fn postpone_available_for_requires_global_master_and_per_kind() {
+        let mut s = Settings {
+            postpone_enabled: true,
+            micro_postpone_enabled: false,
+            long_postpone_enabled: true,
+            ..Settings::default()
+        };
+        assert!(!s.postpone_available_for(BreakKind::Micro));
+        assert!(s.postpone_available_for(BreakKind::Long));
+
+        s.postpone_enabled = false;
+        assert!(!s.postpone_available_for(BreakKind::Long));
+    }
+
+    #[test]
+    fn postpone_available_for_is_false_in_strict_mode() {
+        let s = Settings {
+            postpone_enabled: true,
+            micro_postpone_enabled: true,
+            strict_mode: true,
+            ..Settings::default()
+        };
+        assert!(!s.postpone_available_for(BreakKind::Micro));
+    }
+
+    #[test]
+    fn postpone_available_for_sleep_falls_back_to_global_master() {
+        // Sleep has no per-kind pair; it tracks the global master alone,
+        // preserving the pre-split bedtime postpone behaviour.
+        let mut s = Settings {
+            postpone_enabled: true,
+            ..Settings::default()
+        };
+        assert!(s.postpone_available_for(BreakKind::Sleep));
+        s.postpone_enabled = false;
+        assert!(!s.postpone_available_for(BreakKind::Sleep));
+    }
+
+    #[test]
+    fn skip_available_for_honours_per_kind_switch_and_strict_mode() {
+        let mut s = Settings {
+            micro_skip_enabled: false,
+            long_skip_enabled: true,
+            ..Settings::default()
+        };
+        assert!(!s.skip_available_for(BreakKind::Micro));
+        assert!(s.skip_available_for(BreakKind::Long));
+
+        s.strict_mode = true;
+        assert!(!s.skip_available_for(BreakKind::Long));
+    }
+
+    #[test]
+    fn skip_available_for_sleep_is_false() {
+        assert!(!Settings::default().skip_available_for(BreakKind::Sleep));
     }
 
     #[test]

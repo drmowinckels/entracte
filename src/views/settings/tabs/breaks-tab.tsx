@@ -288,7 +288,38 @@ export function BreaksTab({
           label="Allow postponing a break"
           value={settings.postpone_enabled}
           onChange={(v) => update("postpone_enabled", v)}
+          tip="Master switch. When on, choose per break type below which can be postponed and which can be skipped."
         />
+        {settings.postpone_enabled && !settings.strict_mode && (
+          <>
+            <CheckboxRow
+              label="Postpone micro breaks"
+              value={settings.micro_postpone_enabled}
+              onChange={(v) => update("micro_postpone_enabled", v)}
+            />
+            <CheckboxRow
+              label="Postpone long breaks"
+              value={settings.long_postpone_enabled}
+              onChange={(v) => update("long_postpone_enabled", v)}
+            />
+          </>
+        )}
+        {!settings.strict_mode && (
+          <>
+            <CheckboxRow
+              label="Skip micro breaks"
+              value={settings.micro_skip_enabled}
+              onChange={(v) => update("micro_skip_enabled", v)}
+              tip="When off, the micro break overlay has no Skip button and Esc won't dismiss it."
+            />
+            <CheckboxRow
+              label="Skip long breaks"
+              value={settings.long_skip_enabled}
+              onChange={(v) => update("long_skip_enabled", v)}
+              tip="When off, the long break overlay has no Skip button and Esc won't dismiss it."
+            />
+          </>
+        )}
         {settings.postpone_enabled && !settings.strict_mode && (
           <NumberRow
             label="Postpone by (minutes)"
@@ -330,14 +361,14 @@ export function BreaksTab({
           <button
             className="secondary"
             onClick={() => invoke("skip_next_break", { kind: "micro" })}
-            disabled={settings.strict_mode}
+            disabled={settings.strict_mode || !settings.micro_skip_enabled}
           >
             Skip next micro
           </button>
           <button
             className="secondary"
             onClick={() => invoke("skip_next_break", { kind: "long" })}
-            disabled={settings.strict_mode}
+            disabled={settings.strict_mode || !settings.long_skip_enabled}
           >
             Skip next long
           </button>

@@ -44,6 +44,7 @@ export const breakEventSchema = z.object({
   enforceable: z.boolean(),
   manual_finish: z.boolean(),
   postpone_available: z.boolean(),
+  skip_available: z.boolean(),
   hints: z.array(z.string()),
   hint_rotate_seconds: z.number(),
   health_intensity: z.number(),
