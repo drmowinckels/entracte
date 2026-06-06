@@ -530,6 +530,11 @@ pub struct Settings {
     pub postpone_escalation_step_secs: u64,
     pub postpone_max_count: u32,
     pub overlay_font_scale: f32,
+    pub windowed_overlay_fraction: f32,
+    #[serde(default)]
+    pub micro_windowed_overlay_fraction: Option<f32>,
+    #[serde(default)]
+    pub long_windowed_overlay_fraction: Option<f32>,
     pub micro_fixed_times: Vec<String>,
     pub long_fixed_times: Vec<String>,
     pub micro_schedule_mode: ScheduleMode,
@@ -630,6 +635,9 @@ impl Default for Settings {
             postpone_escalation_step_secs: 120,
             postpone_max_count: 3,
             overlay_font_scale: 1.0,
+            windowed_overlay_fraction: 0.8,
+            micro_windowed_overlay_fraction: None,
+            long_windowed_overlay_fraction: None,
             micro_fixed_times: Vec::new(),
             long_fixed_times: Vec::new(),
             micro_schedule_mode: ScheduleMode::default(),
@@ -826,6 +834,13 @@ impl Settings {
         self.overlay_opacity = self.overlay_opacity.clamp(0.8, 1.0);
         self.sound_volume = self.sound_volume.clamp(0.0, 1.0);
         self.overlay_font_scale = self.overlay_font_scale.clamp(0.5, 3.0);
+        self.windowed_overlay_fraction = self.windowed_overlay_fraction.clamp(0.1, 1.0);
+        self.micro_windowed_overlay_fraction = self
+            .micro_windowed_overlay_fraction
+            .map(|v| v.clamp(0.1, 1.0));
+        self.long_windowed_overlay_fraction = self
+            .long_windowed_overlay_fraction
+            .map(|v| v.clamp(0.1, 1.0));
         // Reject unknown clock_format values so the renderer's zod
         // enum doesn't reject the entire settings payload.
         if self.clock_format != "12h" && self.clock_format != "24h" {
