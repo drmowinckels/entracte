@@ -17,8 +17,8 @@ use super::session_lock;
 use super::settings::{delivery_for, Settings};
 use super::timers::{
     current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string,
-    prebreak_warn_due, record_scheduled_fire, should_defer_for_typing, should_fire_fixed_now,
-    BedtimeAction, BedtimeWindow, PrebreakGate,
+    prebreak_warn_due, reanchor_intervals_on_resume, record_scheduled_fire,
+    should_defer_for_typing, should_fire_fixed_now, BedtimeAction, BedtimeWindow, PrebreakGate,
 };
 use super::types::{BreakDelivery, BreakEvent, BreakKind, SuppressReason};
 use super::Scheduler;
@@ -116,6 +116,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             }
         }
         if just_resumed {
+            reanchor_intervals_on_resume(&mut *sched.timers.lock().await, Instant::now());
             persist_pause(&sched.pause_path, &PauseState::Running);
             sched.logger.log(EventPayload::PauseEnd);
             let _ = app.emit("pause:changed", false);

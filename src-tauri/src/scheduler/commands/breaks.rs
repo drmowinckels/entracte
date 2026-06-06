@@ -10,7 +10,9 @@ use super::super::pause::{persist_pause, PauseInfo, PauseState};
 use super::super::settings::{
     delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode, Settings,
 };
-use super::super::timers::{clear_last_break, postpone_counter, reset_postpone_counter};
+use super::super::timers::{
+    clear_last_break, postpone_counter, reanchor_intervals_on_resume, reset_postpone_counter,
+};
 use super::super::types::{BreakEvent, BreakKind, LastBreakInfo, PostponeState};
 use super::super::Scheduler;
 
@@ -78,6 +80,7 @@ pub async fn resume_impl(scheduler: &Scheduler) {
     }
     persist_pause(&scheduler.pause_path, &PauseState::Running);
     if was_paused {
+        reanchor_intervals_on_resume(&mut *scheduler.timers.lock().await, Instant::now());
         scheduler.logger.log(EventPayload::PauseEnd);
         let settings_snapshot = scheduler.settings.lock().await.clone();
         hooks::run_hooks(
@@ -873,6 +876,108 @@ mod tests {
         ));
         let snap = crate::pause_store::load(&sched.pause_path);
         assert!(!snap.paused);
+    }
+
+    #[tokio::test]
+    async fn resume_reanchors_interval_clocks_so_no_break_fires_immediately() {
+        // #134: paused for an hour with stale interval anchors. On resume
+        // both clocks must re-anchor to ~now, so no interval is overdue
+        // (the tray shows the full period, not 0:00) and the next due time
+        // is `resume + interval`.
+        let settings = Settings {
+            micro_interval_secs: 1_200,
+            long_interval_secs: 1_800,
+            ..Settings::default()
+        };
+        let (_dir, sched) = test_scheduler(settings);
+        // `stale` is a genuine past sample (never `now() - offset`, which
+        // can underflow the monotonic clock on a fresh Windows runner).
+        // It stands in for an anchor left behind by a long pause: with a
+        // huge interval here, it would be "overdue" without the re-anchor.
+        let stale = Instant::now();
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_micro = stale;
+            t.last_long = stale;
+        }
+        pause_impl(&sched, Some(60)).await;
+        resume_impl(&sched).await;
+
+        let t = sched.timers.lock().await;
+        assert!(
+            t.last_micro > stale,
+            "micro anchor must move forward to the resume instant"
+        );
+        assert!(t.last_long > stale, "long anchor must move forward too");
+        assert!(
+            !crate::scheduler::timers::interval_break_due(
+                true,
+                true,
+                t.last_micro,
+                1_200,
+                false,
+                t.last_micro
+            ),
+            "no micro break may be due the instant we resume"
+        );
+        assert!(
+            !crate::scheduler::timers::interval_break_due(
+                true,
+                true,
+                t.last_long,
+                1_800,
+                false,
+                t.last_long
+            ),
+            "no long break may be due the instant we resume"
+        );
+        assert!(
+            crate::scheduler::timers::interval_break_due(
+                true,
+                true,
+                t.last_micro,
+                1_200,
+                false,
+                t.last_micro + Duration::from_secs(1_200)
+            ),
+            "next micro break is due exactly one interval after resume"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_preserves_sleep_and_fixed_time_state() {
+        let (_dir, sched) = test_scheduler(Settings::default());
+        let sleep_at = Instant::now();
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_sleep = Some(sleep_at);
+            t.last_micro_fixed_fire = Some(("2026-06-05".into(), 540));
+            t.last_long_fixed_fire = Some(("2026-06-05".into(), 600));
+        }
+        pause_impl(&sched, Some(60)).await;
+        resume_impl(&sched).await;
+
+        let t = sched.timers.lock().await;
+        assert_eq!(t.last_sleep, Some(sleep_at));
+        assert_eq!(t.last_micro_fixed_fire, Some(("2026-06-05".into(), 540)));
+        assert_eq!(t.last_long_fixed_fire, Some(("2026-06-05".into(), 600)));
+    }
+
+    #[tokio::test]
+    async fn resume_when_already_running_leaves_interval_clocks_untouched() {
+        // A no-op resume (already Running) must not re-anchor, otherwise a
+        // stray resume call would reset a user's mid-interval progress.
+        let (_dir, sched) = test_scheduler(Settings::default());
+        let anchor = Instant::now();
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_micro = anchor;
+            t.last_long = anchor;
+        }
+        resume_impl(&sched).await;
+        let t = sched.timers.lock().await;
+        assert_eq!(t.last_micro, anchor);
+        assert_eq!(t.last_long, anchor);
     }
 
     #[tokio::test]
