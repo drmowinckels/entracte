@@ -182,33 +182,97 @@ fn ensure_overlay<R: Runtime>(app: &AppHandle<R>, idx: usize) -> Option<tauri::W
     }
 }
 
-/// Pick the monitor(s) to cover for a `Primary`/`Active`-fallback break,
-/// given what the windowing system reports as the primary monitor and the
-/// full available list. Wayland has no concept of a "primary" monitor, so
-/// `tao`/Tauri returns `None` there even when `available_monitors()` lists
-/// several — without a fallback that produces an *empty* target list, so
-/// no overlay window is ever built and the break is invisible (#67). Fall
-/// back to the first available monitor in that case. Generic + pure so the
-/// fallback is unit-testable without a windowing system.
-fn primary_or_first<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
+/// Monitor *indices* to cover for the `Primary` placement. When the
+/// windowing system names a primary monitor we cover exactly it. When it
+/// can't (Wayland has no "primary" concept) we cover *every* monitor
+/// instead of just the first: "the primary screen" is meaningless there,
+/// and leaving the other monitors uncovered lets the user dodge an
+/// enforceable break by glancing at the next screen (#67, Steffi's
+/// dual-monitor setup). Pure so the fallback is unit-testable without a
+/// windowing system.
+fn primary_or_all_indices(primary: Option<usize>, monitor_count: usize) -> Vec<usize> {
     match primary {
-        Some(m) => vec![m],
-        None => available.first().cloned().into_iter().collect(),
+        Some(i) if i < monitor_count => vec![i],
+        _ => (0..monitor_count).collect(),
     }
 }
 
-/// Monitors to cover for the `Primary` placement. When the windowing
-/// system names a primary monitor we cover exactly it. When it can't
-/// (Wayland has no "primary" concept) we cover *every* monitor instead of
-/// just the first: "the primary screen" is meaningless there, and leaving
-/// the other monitors uncovered lets the user dodge an enforceable break
-/// by glancing at the next screen (#67, Steffi's dual-monitor setup).
-/// Generic + pure so the fallback is unit-testable without a windowing
-/// system.
-fn primary_or_all<T: Clone>(primary: Option<T>, available: &[T]) -> Vec<T> {
-    match primary {
-        Some(m) => vec![m],
-        None => available.to_vec(),
+/// Monitor index to cover for the `Active` placement: whichever monitor
+/// holds the cursor, else the reported primary, else the first available.
+/// Pure so the fallback chain is unit-testable. Returns an empty list only
+/// when there are no monitors at all.
+fn active_indices(
+    active: Option<usize>,
+    primary: Option<usize>,
+    monitor_count: usize,
+) -> Vec<usize> {
+    if monitor_count == 0 {
+        return Vec::new();
+    }
+    let chosen = active
+        .filter(|&i| i < monitor_count)
+        .or(primary.filter(|&i| i < monitor_count))
+        .unwrap_or(0);
+    vec![chosen]
+}
+
+/// Resolve a placement to the set of monitor indices that should each get
+/// an overlay window, given what the windowing system could report.
+///
+/// On macOS / Windows / X11 every returned index is pinned to its physical
+/// monitor via `set_position`, so the indices map one-to-one onto screens.
+///
+/// On Wayland the result is collapsed to a single index. The compositor
+/// owns window placement: an app cannot move a surface to an absolute
+/// `(x, y)` or target a specific output, and `set_position` is a no-op
+/// there (tauri #6394 / tao). Building one overlay per monitor — as we do
+/// elsewhere — therefore does NOT spread the overlays across screens; the
+/// compositor stacks every one of them onto the same physical output,
+/// which is exactly Steffi's #67 report (two overlays, both on the
+/// secondary monitor, each showing a different hint). We cannot honour
+/// "active" / "primary" / "all" by output on Wayland, so we build exactly
+/// one overlay and fullscreen it; the compositor decides which monitor.
+/// Collapsing to one window also removes the duplicate-overlay symptom.
+/// Pure so every branch is unit-testable without a windowing system.
+fn resolve_overlay_indices(
+    placement: MonitorPlacement,
+    primary: Option<usize>,
+    active: Option<usize>,
+    monitor_count: usize,
+    wayland: bool,
+) -> Vec<usize> {
+    if monitor_count == 0 {
+        return Vec::new();
+    }
+    if wayland {
+        let preferred = match placement {
+            MonitorPlacement::Active => active.or(primary),
+            MonitorPlacement::Primary => primary,
+            MonitorPlacement::All => primary,
+        };
+        return vec![preferred.filter(|&i| i < monitor_count).unwrap_or(0)];
+    }
+    match placement {
+        MonitorPlacement::All => (0..monitor_count).collect(),
+        MonitorPlacement::Primary => primary_or_all_indices(primary, monitor_count),
+        MonitorPlacement::Active => active_indices(active, primary, monitor_count),
+    }
+}
+
+/// Locate `needle` in `rects` by identity-ish geometry match on position
+/// and size. `available_monitors` and `primary_monitor` return independent
+/// `Monitor` values, so the only stable cross-reference is their reported
+/// rect. Pure so the lookup is unit-testable.
+fn monitor_index_by_rect(needle: &MonitorRect, rects: &[MonitorRect]) -> Option<usize> {
+    rects.iter().position(|r| r == needle)
+}
+
+fn monitor_rect(m: &tauri::Monitor) -> MonitorRect {
+    MonitorRect {
+        x: m.position().x,
+        y: m.position().y,
+        width: m.size().width,
+        height: m.size().height,
     }
 }
 
@@ -216,36 +280,30 @@ fn select_overlay_monitors<R: Runtime>(
     app: &AppHandle<R>,
     placement: MonitorPlacement,
 ) -> Vec<tauri::Monitor> {
-    match placement {
-        MonitorPlacement::All => app.available_monitors().unwrap_or_default(),
-        MonitorPlacement::Primary => primary_or_all(
-            app.primary_monitor().ok().flatten(),
-            &app.available_monitors().unwrap_or_default(),
-        ),
-        MonitorPlacement::Active => {
-            let all = app.available_monitors().unwrap_or_default();
-            if all.is_empty() {
-                return Vec::new();
-            }
-            let rects: Vec<MonitorRect> = all
-                .iter()
-                .map(|m| MonitorRect {
-                    x: m.position().x,
-                    y: m.position().y,
-                    width: m.size().width,
-                    height: m.size().height,
-                })
-                .collect();
-            let idx = match app.cursor_position() {
-                Ok(p) => pick_active_monitor(p.x, p.y, &rects),
-                Err(_) => None,
-            };
-            match idx {
-                Some(i) => vec![all[i].clone()],
-                None => primary_or_first(app.primary_monitor().ok().flatten(), &all),
-            }
-        }
+    let all = app.available_monitors().unwrap_or_default();
+    if all.is_empty() {
+        return Vec::new();
     }
+    let rects: Vec<MonitorRect> = all.iter().map(monitor_rect).collect();
+
+    let primary = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .and_then(|p| monitor_index_by_rect(&monitor_rect(&p), &rects));
+
+    let active = match placement {
+        MonitorPlacement::Active => match app.cursor_position() {
+            Ok(p) => pick_active_monitor(p.x, p.y, &rects),
+            Err(_) => None,
+        },
+        _ => None,
+    };
+
+    resolve_overlay_indices(placement, primary, active, all.len(), is_wayland_session())
+        .into_iter()
+        .map(|i| all[i].clone())
+        .collect()
 }
 
 /// Surface a break through whichever channel the active settings ask
@@ -335,7 +393,17 @@ pub fn fire_break<R: Runtime>(
             let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
             let _ = window.set_size(tauri::PhysicalSize::new(rect.width, rect.height));
             let _ = window.set_always_on_top(true);
-            let _ = window.set_fullscreen(false);
+            // On Wayland the compositor ignores `set_position`/`set_size`,
+            // so a full-screen overlay positioned by rect would just sit at
+            // its default size on whatever output has focus. Ask the
+            // compositor to fullscreen the surface instead — that fills the
+            // focused output edge-to-edge regardless of the ignored rect.
+            // We still cannot choose *which* output (see
+            // `resolve_overlay_indices`), so monitor placement can't be
+            // honoured here; this only guarantees the overlay covers a whole
+            // screen rather than appearing as a small floating window (#67).
+            // Windowed mode stays non-fullscreen so the desktop is reachable.
+            let _ = window.set_fullscreen(wayland && !windowed);
             let _ = window.show();
             let _ = window.set_focus();
             shown += 1;
@@ -424,45 +492,138 @@ mod tests {
     }
 
     #[test]
-    fn primary_or_first_uses_primary_when_present() {
-        // When the platform reports a primary monitor, target exactly it
-        // — never widen to the whole list.
-        assert_eq!(
-            primary_or_first(Some("HDMI-1"), &["HDMI-1", "DP-2"]),
-            vec!["HDMI-1"]
-        );
-    }
-
-    #[test]
-    fn primary_or_first_falls_back_to_first_available_on_wayland() {
-        // The #67 case: Wayland reports no primary, but monitors exist.
-        // Must fall back to the first so an overlay still appears.
-        assert_eq!(primary_or_first(None, &["DP-2", "HDMI-1"]), vec!["DP-2"]);
-    }
-
-    #[test]
-    fn primary_or_all_uses_primary_when_present() {
+    fn primary_or_all_indices_uses_primary_when_present() {
         // A named primary is honoured exactly — never widened.
+        assert_eq!(primary_or_all_indices(Some(1), 3), vec![1]);
+    }
+
+    #[test]
+    fn primary_or_all_indices_covers_every_monitor_without_primary() {
+        // No primary (Wayland off-path / X11): cover all monitors so a
+        // break can't be dodged on the second screen (#67).
+        assert_eq!(primary_or_all_indices(None, 2), vec![0, 1]);
+    }
+
+    #[test]
+    fn primary_or_all_indices_covers_all_when_primary_out_of_range() {
+        // A stale / mismatched primary index must not silently target the
+        // wrong screen — fall back to covering everything.
+        assert_eq!(primary_or_all_indices(Some(5), 2), vec![0, 1]);
+    }
+
+    #[test]
+    fn primary_or_all_indices_empty_when_no_monitors_at_all() {
+        assert!(primary_or_all_indices(None, 0).is_empty());
+        assert!(primary_or_all_indices(Some(0), 0).is_empty());
+    }
+
+    #[test]
+    fn active_indices_prefers_cursor_monitor() {
+        assert_eq!(active_indices(Some(2), Some(0), 3), vec![2]);
+    }
+
+    #[test]
+    fn active_indices_falls_back_to_primary_then_first() {
+        assert_eq!(active_indices(None, Some(1), 3), vec![1]);
+        assert_eq!(active_indices(None, None, 3), vec![0]);
+    }
+
+    #[test]
+    fn active_indices_ignores_out_of_range_inputs() {
+        assert_eq!(active_indices(Some(9), Some(9), 2), vec![0]);
+        assert_eq!(active_indices(Some(9), Some(1), 2), vec![1]);
+    }
+
+    #[test]
+    fn active_indices_empty_without_monitors() {
+        assert!(active_indices(Some(0), Some(0), 0).is_empty());
+    }
+
+    #[test]
+    fn resolve_overlay_indices_off_wayland_matches_placement() {
+        // active: cursor monitor; primary: the named primary; all: everyone.
         assert_eq!(
-            primary_or_all(Some("HDMI-1"), &["HDMI-1", "DP-2"]),
-            vec!["HDMI-1"]
+            resolve_overlay_indices(MonitorPlacement::Active, Some(0), Some(1), 2, false),
+            vec![1]
+        );
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::Primary, Some(1), None, 2, false),
+            vec![1]
+        );
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::All, Some(0), None, 2, false),
+            vec![0, 1]
         );
     }
 
     #[test]
-    fn primary_or_all_covers_every_monitor_on_wayland() {
-        // No primary (Wayland): cover all monitors so a break can't be
-        // dodged on the second screen (#67).
+    fn resolve_overlay_indices_primary_without_named_primary_covers_all() {
+        // X11 with no reported primary: every monitor, never just the first.
         assert_eq!(
-            primary_or_all(None, &["DP-2", "HDMI-1"]),
-            vec!["DP-2", "HDMI-1"]
+            resolve_overlay_indices(MonitorPlacement::Primary, None, None, 2, false),
+            vec![0, 1]
         );
     }
 
     #[test]
-    fn primary_or_all_empty_when_no_monitors_at_all() {
-        let none: Option<&str> = None;
-        assert!(primary_or_all(none, &[] as &[&str]).is_empty());
+    fn resolve_overlay_indices_on_wayland_collapses_to_single_overlay() {
+        // The core #67 fix: Wayland cannot place windows per-output, so
+        // EVERY placement resolves to exactly one overlay — never two on the
+        // same physical monitor.
+        for placement in [
+            MonitorPlacement::Active,
+            MonitorPlacement::Primary,
+            MonitorPlacement::All,
+        ] {
+            let got = resolve_overlay_indices(placement, Some(0), Some(1), 2, true);
+            assert_eq!(got.len(), 1, "{placement:?} must yield one overlay");
+        }
+    }
+
+    #[test]
+    fn resolve_overlay_indices_on_wayland_prefers_active_then_primary() {
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::Active, Some(0), Some(1), 2, true),
+            vec![1]
+        );
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::Active, Some(1), None, 2, true),
+            vec![1]
+        );
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::Primary, Some(1), Some(0), 2, true),
+            vec![1]
+        );
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::All, Some(1), None, 2, true),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn resolve_overlay_indices_on_wayland_defaults_to_first_without_hints() {
+        // No primary, no cursor hit (Wayland reports neither): still build
+        // one overlay rather than none, so the break stays visible (#67).
+        assert_eq!(
+            resolve_overlay_indices(MonitorPlacement::Primary, None, None, 2, true),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn resolve_overlay_indices_empty_without_monitors() {
+        assert!(resolve_overlay_indices(MonitorPlacement::All, None, None, 0, false).is_empty());
+        assert!(resolve_overlay_indices(MonitorPlacement::Active, None, None, 0, true).is_empty());
+    }
+
+    #[test]
+    fn monitor_index_by_rect_matches_on_geometry() {
+        let rects = vec![rect(0, 0, 1920, 1080), rect(1920, 0, 2560, 1440)];
+        assert_eq!(
+            monitor_index_by_rect(&rect(1920, 0, 2560, 1440), &rects),
+            Some(1)
+        );
+        assert_eq!(monitor_index_by_rect(&rect(0, 0, 1280, 720), &rects), None);
     }
 
     #[test]
@@ -472,15 +633,6 @@ mod tests {
         assert!(wayland_session_from_env(None, true));
         assert!(!wayland_session_from_env(Some("x11"), false));
         assert!(!wayland_session_from_env(None, false));
-    }
-
-    #[test]
-    fn primary_or_first_empty_when_no_monitors_at_all() {
-        // No primary and no available monitors (headless / all unplugged)
-        // — nothing to target, and the caller logs the invisible-break
-        // error rather than crashing.
-        let none: Option<&str> = None;
-        assert!(primary_or_first(none, &[] as &[&str]).is_empty());
     }
 
     #[test]
