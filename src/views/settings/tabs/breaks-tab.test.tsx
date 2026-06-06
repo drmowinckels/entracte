@@ -149,6 +149,8 @@ describe("BreaksTab per-break postpone & skip", () => {
     renderTab(false, update);
     fireEvent.click(checkboxForLabel("Postpone micro breaks"));
     expect(update).toHaveBeenCalledWith("micro_postpone_enabled", false);
+    fireEvent.click(checkboxForLabel("Postpone long breaks"));
+    expect(update).toHaveBeenCalledWith("long_postpone_enabled", false);
   });
 
   it("toggling a per-kind skip calls update with that key", () => {
@@ -156,6 +158,8 @@ describe("BreaksTab per-break postpone & skip", () => {
     renderTab(false, update);
     fireEvent.click(checkboxForLabel("Skip long breaks"));
     expect(update).toHaveBeenCalledWith("long_skip_enabled", false);
+    fireEvent.click(checkboxForLabel("Skip micro breaks"));
+    expect(update).toHaveBeenCalledWith("micro_skip_enabled", false);
   });
 
   it("hides the per-kind postpone toggles when the global master is off", () => {
