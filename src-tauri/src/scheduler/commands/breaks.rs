@@ -162,7 +162,8 @@ pub async fn trigger_break_from_cli<R: Runtime>(
             duration_secs,
             enforceable,
             manual_finish,
-            postpone_available: s.postpone_enabled && !s.strict_mode,
+            postpone_available: s.postpone_available_for(kind),
+            skip_available: s.skip_available_for(kind),
             hints,
             hint_rotate_seconds: s.hint_rotate_seconds,
             health_intensity: if s.break_health_enabled {
@@ -305,7 +306,7 @@ pub async fn postpone_break_impl(
     kind: BreakKind,
 ) -> Result<PostponeOutcome, String> {
     let s = scheduler.settings.lock().await.clone();
-    if s.strict_mode || !s.postpone_enabled {
+    if !s.postpone_available_for(kind) {
         return Err("postpone disabled".to_string());
     }
     let counter_before = {
@@ -547,7 +548,8 @@ pub async fn resume_last_break_impl<R: Runtime>(
             duration_secs,
             enforceable,
             manual_finish,
-            postpone_available: s.postpone_enabled && !s.strict_mode,
+            postpone_available: s.postpone_available_for(kind),
+            skip_available: s.skip_available_for(kind),
             hints,
             hint_rotate_seconds: s.hint_rotate_seconds,
             health_intensity: if s.break_health_enabled {
@@ -943,6 +945,29 @@ mod tests {
             .await
             .expect_err("postpone_enabled=false blocks postpone");
         assert_eq!(err, "postpone disabled");
+    }
+
+    #[tokio::test]
+    async fn postpone_break_blocked_when_only_that_kind_disabled() {
+        // Global master on, long postpone on, micro postpone off: the
+        // micro request is rejected while the long path stays open.
+        let settings = Settings {
+            strict_mode: false,
+            postpone_enabled: true,
+            micro_postpone_enabled: false,
+            long_postpone_enabled: true,
+            postpone_escalation_enabled: false,
+            ..Settings::default()
+        };
+        let (_dir, sched) = test_scheduler(settings);
+        let err = postpone_break_impl(&sched, BreakKind::Micro)
+            .await
+            .expect_err("per-kind micro postpone off blocks postpone");
+        assert_eq!(err, "postpone disabled");
+
+        postpone_break_impl(&sched, BreakKind::Long)
+            .await
+            .expect("long postpone still allowed");
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ export type BreakEvent = {
   enforceable: boolean;
   manual_finish: boolean;
   postpone_available: boolean;
+  skip_available: boolean;
   hints: string[];
   hint_rotate_seconds: number;
   health_intensity: number;

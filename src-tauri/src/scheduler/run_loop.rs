@@ -222,6 +222,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                         enforceable: true,
                         manual_finish: false,
                         postpone_available: false,
+                        skip_available: false,
                         hints: s.sleep_hints.clone(),
                         hint_rotate_seconds: s.hint_rotate_seconds,
                         health_intensity: if s.break_health_enabled {
@@ -579,7 +580,8 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
         duration_secs,
         enforceable,
         manual_finish,
-        postpone_available: s.postpone_enabled && !s.strict_mode,
+        postpone_available: s.postpone_available_for(kind),
+        skip_available: s.skip_available_for(kind),
         hints,
         hint_rotate_seconds: s.hint_rotate_seconds,
         health_intensity: if s.break_health_enabled {
@@ -1265,6 +1267,38 @@ mod tests {
         let e = scheduled_break_event(BreakKind::Long, &s, 0.0);
         assert!(e.enforceable, "strict mode forces enforceable");
         assert!(!e.postpone_available, "strict mode disables postpone");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn scheduled_break_event_honours_per_kind_postpone() {
+        let mut s = Settings::default();
+        s.postpone_enabled = true;
+        s.micro_postpone_enabled = false;
+        s.long_postpone_enabled = true;
+
+        let micro = scheduled_break_event(BreakKind::Micro, &s, 0.0);
+        assert!(
+            !micro.postpone_available,
+            "micro postpone disabled per-kind"
+        );
+
+        let long = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        assert!(long.postpone_available, "long postpone left on per-kind");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn scheduled_break_event_honours_per_kind_skip() {
+        let mut s = Settings::default();
+        s.micro_skip_enabled = false;
+        s.long_skip_enabled = true;
+
+        let micro = scheduled_break_event(BreakKind::Micro, &s, 0.0);
+        assert!(!micro.skip_available, "micro skip disabled per-kind");
+
+        let long = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        assert!(long.skip_available, "long skip left on per-kind");
     }
 
     #[test]
