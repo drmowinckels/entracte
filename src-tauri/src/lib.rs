@@ -8,6 +8,7 @@ mod hooks;
 mod ipc;
 mod license_redact;
 mod media;
+mod notifications;
 mod pause_store;
 mod platform;
 mod proc;
@@ -190,6 +191,8 @@ pub fn run() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 repoint_stale_autostart_agent(app);
             }
+
+            notifications::ensure_permission_requested(app.handle());
 
             let config_dir = app
                 .path()

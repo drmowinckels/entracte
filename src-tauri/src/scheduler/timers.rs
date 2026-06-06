@@ -955,6 +955,66 @@ mod tests {
         assert!(prebreak_warn_due(warn_gate(), last, 60, 600, now));
     }
 
+    /// Drive a full interval cycle one simulated 1Hz tick at a time the
+    /// way the run loop does: at each tick, evaluate `prebreak_warn_due`
+    /// against the live `micro_warned` flag (setting it when it fires),
+    /// then `interval_break_due`; when the break is due, apply
+    /// `record_scheduled_fire` (which clears the warn flag) and re-anchor.
+    /// Returns the elapsed-seconds at every tick the warn fired across two
+    /// back-to-back cycles, so the test can assert the warning surfaces
+    /// exactly once per cycle and re-arms for the next break (#135).
+    fn simulate_warn_ticks(interval_secs: u64, lead_secs: u64, cycles: u64) -> Vec<u64> {
+        let mut t = BreakTimers::new();
+        let base = Instant::now();
+        let mut last_anchor = 0u64;
+        let mut fired_at = Vec::new();
+        let total = interval_secs * cycles;
+        for sec in 1..=total {
+            let now = base + Duration::from_secs(sec);
+            let gate = PrebreakGate {
+                enabled: true,
+                mode_includes_interval: true,
+                already_warned: t.micro_warned,
+                idle_suppressed: false,
+            };
+            if prebreak_warn_due(gate, t.last_micro, interval_secs, lead_secs, now) {
+                fired_at.push(sec - last_anchor);
+                t.micro_warned = true;
+            }
+            if interval_break_due(true, true, t.last_micro, interval_secs, false, now) {
+                record_scheduled_fire(
+                    &mut t,
+                    BreakKind::Micro,
+                    BreakDelivery::Notification,
+                    now,
+                    None,
+                );
+                last_anchor = sec;
+            }
+        }
+        fired_at
+    }
+
+    #[test]
+    fn prebreak_warn_fires_once_per_cycle_and_rearms() {
+        let fired = simulate_warn_ticks(900, 30, 3);
+        assert_eq!(
+            fired,
+            vec![870, 870, 870],
+            "warn must fire exactly once per cycle at the lead boundary and re-arm each cycle"
+        );
+    }
+
+    #[test]
+    fn prebreak_warn_survives_narrow_two_tick_window_each_cycle() {
+        let fired = simulate_warn_ticks(5, 2, 4);
+        assert_eq!(
+            fired,
+            vec![3, 3, 3, 3],
+            "a 2-tick-wide warn band [3,5) must still fire once and re-arm every cycle"
+        );
+    }
+
     // `decide_bedtime` — three-way decision combining window membership
     // and per-window interval. The first tick of the window always
     // fires (`None` last_sleep).
