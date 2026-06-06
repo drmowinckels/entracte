@@ -60,6 +60,7 @@ describe("breakEventSchema", () => {
     enforceable: true,
     manual_finish: false,
     postpone_available: true,
+    skip_available: true,
     hints: ["a", "b"],
     hint_rotate_seconds: 10,
     health_intensity: 0.5,

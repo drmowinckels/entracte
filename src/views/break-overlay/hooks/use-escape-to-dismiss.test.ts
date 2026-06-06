@@ -27,12 +27,14 @@ const enforceable: BreakEvent = {
   enforceable: true,
   manual_finish: false,
   postpone_available: false,
+  skip_available: true,
   hints: [],
   hint_rotate_seconds: 0,
   health_intensity: 0,
 };
 
 const dismissable: BreakEvent = { ...enforceable, enforceable: false };
+const skipDisabled: BreakEvent = { ...dismissable, skip_available: false };
 
 describe("useEscapeToDismiss", () => {
   it("does nothing when no break is active", () => {
@@ -46,6 +48,13 @@ describe("useEscapeToDismiss", () => {
     const target = makeTarget();
     const onDismiss = vi.fn();
     renderHook(() => useEscapeToDismiss(enforceable, onDismiss, { target }));
+    expect(target.addEventListener).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when skip is disabled for this break kind", () => {
+    const target = makeTarget();
+    const onDismiss = vi.fn();
+    renderHook(() => useEscapeToDismiss(skipDisabled, onDismiss, { target }));
     expect(target.addEventListener).not.toHaveBeenCalled();
   });
 

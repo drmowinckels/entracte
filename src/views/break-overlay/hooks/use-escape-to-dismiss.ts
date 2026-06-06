@@ -12,7 +12,8 @@ export function useEscapeToDismiss(
 ): void {
   const target =
     deps.target ?? (typeof window !== "undefined" ? window : undefined);
-  const dismissable = active !== null && !active.enforceable;
+  const dismissable =
+    active !== null && !active.enforceable && active.skip_available;
   useEffect(() => {
     if (!dismissable || !target) return;
     const onKey = (e: Event) => {

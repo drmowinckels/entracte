@@ -111,7 +111,7 @@ export default function BreakOverlay() {
   const label = labelFor(active.kind);
   const hintText = active.hints[hintIndex] ?? "";
   const intensity = clamp01(active.health_intensity);
-  const dismissable = !active.enforceable;
+  const dismissable = !active.enforceable && active.skip_available;
   const showPostpone = active.postpone_available && !finished;
   const showSkip = dismissable && !finished;
   const showEnforceableHint = shouldShowEnforceableHint({

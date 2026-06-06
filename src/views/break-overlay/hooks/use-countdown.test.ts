@@ -14,6 +14,7 @@ function makeBreak(overrides: Partial<BreakEvent> = {}): BreakEvent {
     enforceable: false,
     manual_finish: false,
     postpone_available: false,
+    skip_available: true,
     hints: [],
     hint_rotate_seconds: 0,
     health_intensity: 0,
