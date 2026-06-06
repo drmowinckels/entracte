@@ -22,6 +22,7 @@ mod test_support;
 mod tray;
 mod updater;
 mod video;
+mod window;
 
 use scheduler::Scheduler;
 use tauri::{Manager, WindowEvent};
@@ -252,10 +253,7 @@ pub fn run() {
 }
 
 fn handle_cli_argv(app: &tauri::AppHandle, argv: Vec<String>) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
+    window::show_main_window(app);
     if argv.len() > 1 {
         log::debug!(
             "cli: single-instance second invocation received args {:?} \
