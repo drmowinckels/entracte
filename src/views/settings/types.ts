@@ -67,6 +67,10 @@ export type SchedulerSettings = {
   monitor_placement: MonitorPlacement;
   strict_mode: boolean;
   postpone_enabled: boolean;
+  micro_postpone_enabled: boolean;
+  long_postpone_enabled: boolean;
+  micro_skip_enabled: boolean;
+  long_skip_enabled: boolean;
   postpone_minutes: number;
   show_current_time: boolean;
   clock_format: ClockFormat;

@@ -53,6 +53,7 @@ const sampleBreak: BreakEvent = {
   enforceable: false,
   manual_finish: false,
   postpone_available: true,
+  skip_available: true,
   hints: ["Look away"],
   hint_rotate_seconds: 0,
   health_intensity: 0.2,
@@ -219,6 +220,23 @@ describe("BreakOverlay action handlers", () => {
       postpone_available: false,
     });
     expect(queryByRole("button", { name: "Skip break" })).toBeNull();
+  });
+
+  it("skip_available=false hides the Skip button on a dismissable break", async () => {
+    const { queryByRole } = await startBreak(false, {
+      enforceable: false,
+      skip_available: false,
+    });
+    expect(queryByRole("button", { name: "Skip break" })).toBeNull();
+  });
+
+  it("skip_available=false blocks Escape-to-dismiss", async () => {
+    await startBreak(false, { enforceable: false, skip_available: false });
+    invokeMock.mockClear();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(invokeMock).not.toHaveBeenCalledWith("end_break", {
+      reason: "dismissed",
+    });
   });
 
   it("manual_finish=false hides the 'I'm back' button even after the timer ends", async () => {

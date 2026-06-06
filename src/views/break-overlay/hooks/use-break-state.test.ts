@@ -27,6 +27,7 @@ const sampleBreak: BreakEvent = {
   enforceable: false,
   manual_finish: false,
   postpone_available: true,
+  skip_available: true,
   hints: ["Look away", "Stretch"],
   hint_rotate_seconds: 0,
   health_intensity: 0.5,

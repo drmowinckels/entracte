@@ -54,12 +54,17 @@ impl BreakTimers {
     }
 }
 
-/// Reset the micro / long timers and clear deferral / postpone state
-/// without disturbing `last_sleep` or `active_break`. Called when the
-/// active profile switches: a new profile gets fresh intervals but we
-/// don't want to re-fire a sleep prompt that's already shown today.
-pub fn reset_timers_keep_sleep(t: &mut BreakTimers) {
-    let now = Instant::now();
+/// Re-anchor the micro / long interval clocks to `now` and clear the
+/// deferral / postpone / warn state, without disturbing `last_sleep`,
+/// `active_break`, or the fixed-time dedupe keys. `now` is injected so
+/// the re-anchor is a pure function over `BreakTimers` and a timestamp.
+///
+/// Used on two paths that both want "fresh intervals from this instant":
+/// a profile switch ([`reset_timers_keep_sleep`]) and a resume from pause
+/// ([`reanchor_intervals_on_resume`]). Sleep/bedtime semantics and any
+/// fixed-time schedule survive untouched — only the interval anchors and
+/// their per-cycle flags move.
+pub fn reanchor_intervals_to(t: &mut BreakTimers, now: Instant) {
     t.last_micro = now;
     t.last_long = now;
     t.micro_warned = false;
@@ -68,6 +73,31 @@ pub fn reset_timers_keep_sleep(t: &mut BreakTimers) {
     t.long_deferred_since = None;
     t.micro_postpone_count = 0;
     t.long_postpone_count = 0;
+}
+
+/// Reset the micro / long timers and clear deferral / postpone state
+/// without disturbing `last_sleep` or `active_break`. Called when the
+/// active profile switches: a new profile gets fresh intervals but we
+/// don't want to re-fire a sleep prompt that's already shown today.
+pub fn reset_timers_keep_sleep(t: &mut BreakTimers) {
+    reanchor_intervals_to(t, Instant::now());
+}
+
+/// Re-anchor the interval clocks when the scheduler resumes from a pause
+/// (timed-pause expiry or a manual "Resume"). Paused time must not count
+/// toward break intervals: without this, an hour-long pause leaves
+/// `last_micro` / `last_long` an hour in the past, so the very next tick
+/// sees every interval already overdue — the tray reads `0:00` and a
+/// break fires the instant the user resumes (#134).
+///
+/// Re-anchoring to the resume `now` restarts each interval from a full
+/// period and suppresses the spurious immediate fire. It deliberately
+/// leaves `last_sleep` and the fixed-time dedupe keys alone, so bedtime
+/// re-prompt cadence and fixed-time schedules keep their own clocks: a
+/// fixed-time break legitimately due at the resume minute still fires via
+/// its own date/minute path.
+pub fn reanchor_intervals_on_resume(t: &mut BreakTimers, now: Instant) {
+    reanchor_intervals_to(t, now);
 }
 
 /// Apply the timer bookkeeping for a scheduled micro/long break that has
@@ -660,6 +690,103 @@ mod tests {
         reset_timers_keep_sleep(&mut t);
         assert!(t.last_sleep.is_none());
         assert!(!t.micro_warned);
+    }
+
+    #[test]
+    fn reanchor_on_resume_moves_both_interval_clocks_to_now() {
+        // The #134 core: after an hour paused the anchors are an hour
+        // stale; re-anchoring to the resume instant means no interval is
+        // due (full period remaining) on the very next tick.
+        let paused_at = Instant::now();
+        let mut t = BreakTimers::new();
+        t.last_micro = paused_at;
+        t.last_long = paused_at;
+        let resumed_at = paused_at + Duration::from_secs(3_600);
+
+        reanchor_intervals_on_resume(&mut t, resumed_at);
+
+        assert_eq!(t.last_micro, resumed_at);
+        assert_eq!(t.last_long, resumed_at);
+        assert!(!interval_break_due(
+            true,
+            true,
+            t.last_micro,
+            1_200,
+            false,
+            resumed_at
+        ));
+        assert!(!interval_break_due(
+            true,
+            true,
+            t.last_long,
+            1_800,
+            false,
+            resumed_at
+        ));
+    }
+
+    #[test]
+    fn reanchor_on_resume_next_due_is_now_plus_interval() {
+        let resumed_at = Instant::now();
+        let mut t = BreakTimers::new();
+        reanchor_intervals_on_resume(&mut t, resumed_at);
+        let interval = 1_200u64;
+        assert!(!interval_break_due(
+            true,
+            true,
+            t.last_micro,
+            interval,
+            false,
+            resumed_at + Duration::from_secs(interval - 1)
+        ));
+        assert!(interval_break_due(
+            true,
+            true,
+            t.last_micro,
+            interval,
+            false,
+            resumed_at + Duration::from_secs(interval)
+        ));
+    }
+
+    #[test]
+    fn reanchor_on_resume_clears_warn_and_deferral_and_postpone() {
+        let mut t = BreakTimers::new();
+        t.micro_warned = true;
+        t.long_warned = true;
+        t.micro_deferred_since = Some(Instant::now());
+        t.long_deferred_since = Some(Instant::now());
+        t.micro_postpone_count = 4;
+        t.long_postpone_count = 7;
+
+        reanchor_intervals_on_resume(&mut t, Instant::now());
+
+        assert!(!t.micro_warned);
+        assert!(!t.long_warned);
+        assert!(t.micro_deferred_since.is_none());
+        assert!(t.long_deferred_since.is_none());
+        assert_eq!(t.micro_postpone_count, 0);
+        assert_eq!(t.long_postpone_count, 0);
+    }
+
+    #[test]
+    fn reanchor_on_resume_preserves_sleep_and_fixed_time_state() {
+        // Bedtime cadence and fixed-time dedupe keys must survive a resume
+        // so resuming doesn't re-fire a sleep prompt or a fixed-time slot
+        // already handled today.
+        let sleep_at = Instant::now();
+        let mut t = BreakTimers::new();
+        t.last_sleep = Some(sleep_at);
+        t.active_break = Some(BreakKind::Sleep);
+        t.last_micro_fixed_fire = Some(("2026-06-05".into(), 540));
+        t.last_long_fixed_fire = Some(("2026-06-05".into(), 600));
+
+        reanchor_intervals_on_resume(&mut t, Instant::now());
+
+        assert_eq!(t.last_sleep, Some(sleep_at));
+        assert_eq!(t.active_break, Some(BreakKind::Sleep));
+        assert_eq!(t.last_micro_fixed_fire, Some(("2026-06-05".into(), 540)));
+        assert_eq!(t.last_long_fixed_fire, Some(("2026-06-05".into(), 600)));
     }
 
     // `interval_break_due` — the workhorse decision for "is this break

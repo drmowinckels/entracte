@@ -39,6 +39,7 @@ pub struct BreakEvent {
     pub enforceable: bool,
     pub manual_finish: bool,
     pub postpone_available: bool,
+    pub skip_available: bool,
     pub hints: Vec<String>,
     pub hint_rotate_seconds: u64,
     pub health_intensity: f32,

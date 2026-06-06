@@ -216,10 +216,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     return;
                 }
                 "preferences" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
+                    crate::window::show_main_window(app);
                     return;
                 }
                 "resume" => {

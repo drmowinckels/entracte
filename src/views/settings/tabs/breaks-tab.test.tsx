@@ -22,6 +22,10 @@ const baseSettings = {
   sound_volume: 0.5,
   strict_mode: false,
   postpone_enabled: true,
+  micro_postpone_enabled: true,
+  long_postpone_enabled: true,
+  micro_skip_enabled: true,
+  long_skip_enabled: true,
   postpone_escalation_enabled: false,
   postpone_escalation_step_secs: 120,
   postpone_max_count: 3,
@@ -39,6 +43,7 @@ const baseSettings = {
 function renderTab(
   isSupporter: boolean,
   update: (key: string, value: unknown) => void = () => {},
+  overrides: Partial<SchedulerSettings> = {},
 ) {
   const supporter: SupporterStatus = {
     is_supporter: isSupporter,
@@ -47,7 +52,7 @@ function renderTab(
   };
   return render(
     <BreaksTab
-      settings={baseSettings}
+      settings={{ ...baseSettings, ...overrides }}
       update={update as never}
       supporter={supporter}
     />,
@@ -114,5 +119,73 @@ describe("BreaksTab break ideas", () => {
     ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Bedtime" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Custom CSS" })).toBeTruthy();
+  });
+});
+
+/** The checkbox owned by the CheckboxRow whose label text matches. */
+function checkboxForLabel(label: string): HTMLInputElement {
+  const span = screen.getByText(label);
+  const row = span.closest("label");
+  const input = row?.querySelector('input[type="checkbox"]');
+  if (!input) throw new Error(`no checkbox for label "${label}"`);
+  return input as HTMLInputElement;
+}
+
+function queryRowLabel(label: string): HTMLElement | null {
+  return screen.queryByText(label);
+}
+
+describe("BreaksTab per-break postpone & skip", () => {
+  it("shows per-kind postpone and skip toggles to free users", () => {
+    renderTab(false);
+    expect(checkboxForLabel("Postpone micro breaks")).toBeTruthy();
+    expect(checkboxForLabel("Postpone long breaks")).toBeTruthy();
+    expect(checkboxForLabel("Skip micro breaks")).toBeTruthy();
+    expect(checkboxForLabel("Skip long breaks")).toBeTruthy();
+  });
+
+  it("toggling a per-kind postpone calls update with that key", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.click(checkboxForLabel("Postpone micro breaks"));
+    expect(update).toHaveBeenCalledWith("micro_postpone_enabled", false);
+    fireEvent.click(checkboxForLabel("Postpone long breaks"));
+    expect(update).toHaveBeenCalledWith("long_postpone_enabled", false);
+  });
+
+  it("toggling a per-kind skip calls update with that key", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.click(checkboxForLabel("Skip long breaks"));
+    expect(update).toHaveBeenCalledWith("long_skip_enabled", false);
+    fireEvent.click(checkboxForLabel("Skip micro breaks"));
+    expect(update).toHaveBeenCalledWith("micro_skip_enabled", false);
+  });
+
+  it("hides the per-kind postpone toggles when the global master is off", () => {
+    renderTab(false, () => {}, { postpone_enabled: false });
+    expect(queryRowLabel("Postpone micro breaks")).toBeNull();
+    expect(queryRowLabel("Postpone long breaks")).toBeNull();
+    // Skip toggles are independent of the postpone master.
+    expect(checkboxForLabel("Skip micro breaks")).toBeTruthy();
+  });
+
+  it("hides every per-kind toggle in strict mode", () => {
+    renderTab(false, () => {}, { strict_mode: true });
+    expect(queryRowLabel("Postpone micro breaks")).toBeNull();
+    expect(queryRowLabel("Skip micro breaks")).toBeNull();
+    expect(queryRowLabel("Skip long breaks")).toBeNull();
+  });
+
+  it("disables the Skip-next button when that kind's skip is off", () => {
+    renderTab(false, () => {}, { micro_skip_enabled: false });
+    const micro = screen.getByRole("button", {
+      name: "Skip next micro",
+    }) as HTMLButtonElement;
+    const long = screen.getByRole("button", {
+      name: "Skip next long",
+    }) as HTMLButtonElement;
+    expect(micro.disabled).toBe(true);
+    expect(long.disabled).toBe(false);
   });
 });
