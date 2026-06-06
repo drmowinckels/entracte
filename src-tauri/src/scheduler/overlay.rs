@@ -247,8 +247,7 @@ fn resolve_overlay_indices(
     if wayland {
         let preferred = match placement {
             MonitorPlacement::Active => active.or(primary),
-            MonitorPlacement::Primary => primary,
-            MonitorPlacement::All => primary,
+            MonitorPlacement::Primary | MonitorPlacement::All => primary,
         };
         return vec![preferred.filter(|&i| i < monitor_count).unwrap_or(0)];
     }
@@ -362,12 +361,7 @@ pub fn fire_break<R: Runtime>(
     for (idx, monitor) in monitors.iter().enumerate() {
         if let Some(window) = ensure_overlay(app, idx) {
             let scale = monitor.scale_factor();
-            let reported = MonitorRect {
-                x: monitor.position().x,
-                y: monitor.position().y,
-                width: monitor.size().width,
-                height: monitor.size().height,
-            };
+            let reported = monitor_rect(monitor);
             let monitor_rect = scale_corrected_rect(reported, scale, wayland);
             let rect = if windowed {
                 centered_windowed_rect(monitor_rect, 0.8)
