@@ -7,6 +7,8 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+## [0.0.6] — 2026-06-06
+
 ### Added
 
 - **Postponing and skipping can now be turned on or off per break type.** The Breaks tab gains separate toggles for micro and long breaks, so you can (for example) allow skipping a micro break but never a long one, or postpone long breaks while micro breaks stay fixed. When a break type can't be skipped, its overlay drops the Skip button and Escape no longer dismisses it. Existing settings are preserved on upgrade — your current postpone and skip behaviour is unchanged until you touch the new switches. ([#132](https://github.com/drmowinckels/entracte/issues/132))

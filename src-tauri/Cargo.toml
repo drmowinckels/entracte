@@ -1,6 +1,6 @@
 [package]
 name = "entracte"
-version = "0.0.5"
+version = "0.0.6"
 description = "Cross-platform break reminder"
 authors = ["Athanasia Mowinckel"]
 license = "Apache-2.0"
