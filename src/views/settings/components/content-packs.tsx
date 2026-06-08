@@ -5,15 +5,10 @@ import {
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
 import { InfoTip } from "./info-tip";
+import { localDateString } from "../../../lib/time";
 import type { ContentPackSummary } from "../types";
 
 type Status = { kind: "ok" | "err"; message: string } | null;
-
-function localDateString(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 const FILTER = [{ name: "Entracte content pack", extensions: ["json"] }];
 
@@ -31,14 +26,15 @@ export function ContentPacks({
   const onExport = async () => {
     setStatus(null);
     try {
+      const today = localDateString();
       const path = await saveDialog({
-        defaultPath: `entracte-content-pack-${localDateString()}.json`,
+        defaultPath: `entracte-content-pack-${today}.json`,
         filters: FILTER,
       });
       if (typeof path !== "string" || !path) return;
       await invoke("export_content_pack", {
         path,
-        name: `Entracte content pack (${localDateString()})`,
+        name: `Entracte content pack (${today})`,
       });
       setStatus({ kind: "ok", message: `Exported to ${path}` });
     } catch (e) {
