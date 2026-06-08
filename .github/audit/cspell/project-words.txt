@@ -181,3 +181,5 @@ GStreamer
 Symphonia
 textareas
 winddown
+cmdorctrl
+commandorcontrol

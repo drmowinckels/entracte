@@ -70,7 +70,7 @@ describe("HotkeysSection", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("flags an unparseable accelerator as invalid", () => {
+  it("flags a malformed accelerator as invalid", () => {
     renderSection(true, [{ action: "pause", accelerator: "Ctrl+Foo" }]);
     const pause = screen.getByLabelText("Pause breaks");
     expect(pause.getAttribute("aria-invalid")).toBe("true");

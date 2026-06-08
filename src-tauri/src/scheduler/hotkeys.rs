@@ -102,6 +102,13 @@ pub fn next_profile_name(names: &[String], active: &str) -> Option<String> {
 /// entry points the CLI/IPC use so the two paths stay in lockstep. Pause and
 /// resume mirror the IPC handler's pause-state writes; trigger/skip and the
 /// profile cycle reuse the shared command helpers.
+///
+/// In the real build this is called from `apply_hotkeys`'s shortcut handler;
+/// under `cfg(test)` that shim is a no-op, so the only callers are the
+/// `mod execute` tests — which are skipped on Windows (the mock-app rig isn't
+/// compiled there). Allow dead_code in exactly that build so `-D warnings`
+/// doesn't fail the Windows test compile.
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub async fn execute_hotkey_action<R: Runtime>(
     app: &AppHandle<R>,
     scheduler: &Scheduler,
