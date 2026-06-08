@@ -8,12 +8,16 @@ const VALID = [
     id: "micro-eye-reset",
     label: "Eye reset",
     kind: "micro",
+    category: "eyes",
+    difficulty: "gentle",
     steps: [{ text: "Look away", seconds: 5 }],
   },
   {
     id: "long-stretch",
     label: "Full-body stretch",
     kind: "long",
+    category: "mobility",
+    difficulty: "moderate",
     steps: [{ text: "Reach up", seconds: 20 }],
   },
 ];

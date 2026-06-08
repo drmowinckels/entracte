@@ -42,6 +42,14 @@ const hotkeySchema = z.object({
   accelerator: z.string(),
 });
 
+const routineCategorySchema = z.enum([
+  "eyes",
+  "mobility",
+  "breathing",
+  "desk_yoga",
+]);
+const routineDifficultySchema = z.enum(["gentle", "moderate", "active"]);
+
 export const schedulerSettingsSchema = z.object({
   micro_interval_secs: z.number(),
   micro_duration_secs: z.number(),
@@ -103,6 +111,10 @@ export const schedulerSettingsSchema = z.object({
   sleep_hints: z.array(z.string()),
   micro_routine: z.string(),
   long_routine: z.string(),
+  micro_routine_categories: z.array(routineCategorySchema),
+  long_routine_categories: z.array(routineCategorySchema),
+  micro_routine_max_difficulty: routineDifficultySchema,
+  long_routine_max_difficulty: routineDifficultySchema,
   hint_rotate_seconds: z.number(),
   delay_break_if_typing: z.boolean(),
   typing_grace_secs: z.number(),

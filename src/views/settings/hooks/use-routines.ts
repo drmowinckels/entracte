@@ -6,6 +6,8 @@ const routineSchema = z.object({
   id: z.string(),
   label: z.string(),
   kind: z.enum(["micro", "long"]),
+  category: z.enum(["eyes", "mobility", "breathing", "desk_yoga"]),
+  difficulty: z.enum(["gentle", "moderate", "active"]),
   steps: z.array(z.object({ text: z.string(), seconds: z.number() })),
 });
 

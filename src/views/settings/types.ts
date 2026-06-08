@@ -60,6 +60,12 @@ export type Hotkey = {
   accelerator: string;
 };
 
+// Mirrors the Rust `RoutineCategory` / `RoutineDifficulty` serde enums in
+// `src-tauri/src/scheduler/routines.rs`.
+export type RoutineCategory = "eyes" | "mobility" | "breathing" | "desk_yoga";
+
+export type RoutineDifficulty = "gentle" | "moderate" | "active";
+
 export type SchedulerSettings = {
   micro_interval_secs: number;
   micro_duration_secs: number;
@@ -121,6 +127,10 @@ export type SchedulerSettings = {
   sleep_hints: string[];
   micro_routine: string;
   long_routine: string;
+  micro_routine_categories: RoutineCategory[];
+  long_routine_categories: RoutineCategory[];
+  micro_routine_max_difficulty: RoutineDifficulty;
+  long_routine_max_difficulty: RoutineDifficulty;
   hint_rotate_seconds: number;
   delay_break_if_typing: boolean;
   typing_grace_secs: number;
