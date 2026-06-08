@@ -3,9 +3,29 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Runtime};
 
-use crate::hooks::Hook;
+use crate::hooks::{Hook, HookTestOutcome};
 
 use super::super::Scheduler;
+
+/// Run a single hook command once and return its captured stdout/stderr and
+/// exit status, so the Settings "Test" button can show the user what a
+/// command does before they rely on it. Runs with a representative
+/// `$ENTRACTE_*` env and a short timeout, off the async runtime since the
+/// capture blocks. No confirmation dialog: the user typed and triggered this
+/// command themselves — the dialog guards *persisting* hooks, not a transient
+/// user-initiated test.
+#[tauri::command]
+pub async fn test_hook(command: String) -> Result<HookTestOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::hooks::run_command_capture(
+            &command,
+            &crate::hooks::sample_test_env(),
+            crate::hooks::HOOK_TEST_TIMEOUT,
+        )
+    })
+    .await
+    .map_err(|e| format!("test-run task failed: {e}"))
+}
 
 const HOOK_DIALOG_ALLOW: &str = "Allow";
 const HOOK_DIALOG_CANCEL: &str = "Cancel";

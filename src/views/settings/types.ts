@@ -34,6 +34,16 @@ export type HookConfig = {
   enabled: boolean;
 };
 
+// Mirrors the Rust `HookTestOutcome` in `src-tauri/src/hooks.rs` — the result
+// of the Settings "Test" button running a hook command once.
+export type HookTestOutcome = {
+  ok: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  error: string | null;
+};
+
 // Mirrors the Rust `HotkeyAction` serde enum (snake_case) in
 // `src-tauri/src/scheduler/hotkeys.rs`.
 export type HotkeyAction =

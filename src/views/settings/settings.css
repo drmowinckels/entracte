@@ -1000,6 +1000,58 @@ body,
   font-size: 0.85rem;
 }
 
+.settings .hook-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--input-border);
+}
+
+.settings .hook-templates select {
+  font-size: 0.8rem;
+}
+
+.settings .hook-warning code {
+  font-size: 0.85em;
+}
+
+.settings .hook-test-result {
+  font-size: 0.85rem;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+}
+
+.settings .hook-test-ok {
+  margin: 0;
+  color: var(--ok, #3a9d5d);
+}
+
+.settings .hook-test-fail,
+.settings .hook-test-error {
+  margin: 0;
+  color: var(--danger, #d9534f);
+}
+
+.settings .hook-test-stream {
+  margin: 0.3rem 0 0;
+  padding: 0.3rem 0.5rem;
+  background: rgb(0 0 0 / 18%);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12rem;
+  overflow: auto;
+  font-size: 0.8rem;
+}
+
+.settings .hook-test-empty {
+  margin: 0.3rem 0 0;
+  opacity: 0.6;
+}
+
 .settings .settings-header {
   display: flex;
   align-items: flex-end;

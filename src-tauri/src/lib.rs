@@ -140,6 +140,7 @@ pub fn run() {
             scheduler::get_onboarding_completed,
             scheduler::complete_onboarding,
             scheduler::set_hooks,
+            scheduler::test_hook,
             scheduler::pause,
             scheduler::resume,
             scheduler::export_backup_to_path,
