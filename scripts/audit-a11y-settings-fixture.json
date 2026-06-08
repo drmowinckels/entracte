@@ -69,6 +69,7 @@
   "long_routine_categories": [],
   "micro_routine_max_difficulty": "moderate",
   "long_routine_max_difficulty": "active",
+  "custom_routines": [],
   "hint_rotate_seconds": 12,
   "delay_break_if_typing": true,
   "typing_grace_secs": 10,

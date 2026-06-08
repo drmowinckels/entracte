@@ -50,6 +50,7 @@ const baseSettings = {
   long_routine_categories: [],
   micro_routine_max_difficulty: "active",
   long_routine_max_difficulty: "active",
+  custom_routines: [],
   custom_css: "",
 } as unknown as SchedulerSettings;
 
@@ -68,6 +69,7 @@ function renderTab(
       settings={{ ...baseSettings, ...overrides }}
       update={update as never}
       supporter={supporter}
+      reload={async () => {}}
     />,
   );
 }

@@ -1,5 +1,6 @@
 mod break_stats;
 mod commands;
+mod content_pack;
 mod hotkeys;
 mod overlay;
 mod pause;
@@ -32,6 +33,7 @@ pub use break_stats::BreakStats;
 // the handler invocation in lib.rs to resolve.
 pub use commands::backup::*;
 pub use commands::breaks::*;
+pub use commands::content_pack::*;
 pub use commands::hooks::*;
 pub use commands::profiles::*;
 pub use commands::settings::*;

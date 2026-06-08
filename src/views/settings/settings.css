@@ -929,6 +929,11 @@ body,
   margin-top: 0.5rem;
 }
 
+.settings .content-pack-err {
+  color: var(--danger, #d9534f);
+  font-size: 0.9rem;
+}
+
 .settings .routine-categories {
   display: flex;
   flex-wrap: wrap;

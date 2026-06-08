@@ -39,7 +39,38 @@ The Breaks tab covers what breaks look and sound like, and the escape hatches.
 - **Overlay** — transparency, text size, theme (Dark / Midnight / Forest / Rose / Sunset — plus Rotate and Custom in the [Supporter pack](./supporter)), wellness hints toggle, current time toggle. Advanced disclosure adds **monitor placement**, **windowed break size** (presets of 70% / 80% / 90% or a custom slider, with optional per-kind overrides so a micro break can be smaller than a long one), **high contrast**, and the **break-health vignette** that intensifies as you skip more breaks. (Whether a break renders full-screen or windowed is part of the per-kind **Mode** dropdown in the Schedule tab — see [Break mode](#break-mode-per-kind) below.)
 - **Sound** — chime theme and volume, with a Preview button.
 - **Break ideas** — optional rotation toggle (off by default — one idea is picked per break and stays on screen; turn on to cycle through the pool every N seconds), plus a **Mix** selector for Micro (Physical / Psychological / Both) and Long (Solo / Social / Both — Social prompts you to call someone, walk with a colleague, or share a coffee). The curated default pools cover every category out of the box; editing the pool text is a [Supporter pack](./supporter) feature. A **Guided routine** selector per kind replaces the rotating idea with a step-by-step sequence (e.g. eye reset, full-body stretch) that advances through the break with a per-step countdown. Each kind has three modes: **None** (keep the rotating ideas), a **specific routine**, or **Random** — which draws a fresh routine each break from the bundled set, filtered by the **categories** you tick (Eyes / Mobility / Breathing / Desk yoga; none ticked means all) and a **maximum difficulty** (Gentle / Moderate / Active). These routine settings are per-profile, so different profiles can pull from different pools.
+- **Content packs** — share or back up your break ideas and guided routines as a plain local JSON file. **Import** adds a pack's ideas and routines to your pools without removing anything you already have (exact-duplicate ideas are skipped, and routines whose id collides with a built-in or one you already have are skipped); **Export** writes your current pools and imported routines to a file. Local files only — no cloud, no registry, nothing downloads automatically. See [Content-pack format](#content-pack-format) below.
 - **Skip & postpone** — Strict mode (no skip, no postpone, all breaks enforced), postpone toggle and minutes, optional postpone escalation (each postpone of the same break adds extra delay), and one-shot **Skip next micro / Skip next long** buttons.
+
+### Content-pack format
+
+A content pack is a versioned JSON file:
+
+```json
+{
+  "version": 1,
+  "name": "My pack",
+  "hints": {
+    "micro_physical": ["Look out the window"],
+    "micro_psychological": [],
+    "long_solo": ["Take a short walk"],
+    "long_social": [],
+    "sleep": []
+  },
+  "routines": [
+    {
+      "id": "my-eye-routine",
+      "label": "Eye routine",
+      "kind": "micro",
+      "category": "eyes",
+      "difficulty": "gentle",
+      "steps": [{ "text": "Look far away", "seconds": 10 }]
+    }
+  ]
+}
+```
+
+`version` must match the build's supported version (currently `1`); all of `hints`/`routines` are optional. Import validates the structure (supported version, non-empty name, well-formed routines, size caps) and rejects a malformed file with a clear message rather than partially applying it. Export → import round-trips losslessly. Sound and theme bundling are not in v1 — the schema is versioned so they can be added later without breaking existing packs.
 
 ### Monitor placement
 

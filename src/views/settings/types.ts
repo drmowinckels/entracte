@@ -66,6 +66,25 @@ export type RoutineCategory = "eyes" | "mobility" | "breathing" | "desk_yoga";
 
 export type RoutineDifficulty = "gentle" | "moderate" | "active";
 
+export type RoutineStep = { text: string; seconds: number };
+
+// Mirrors the Rust `Routine` in `src-tauri/src/scheduler/routines.rs`. Stored
+// in settings as `custom_routines` (imported from content packs, #155).
+export type Routine = {
+  id: string;
+  label: string;
+  kind: "micro" | "long";
+  category: RoutineCategory;
+  difficulty: RoutineDifficulty;
+  steps: RoutineStep[];
+};
+
+// Result of importing a content pack — mirrors Rust `MergeSummary`.
+export type ContentPackSummary = {
+  hints_added: number;
+  routines_added: number;
+};
+
 export type SchedulerSettings = {
   micro_interval_secs: number;
   micro_duration_secs: number;
@@ -131,6 +150,7 @@ export type SchedulerSettings = {
   long_routine_categories: RoutineCategory[];
   micro_routine_max_difficulty: RoutineDifficulty;
   long_routine_max_difficulty: RoutineDifficulty;
+  custom_routines: Routine[];
   hint_rotate_seconds: number;
   delay_break_if_typing: boolean;
   typing_grace_secs: number;

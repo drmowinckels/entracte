@@ -110,6 +110,7 @@ export default function Settings() {
                 settings={settings}
                 update={update}
                 supporter={supporter.status}
+                reload={reloadFromActive}
               />
             </div>
             <div

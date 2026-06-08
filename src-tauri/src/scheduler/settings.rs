@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::hooks::Hook;
 
 use super::hotkeys::Hotkey;
-use super::routines::{RoutineCategory, RoutineDifficulty};
+use super::routines::{Routine, RoutineCategory, RoutineDifficulty};
 use super::timers::parse_hhmm;
 use super::types::{BreakDelivery, BreakKind};
 
@@ -566,6 +566,10 @@ pub struct Settings {
     pub micro_routine_max_difficulty: RoutineDifficulty,
     #[serde(default = "default_routine_max_difficulty")]
     pub long_routine_max_difficulty: RoutineDifficulty,
+    /// User routines imported from content packs (#155), added to the bundled
+    /// starters by [`super::routines::all_routines`]. Empty by default.
+    #[serde(default)]
+    pub custom_routines: Vec<Routine>,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
     pub typing_grace_secs: u64,
@@ -683,6 +687,7 @@ impl Default for Settings {
             long_routine_categories: Vec::new(),
             micro_routine_max_difficulty: default_routine_max_difficulty(),
             long_routine_max_difficulty: default_routine_max_difficulty(),
+            custom_routines: Vec::new(),
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
             typing_grace_secs: 10,

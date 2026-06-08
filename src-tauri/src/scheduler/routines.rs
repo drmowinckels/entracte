@@ -65,8 +65,9 @@ impl RoutineDifficulty {
 
 /// A curated, ordered sequence of guided break steps with a stable `id`
 /// (persisted in settings), a human `label`, and engine metadata
-/// (`category` / `difficulty`).
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// (`category` / `difficulty`). `Deserialize` so user routines can arrive
+/// from imported content packs (#155) and persist in `Settings`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Routine {
     pub id: String,
     pub label: String,
@@ -294,7 +295,7 @@ pub fn resolve_routine_steps(kind: BreakKind, s: &Settings) -> Vec<RoutineStep> 
         ),
         BreakKind::Sleep => return Vec::new(),
     };
-    let routines = starter_routines();
+    let routines = all_routines(s);
     match id {
         "" => Vec::new(),
         "random" => {
@@ -315,10 +316,31 @@ pub fn resolve_routine_steps(kind: BreakKind, s: &Settings) -> Vec<RoutineStep> 
     }
 }
 
-/// List the bundled routines for the Breaks-tab picker.
+/// Every routine available to a profile: the bundled starters plus any the
+/// user has imported from a content pack (`custom_routines`). A custom
+/// routine whose id collides with a starter is dropped so the built-in always
+/// wins (import already rejects such ids, but resolve stays defensive).
+pub fn all_routines(s: &Settings) -> Vec<Routine> {
+    let mut routines = starter_routines();
+    let starter_ids: std::collections::HashSet<&str> =
+        routines.iter().map(|r| r.id.as_str()).collect();
+    let extra: Vec<Routine> = s
+        .custom_routines
+        .iter()
+        .filter(|r| !starter_ids.contains(r.id.as_str()))
+        .cloned()
+        .collect();
+    routines.extend(extra);
+    routines
+}
+
+/// List every routine (starter + imported) for the Breaks-tab picker.
 #[tauri::command]
-pub fn get_routines() -> Vec<Routine> {
-    starter_routines()
+pub async fn get_routines(
+    scheduler: tauri::State<'_, super::Scheduler>,
+) -> Result<Vec<Routine>, String> {
+    let s = scheduler.settings.lock().await;
+    Ok(all_routines(&s))
 }
 
 #[cfg(test)]
@@ -512,8 +534,55 @@ mod tests {
     }
 
     #[test]
-    fn get_routines_returns_the_starter_set() {
-        assert_eq!(get_routines(), starter_routines());
+    fn all_routines_is_just_starters_by_default() {
+        assert_eq!(all_routines(&Settings::default()), starter_routines());
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn all_routines_appends_custom_and_drops_starter_id_collisions() {
+        let mut s = Settings::default();
+        let custom = Routine {
+            id: "custom-stretch".to_string(),
+            label: "My stretch".to_string(),
+            kind: RoutineKind::Long,
+            category: RoutineCategory::Mobility,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![step("Reach up", 10)],
+        };
+        // A custom routine reusing a starter id must not shadow the built-in.
+        let collide = Routine {
+            id: "micro-eye-reset".to_string(),
+            ..custom.clone()
+        };
+        s.custom_routines = vec![custom.clone(), collide];
+        let all = all_routines(&s);
+        assert_eq!(all.len(), starter_routines().len() + 1);
+        assert!(all.iter().any(|r| r.id == "custom-stretch"));
+        // Exactly one routine carries the starter id, and it's the starter.
+        let eye = all
+            .iter()
+            .filter(|r| r.id == "micro-eye-reset")
+            .collect::<Vec<_>>();
+        assert_eq!(eye.len(), 1);
+        assert_eq!(eye[0].label, "Eye reset (20-20-20)");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn resolve_picks_an_imported_routine_by_id() {
+        let mut s = Settings::default();
+        s.custom_routines = vec![Routine {
+            id: "custom-breathe".to_string(),
+            label: "Imported breathing".to_string(),
+            kind: RoutineKind::Micro,
+            category: RoutineCategory::Breathing,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![step("In", 4), step("Out", 4)],
+        }];
+        s.micro_routine = "custom-breathe".to_string();
+        let steps = resolve_routine_steps(BreakKind::Micro, &s);
+        assert_eq!(steps, vec![step("In", 4), step("Out", 4)]);
     }
 
     #[test]
