@@ -317,6 +317,7 @@ pub fn deliver_break<R: Runtime>(
     event: BreakEvent,
     delivery: BreakDelivery,
     placement: MonitorPlacement,
+    windowed_fraction: f64,
 ) {
     match delivery {
         BreakDelivery::Notification => notify_break_now(app, event.kind, event.duration_secs),
@@ -326,6 +327,7 @@ pub fn deliver_break<R: Runtime>(
             event,
             placement,
             matches!(delivery, BreakDelivery::Windowed),
+            windowed_fraction,
         ),
     }
 }
@@ -343,6 +345,7 @@ pub fn fire_break<R: Runtime>(
     event: BreakEvent,
     placement: MonitorPlacement,
     windowed: bool,
+    windowed_fraction: f64,
 ) {
     let mut payload = event;
     payload.postpone_available = payload.postpone_available && !payload.enforceable;
@@ -365,7 +368,7 @@ pub fn fire_break<R: Runtime>(
             let reported = monitor_rect(monitor);
             let monitor_rect = scale_corrected_rect(reported, scale, wayland);
             let rect = if windowed {
-                centered_windowed_rect(monitor_rect, 0.8)
+                centered_windowed_rect(monitor_rect, windowed_fraction)
             } else {
                 monitor_rect
             };

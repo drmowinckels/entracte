@@ -9,6 +9,7 @@ import { useLocalDraft } from "../../../lib/use-local-draft";
 import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
 import { InfoTip } from "../components/info-tip";
+import { WindowedSizeRow } from "../components/windowed-size-row";
 import {
   MONITOR_PLACEMENTS,
   OVERLAY_THEMES,
@@ -237,6 +238,30 @@ export function BreaksTab({
               ))}
             </select>
           </label>
+          <WindowedSizeRow
+            label="Windowed break size"
+            tip="How much of the screen a windowed-mode break fills. Only applies to breaks set to Windowed delivery on the Schedule tab; full-screen overlays always cover the whole monitor."
+            value={settings.windowed_fraction}
+            allowInherit={false}
+            fallback={settings.windowed_fraction}
+            onChange={(v) => update("windowed_fraction", v ?? 0.8)}
+          />
+          <WindowedSizeRow
+            label="Micro break size"
+            tip="Override the windowed size for micro breaks only. A quick micro break can be smaller than a long one."
+            value={settings.micro_windowed_fraction}
+            allowInherit
+            fallback={settings.windowed_fraction}
+            onChange={(v) => update("micro_windowed_fraction", v)}
+          />
+          <WindowedSizeRow
+            label="Long break size"
+            tip="Override the windowed size for long breaks only. Leave on “Same as global” to follow the windowed break size above."
+            value={settings.long_windowed_fraction}
+            allowInherit
+            fallback={settings.windowed_fraction}
+            onChange={(v) => update("long_windowed_fraction", v)}
+          />
           <CheckboxRow
             label="High contrast (pure black, white text, solid ring)"
             value={settings.overlay_high_contrast}

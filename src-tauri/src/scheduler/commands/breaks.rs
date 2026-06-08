@@ -8,7 +8,8 @@ use crate::stats::{EventPayload, Outcome, SkipSource};
 use super::super::overlay::{deliver_break, fire_break};
 use super::super::pause::{persist_pause, PauseInfo, PauseState};
 use super::super::settings::{
-    delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode, Settings,
+    delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode,
+    windowed_fraction_for, Settings,
 };
 use super::super::timers::{
     clear_last_break, postpone_counter, reanchor_intervals_on_resume, reset_postpone_counter,
@@ -177,6 +178,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
         },
         delivery,
         s.monitor_placement,
+        windowed_fraction_for(kind, &s),
     );
     hooks::run_hooks(
         &s,
@@ -569,6 +571,7 @@ pub async fn resume_last_break_impl<R: Runtime>(
         event,
         s.monitor_placement,
         is_windowed_mode(kind, &s),
+        windowed_fraction_for(kind, &s),
     );
     scheduler.logger.log(EventPayload::BreakResumed { kind });
     hooks::run_hooks(

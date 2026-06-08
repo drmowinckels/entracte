@@ -65,6 +65,9 @@ export type SchedulerSettings = {
   overlay_high_contrast: boolean;
   show_hint: boolean;
   monitor_placement: MonitorPlacement;
+  windowed_fraction: number;
+  micro_windowed_fraction: number | null;
+  long_windowed_fraction: number | null;
   strict_mode: boolean;
   postpone_enabled: boolean;
   micro_postpone_enabled: boolean;

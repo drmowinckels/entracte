@@ -308,6 +308,10 @@ fn default_clock_format() -> String {
     "24h".to_string()
 }
 
+fn default_windowed_fraction() -> f64 {
+    0.8
+}
+
 fn default_micro_physical_hints() -> Vec<String> {
     vec![
         "Look at something 20 feet away.",
@@ -478,6 +482,22 @@ pub struct Settings {
     pub overlay_high_contrast: bool,
     pub show_hint: bool,
     pub monitor_placement: MonitorPlacement,
+    /// Fraction of the monitor a windowed-mode break overlay fills,
+    /// clamped to `[0.1, 1.0]` by [`centered_windowed_rect`]. Defaults to
+    /// `0.8` — the historical hardcoded value — so existing users see no
+    /// change. Per-kind overrides below take precedence when set; the
+    /// effective value is resolved by [`windowed_fraction_for`].
+    #[serde(default = "default_windowed_fraction")]
+    pub windowed_fraction: f64,
+    /// Optional per-kind windowed-size override for micro breaks. `None`
+    /// falls back to `windowed_fraction`.
+    #[serde(default)]
+    pub micro_windowed_fraction: Option<f64>,
+    /// Optional per-kind windowed-size override for long breaks. `None`
+    /// falls back to `windowed_fraction`. Sleep never renders windowed, so
+    /// it has no override.
+    #[serde(default)]
+    pub long_windowed_fraction: Option<f64>,
     pub strict_mode: bool,
     pub postpone_enabled: bool,
     /// Per-kind postpone master switch, ANDed with the global
@@ -596,6 +616,9 @@ impl Default for Settings {
             overlay_high_contrast: false,
             show_hint: true,
             monitor_placement: MonitorPlacement::Primary,
+            windowed_fraction: 0.8,
+            micro_windowed_fraction: None,
+            long_windowed_fraction: None,
             strict_mode: false,
             postpone_enabled: true,
             micro_postpone_enabled: true,
@@ -826,6 +849,12 @@ impl Settings {
         self.overlay_opacity = self.overlay_opacity.clamp(0.8, 1.0);
         self.sound_volume = self.sound_volume.clamp(0.0, 1.0);
         self.overlay_font_scale = self.overlay_font_scale.clamp(0.5, 3.0);
+        // Windowed overlay size: the same [0.1, 1.0] fraction the renderer
+        // and `centered_windowed_rect` use. Per-kind overrides clamp in
+        // place when set; `None` (inherit the global) is left untouched.
+        self.windowed_fraction = self.windowed_fraction.clamp(0.1, 1.0);
+        self.micro_windowed_fraction = self.micro_windowed_fraction.map(|f| f.clamp(0.1, 1.0));
+        self.long_windowed_fraction = self.long_windowed_fraction.map(|f| f.clamp(0.1, 1.0));
         // Reject unknown clock_format values so the renderer's zod
         // enum doesn't reject the entire settings payload.
         if self.clock_format != "12h" && self.clock_format != "24h" {
@@ -983,6 +1012,23 @@ pub fn delivery_for(kind: BreakKind, s: &Settings) -> BreakDelivery {
 /// `Windowed` delivery mode. Convenience wrapper around `delivery_for`.
 pub fn is_windowed_mode(kind: BreakKind, s: &Settings) -> bool {
     matches!(delivery_for(kind, s), BreakDelivery::Windowed)
+}
+
+/// Resolve the windowed-overlay size fraction for a break kind: the
+/// per-kind override when set, otherwise the global `windowed_fraction`.
+/// The result is clamped to `[0.1, 1.0]` (matching
+/// [`centered_windowed_rect`]) so a corrupt on-disk value can't size the
+/// overlay off-screen. Sleep has no override and falls back to the global
+/// value (it never renders windowed anyway).
+pub fn windowed_fraction_for(kind: BreakKind, s: &Settings) -> f64 {
+    let override_value = match kind {
+        BreakKind::Micro => s.micro_windowed_fraction,
+        BreakKind::Long => s.long_windowed_fraction,
+        BreakKind::Sleep => None,
+    };
+    override_value
+        .unwrap_or(s.windowed_fraction)
+        .clamp(0.1, 1.0)
 }
 
 #[cfg(test)]
@@ -1185,6 +1231,21 @@ mod tests {
         // Opacity floor is 0.8 (caps transparency at 20%).
         assert!((0.8..=1.0).contains(&s.overlay_opacity));
         assert!((0.0..=1.0).contains(&s.sound_volume));
+    }
+
+    #[test]
+    fn clamp_pins_windowed_fractions_to_valid_range() {
+        let mut s = Settings {
+            windowed_fraction: 5.0,
+            micro_windowed_fraction: Some(0.0),
+            long_windowed_fraction: None,
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.windowed_fraction, 1.0);
+        assert_eq!(s.micro_windowed_fraction, Some(0.1));
+        // An unset (inherit) override stays None — never forced to a value.
+        assert_eq!(s.long_windowed_fraction, None);
     }
 
     #[test]
@@ -1501,6 +1562,60 @@ mod tests {
         s.micro_break_mode = BreakMode::Windowed;
         s.long_break_mode = BreakMode::Windowed;
         assert!(!is_windowed_mode(BreakKind::Sleep, &s));
+    }
+
+    #[test]
+    fn windowed_fraction_defaults_to_eighty_percent() {
+        let s = Settings::default();
+        assert_eq!(s.windowed_fraction, 0.8);
+        assert_eq!(windowed_fraction_for(BreakKind::Micro, &s), 0.8);
+        assert_eq!(windowed_fraction_for(BreakKind::Long, &s), 0.8);
+        assert_eq!(windowed_fraction_for(BreakKind::Sleep, &s), 0.8);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn windowed_fraction_for_uses_global_when_no_override() {
+        let mut s = Settings::default();
+        s.windowed_fraction = 0.7;
+        assert_eq!(windowed_fraction_for(BreakKind::Micro, &s), 0.7);
+        assert_eq!(windowed_fraction_for(BreakKind::Long, &s), 0.7);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn windowed_fraction_for_prefers_per_kind_override() {
+        let mut s = Settings::default();
+        s.windowed_fraction = 0.8;
+        s.micro_windowed_fraction = Some(0.5);
+        // Micro takes its override; long still falls back to the global.
+        assert_eq!(windowed_fraction_for(BreakKind::Micro, &s), 0.5);
+        assert_eq!(windowed_fraction_for(BreakKind::Long, &s), 0.8);
+
+        s.long_windowed_fraction = Some(0.95);
+        assert_eq!(windowed_fraction_for(BreakKind::Long, &s), 0.95);
+        // The micro override is independent of the long one.
+        assert_eq!(windowed_fraction_for(BreakKind::Micro, &s), 0.5);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn windowed_fraction_for_clamps_out_of_range_values() {
+        let mut s = Settings::default();
+        s.windowed_fraction = 5.0;
+        assert_eq!(windowed_fraction_for(BreakKind::Long, &s), 1.0);
+        s.micro_windowed_fraction = Some(0.0);
+        assert_eq!(windowed_fraction_for(BreakKind::Micro, &s), 0.1);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn windowed_fraction_for_sleep_ignores_per_kind_overrides() {
+        let mut s = Settings::default();
+        s.windowed_fraction = 0.6;
+        s.micro_windowed_fraction = Some(0.3);
+        s.long_windowed_fraction = Some(0.9);
+        assert_eq!(windowed_fraction_for(BreakKind::Sleep, &s), 0.6);
     }
 
     #[test]
