@@ -65,6 +65,31 @@ export function BreaksTab({
   const fontScalePct = Math.round(settings.overlay_font_scale * 100);
   const soundVolumePct = Math.round(settings.sound_volume * 100);
 
+  const routinePicker = (
+    kind: "micro" | "long",
+    key: "micro_routine" | "long_routine",
+  ) => (
+    <label className="row">
+      <span>
+        Guided routine
+        <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
+      </span>
+      <select
+        value={settings[key]}
+        onChange={(e) => update(key, e.target.value)}
+      >
+        <option value="">None (rotate ideas)</option>
+        {routines
+          .filter((r) => r.kind === kind)
+          .map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.label}
+            </option>
+          ))}
+      </select>
+    </label>
+  );
+
   return (
     <>
       <h2>Overlay</h2>
@@ -430,25 +455,7 @@ export function BreaksTab({
             <option value="psychological">Psychological only</option>
           </select>
         </label>
-        <label className="row">
-          <span>
-            Guided routine
-            <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
-          </span>
-          <select
-            value={settings.micro_routine}
-            onChange={(e) => update("micro_routine", e.target.value)}
-          >
-            <option value="">None (rotate ideas)</option>
-            {routines
-              .filter((r) => r.kind === "micro")
-              .map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-          </select>
-        </label>
+        {routinePicker("micro", "micro_routine")}
         {isSupporter && (
           <>
             <label className="row stacked">
@@ -500,25 +507,7 @@ export function BreaksTab({
             <option value="social">Social only</option>
           </select>
         </label>
-        <label className="row">
-          <span>
-            Guided routine
-            <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
-          </span>
-          <select
-            value={settings.long_routine}
-            onChange={(e) => update("long_routine", e.target.value)}
-          >
-            <option value="">None (rotate ideas)</option>
-            {routines
-              .filter((r) => r.kind === "long")
-              .map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-          </select>
-        </label>
+        {routinePicker("long", "long_routine")}
         {isSupporter && (
           <>
             <label className="row stacked">
