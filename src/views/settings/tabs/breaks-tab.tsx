@@ -11,6 +11,7 @@ import { CheckboxRow, NumberRow } from "../components/rows";
 import { InfoTip } from "../components/info-tip";
 import { WindowedSizeRow } from "../components/windowed-size-row";
 import { RoutinePicker } from "../components/routine-picker";
+import { ContentPacks } from "../components/content-packs";
 import {
   MONITOR_PLACEMENTS,
   OVERLAY_THEMES,
@@ -29,13 +30,15 @@ export function BreaksTab({
   settings,
   update,
   supporter,
+  reload,
 }: {
   settings: SchedulerSettings;
   update: UseSettings["update"];
   supporter: SupporterStatus;
+  reload: () => Promise<unknown>;
 }) {
   const isSupporter = supporter.is_supporter;
-  const routines = useRoutines();
+  const { routines, reload: reloadRoutines } = useRoutines();
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),
@@ -533,6 +536,16 @@ export function BreaksTab({
             </label>
           </>
         )}
+      </section>
+
+      <h2>Content packs</h2>
+      <section>
+        <ContentPacks
+          reload={async () => {
+            await reload();
+            reloadRoutines();
+          }}
+        />
       </section>
 
       {isSupporter && (

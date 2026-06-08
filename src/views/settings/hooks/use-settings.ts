@@ -49,6 +49,14 @@ const routineCategorySchema = z.enum([
   "desk_yoga",
 ]);
 const routineDifficultySchema = z.enum(["gentle", "moderate", "active"]);
+const routineSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  kind: z.enum(["micro", "long"]),
+  category: routineCategorySchema,
+  difficulty: routineDifficultySchema,
+  steps: z.array(z.object({ text: z.string(), seconds: z.number() })),
+});
 
 export const schedulerSettingsSchema = z.object({
   micro_interval_secs: z.number(),
@@ -115,6 +123,7 @@ export const schedulerSettingsSchema = z.object({
   long_routine_categories: z.array(routineCategorySchema),
   micro_routine_max_difficulty: routineDifficultySchema,
   long_routine_max_difficulty: routineDifficultySchema,
+  custom_routines: z.array(routineSchema),
   hint_rotate_seconds: z.number(),
   delay_break_if_typing: z.boolean(),
   typing_grace_secs: z.number(),

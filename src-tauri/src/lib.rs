@@ -145,6 +145,8 @@ pub fn run() {
             scheduler::resume,
             scheduler::export_backup_to_path,
             scheduler::import_backup_from_path,
+            scheduler::import_content_pack,
+            scheduler::export_content_pack,
             scheduler::get_pause_info,
             scheduler::end_break,
             scheduler::trigger_test_break,
