@@ -75,11 +75,13 @@ export function HookRow({ hook, onChange, onRemove, testHook }: HookRowProps) {
 
   const insertTemplate = (id: string) => {
     const tpl = HOOK_TEMPLATES.find((t) => t.id === id);
-    if (tpl) onChange({ command: tpl.command, event: tpl.event });
+    if (!tpl) return;
+    onChange({ command: tpl.command, event: tpl.event });
+    setResult(null);
   };
 
   return (
-    <div className="hook-row-wrap">
+    <div className="hook-row-wrap" aria-busy={running || undefined}>
       <div className="hook-row">
         <select
           aria-label="Hook event"
@@ -98,7 +100,12 @@ export function HookRow({ hook, onChange, onRemove, testHook }: HookRowProps) {
           className="hook-command"
           placeholder={`e.g. sh -c "osascript -e 'tell app \\"Music\\" to pause'"`}
           value={hook.command}
-          onChange={(e) => onChange({ command: e.target.value })}
+          onChange={(e) => {
+            onChange({ command: e.target.value });
+            // The shown result describes the previous command — drop it so it
+            // can't mislead once the command changes.
+            setResult(null);
+          }}
         />
         <label className="hook-toggle">
           <input

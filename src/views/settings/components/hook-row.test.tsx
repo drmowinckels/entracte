@@ -112,4 +112,22 @@ describe("HookRow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Test" }));
     await waitFor(() => expect(screen.getByText(/ipc down/)).toBeTruthy());
   });
+
+  it("clears a stale result once the command is edited", async () => {
+    const testHook = vi.fn().mockResolvedValue({
+      ok: true,
+      exit_code: 0,
+      stdout: "hello",
+      stderr: "",
+      error: null,
+    } satisfies HookTestOutcome);
+    renderRow({ command: "/bin/echo hi" }, { testHook });
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(screen.getByText("✓ Exited 0")).toBeTruthy());
+    // Editing the command must drop the now-mismatched result.
+    fireEvent.change(screen.getByLabelText("Hook command"), {
+      target: { value: "/bin/echo bye" },
+    });
+    expect(screen.queryByText("✓ Exited 0")).toBeNull();
+  });
 });
