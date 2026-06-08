@@ -10,6 +10,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 ### Added
 
 - **Windowed breaks can now be resized.** The windowed break overlay was fixed at 80% of the monitor; the Breaks tab (Overlay → advanced) now exposes a **Windowed break size** control with 70% / 80% / 90% presets and a custom slider, plus optional per-kind overrides so a quick micro break can be smaller than a long one. The default stays 80%, so existing setups are unchanged on upgrade. ([#151](https://github.com/drmowinckels/entracte/issues/151))
+- **Guided break routines.** Instead of a single rotating idea, a break can now walk you through a short ordered sequence of steps — each shown for its own few seconds with a per-step countdown and "Step X of N" progress. Pick a routine per break kind under **Breaks → Break ideas → Guided routine**; a handful of curated starters ship for micro and long breaks (eye reset, neck & shoulders, full-body stretch, walk & hydrate). Leave it on **None** to keep today's rotating ideas — nothing changes unless you opt in. ([#152](https://github.com/drmowinckels/entracte/issues/152))
 
 ## [0.0.6] — 2026-06-06
 

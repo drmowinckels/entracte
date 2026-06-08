@@ -541,6 +541,14 @@ pub struct Settings {
     pub long_social_hints: Vec<String>,
     pub long_hint_mix: HintMix,
     pub sleep_hints: Vec<String>,
+    /// Selected guided-routine id for micro / long breaks, or `""` for none
+    /// (fall back to plain hint rotation). Ids reference the bundled routines
+    /// in [`super::routines::starter_routines`]; an unknown id resolves to no
+    /// routine. Sleep breaks never run routines.
+    #[serde(default)]
+    pub micro_routine: String,
+    #[serde(default)]
+    pub long_routine: String,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
     pub typing_grace_secs: u64,
@@ -644,6 +652,8 @@ impl Default for Settings {
             long_social_hints: default_long_social_hints(),
             long_hint_mix: HintMix::default(),
             sleep_hints: default_sleep_hints(),
+            micro_routine: String::new(),
+            long_routine: String::new(),
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
             typing_grace_secs: 10,

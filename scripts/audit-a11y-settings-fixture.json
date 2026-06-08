@@ -63,6 +63,8 @@
   ],
   "long_hint_mix": "both",
   "sleep_hints": ["Time to wind down."],
+  "micro_routine": "",
+  "long_routine": "",
   "hint_rotate_seconds": 12,
   "delay_break_if_typing": true,
   "typing_grace_secs": 10,

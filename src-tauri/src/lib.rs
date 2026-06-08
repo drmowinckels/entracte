@@ -153,6 +153,7 @@ pub fn run() {
             scheduler::resume_last_break,
             scheduler::get_break_stats,
             scheduler::get_current_break,
+            scheduler::get_routines,
             scheduler::reset_break_stats,
             scheduler::get_stats_digest,
             scheduler::export_stats_csv,

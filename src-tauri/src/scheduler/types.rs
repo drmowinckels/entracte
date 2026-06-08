@@ -26,12 +26,26 @@ pub enum BreakDelivery {
     Notification,
 }
 
+/// One step of a guided break routine: a short instruction the overlay
+/// shows for `seconds` before advancing to the next step. Part of the
+/// `break:start` wire payload; the routine library that produces these
+/// lives in [`super::routines`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineStep {
+    pub text: String,
+    pub seconds: u64,
+}
+
 /// Payload emitted to the renderer when a break starts.
 ///
 /// Captures everything the overlay needs to render itself without
 /// re-querying the backend: duration, whether the user can dismiss or
 /// postpone, the hint pool, and the "health intensity" used for the
 /// skip-vignette effect.
+///
+/// `routine_steps` is the resolved guided-routine sequence for this break
+/// (empty when the user has not selected a routine for this kind, in which
+/// case the overlay falls back to plain hint rotation).
 #[derive(Debug, Clone, Serialize)]
 pub struct BreakEvent {
     pub kind: BreakKind,
@@ -43,6 +57,7 @@ pub struct BreakEvent {
     pub hints: Vec<String>,
     pub hint_rotate_seconds: u64,
     pub health_intensity: f32,
+    pub routine_steps: Vec<RoutineStep>,
 }
 
 /// The most recently skipped or postponed break, or `None` if none yet

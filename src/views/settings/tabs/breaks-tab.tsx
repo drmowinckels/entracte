@@ -16,6 +16,7 @@ import {
   ROTATION_GRADIENT,
 } from "../constants";
 import type { UseSettings } from "../hooks/use-settings";
+import { useRoutines } from "../hooks/use-routines";
 import type {
   MonitorPlacement,
   SchedulerSettings,
@@ -33,6 +34,7 @@ export function BreaksTab({
   supporter: SupporterStatus;
 }) {
   const isSupporter = supporter.is_supporter;
+  const routines = useRoutines();
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),
@@ -62,6 +64,31 @@ export function BreaksTab({
   const transparencyPct = Math.round((1 - settings.overlay_opacity) * 100);
   const fontScalePct = Math.round(settings.overlay_font_scale * 100);
   const soundVolumePct = Math.round(settings.sound_volume * 100);
+
+  const routinePicker = (
+    kind: "micro" | "long",
+    key: "micro_routine" | "long_routine",
+  ) => (
+    <label className="row">
+      <span>
+        Guided routine
+        <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
+      </span>
+      <select
+        value={settings[key]}
+        onChange={(e) => update(key, e.target.value)}
+      >
+        <option value="">None (rotate ideas)</option>
+        {routines
+          .filter((r) => r.kind === kind)
+          .map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.label}
+            </option>
+          ))}
+      </select>
+    </label>
+  );
 
   return (
     <>
@@ -428,6 +455,7 @@ export function BreaksTab({
             <option value="psychological">Psychological only</option>
           </select>
         </label>
+        {routinePicker("micro", "micro_routine")}
         {isSupporter && (
           <>
             <label className="row stacked">
@@ -479,6 +507,7 @@ export function BreaksTab({
             <option value="social">Social only</option>
           </select>
         </label>
+        {routinePicker("long", "long_routine")}
         {isSupporter && (
           <>
             <label className="row stacked">

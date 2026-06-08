@@ -25,6 +25,9 @@ const invokeMock = vi.fn(async (cmd: string, _args?: unknown) => {
   if (cmd === "get_settings") return currentSettings;
   if (cmd === "get_current_break") return currentBreak;
   if (cmd === "get_postpone_state") return currentPostpone;
+  // Report a long idle so the typing-pause poll leaves the countdown running
+  // (a null/0 here would read as "actively typing" and pause every break).
+  if (cmd === "get_idle_secs") return 999;
   return null;
 });
 
@@ -421,5 +424,79 @@ describe("BreakOverlay ARIA contract", () => {
     // Initial render: remaining starts at duration; no milestone yet
     // because remaining > 10.
     expect(getByTestId("overlay-milestone").textContent).toBe("");
+  });
+});
+
+describe("BreakOverlay guided routines", () => {
+  it("shows the first routine step and its progress at break start", async () => {
+    const { container, getByText } = await startBreak(false, {
+      duration_secs: 30,
+      hints: ["Look away"],
+      routine_steps: [
+        { text: "Roll your shoulders", seconds: 10 },
+        { text: "Drop your right ear down", seconds: 10 },
+      ],
+    });
+    expect(getByText("Roll your shoulders")).toBeTruthy();
+    expect(
+      container.querySelector(".overlay-routine-progress")?.textContent,
+    ).toContain("Step 1 of 2");
+  });
+
+  it("labels the routine step with its position for screen readers", async () => {
+    const { getByLabelText } = await startBreak(false, {
+      routine_steps: [{ text: "Reach overhead", seconds: 20 }],
+    });
+    expect(getByLabelText("Step 1 of 1: Reach overhead")).toBeTruthy();
+  });
+
+  it("falls back to the rotating hint when no routine is selected", async () => {
+    const { container, getByText } = await startBreak(false, {
+      hints: ["Look away"],
+      routine_steps: [],
+    });
+    expect(getByText("Look away")).toBeTruthy();
+    expect(container.querySelector(".overlay-routine")).toBeNull();
+  });
+
+  it("advances to the next step as the countdown crosses a step boundary", async () => {
+    // Drives the real countdown with fake timers so the wiring from
+    // `remaining` → `routineProgress` → step label is exercised (the pure
+    // advancement is covered separately in routine.test.ts).
+    vi.useFakeTimers();
+    try {
+      currentSettings = { ...DEFAULT_OVERLAY_SETTINGS };
+      currentBreak = null;
+      const { getByLabelText } = render(<BreakOverlay />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0); // flush listen() registration
+      });
+      await act(async () => {
+        listeners.get("break:start")?.({
+          payload: {
+            ...sampleBreak,
+            duration_secs: 30,
+            routine_steps: [
+              { text: "Step A", seconds: 5 },
+              { text: "Step B", seconds: 7 },
+            ],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(0); // flush applyBreak's awaits
+      });
+      expect(getByLabelText("Step 1 of 2: Step A")).toBeTruthy();
+      // Five 1s ticks → elapsed 5s → the routine is now on step B. Advance a
+      // second at a time so React processes each countdown tick.
+      for (let i = 0; i < 5; i += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+      }
+      expect(getByLabelText("Step 2 of 2: Step B")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+      listeners.clear();
+      currentBreak = null;
+    }
   });
 });

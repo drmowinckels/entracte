@@ -394,6 +394,7 @@ mod tests {
             hints: vec![],
             hint_rotate_seconds: 0,
             health_intensity: 0.0,
+            routine_steps: vec![],
         });
         let (snap, _) = sched.tray_countdown_snapshot().await;
         assert_eq!(snap, TrayCountdownSnapshot::OnBreak);

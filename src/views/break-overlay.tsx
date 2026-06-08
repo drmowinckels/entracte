@@ -20,6 +20,7 @@ import { useFocusTrap } from "./break-overlay/hooks/use-focus-trap";
 import { useMilestoneAnnouncer } from "./break-overlay/hooks/use-milestone-announcer";
 import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
 import { derivePostpone } from "./break-overlay/postpone";
+import { routineProgress } from "./break-overlay/routine";
 import {
   ENFORCEABLE_LONG_BREAK_HINT,
   shouldShowEnforceableHint,
@@ -110,6 +111,15 @@ export default function BreakOverlay() {
   const seconds = remaining % 60;
   const label = labelFor(active.kind);
   const hintText = active.hints[hintIndex] ?? "";
+  // A selected guided routine steps through its own text on the break's
+  // own countdown and takes the place of the rotating hint. With none
+  // selected (empty steps) the overlay falls back to the hint above.
+  const routineSteps = active.routine_steps ?? [];
+  const routine = routineProgress(
+    routineSteps,
+    active.duration_secs - remaining,
+  );
+  const routineText = routine ? routineSteps[routine.index].text : "";
   const intensity = clamp01(active.health_intensity);
   const dismissable = !active.enforceable && active.skip_available;
   const showPostpone = active.postpone_available && !finished;
@@ -181,7 +191,11 @@ export default function BreakOverlay() {
       <div id="overlay-detail" className="sr-only">
         {breakDescription(
           active.duration_secs,
-          appearance.show_hint && hintText ? hintText : "",
+          routine
+            ? routineText
+            : appearance.show_hint && hintText
+              ? hintText
+              : "",
         )}
       </div>
       {intensity > 0 && <div className="overlay-vignette" aria-hidden="true" />}
@@ -222,19 +236,45 @@ export default function BreakOverlay() {
                 : `${seconds}s`}
           </p>
         </div>
-        {appearance.show_hint && hintText && (
-          <p
-            className="overlay-hint"
-            role="note"
-            // Deliberately focusable: the overlay traps focus, so keyboard
-            // and screen-reader users can only reach the wellness tip if
-            // it sits in the tab order.
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            tabIndex={0}
-            aria-label={`Wellness tip: ${hintText}`}
-          >
-            {hintText}
-          </p>
+        {routine ? (
+          <div className="overlay-routine">
+            <p
+              className="overlay-hint overlay-routine-step"
+              role="note"
+              // Polite live region: each guided step is announced as it
+              // becomes current, which is the whole point of a routine.
+              aria-live="polite"
+              aria-atomic="true"
+              // Deliberately focusable: the overlay traps focus, so keyboard
+              // and screen-reader users can only reach the step text if it
+              // sits in the tab order.
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              aria-label={`Step ${routine.index + 1} of ${routine.total}: ${routineText}`}
+            >
+              {routineText}
+            </p>
+            <p className="overlay-routine-progress" aria-hidden="true">
+              Step {routine.index + 1} of {routine.total}
+              {routine.stepRemaining > 0 ? ` · ${routine.stepRemaining}s` : ""}
+            </p>
+          </div>
+        ) : (
+          appearance.show_hint &&
+          hintText && (
+            <p
+              className="overlay-hint"
+              role="note"
+              // Deliberately focusable: the overlay traps focus, so keyboard
+              // and screen-reader users can only reach the wellness tip if
+              // it sits in the tab order.
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              aria-label={`Wellness tip: ${hintText}`}
+            >
+              {hintText}
+            </p>
+          )
         )}
         {paused && !finished && (
           <p className="overlay-paused">

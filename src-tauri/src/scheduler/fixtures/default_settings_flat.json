@@ -147,6 +147,8 @@
     "Pick the first thing for tomorrow — then stop.",
     "Stretch slowly for five minutes, then bed."
   ],
+  "micro_routine": "",
+  "long_routine": "",
   "hint_rotate_seconds": 0,
   "delay_break_if_typing": true,
   "typing_grace_secs": 10,

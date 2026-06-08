@@ -88,6 +88,8 @@ export const schedulerSettingsSchema = z.object({
   long_social_hints: z.array(z.string()),
   long_hint_mix: z.enum(["both", "solo", "social"]),
   sleep_hints: z.array(z.string()),
+  micro_routine: z.string(),
+  long_routine: z.string(),
   hint_rotate_seconds: z.number(),
   delay_break_if_typing: z.boolean(),
   typing_grace_secs: z.number(),

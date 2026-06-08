@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { BreakSound } from "../../lib/break-sound";
-import type { BreakEvent, OverlaySettings, PostponeState } from "./types";
+import type {
+  BreakEvent,
+  OverlaySettings,
+  PostponeState,
+  RoutineStep,
+} from "./types";
 
 // Runtime schemas for the payloads the overlay reads over IPC. The overlay
 // renders untrusted backend data directly (countdown, theme, sounds), so it
@@ -38,6 +43,11 @@ export const overlaySettingsSchema = z.object({
   custom_css: z.string(),
 }) satisfies z.ZodType<OverlaySettings>;
 
+const routineStepSchema = z.object({
+  text: z.string(),
+  seconds: z.number(),
+}) satisfies z.ZodType<RoutineStep>;
+
 export const breakEventSchema = z.object({
   kind: z.enum(["micro", "long", "sleep"]),
   duration_secs: z.number(),
@@ -48,6 +58,9 @@ export const breakEventSchema = z.object({
   hints: z.array(z.string()),
   hint_rotate_seconds: z.number(),
   health_intensity: z.number(),
+  // Always present on the wire; default keeps older payloads / fixtures that
+  // omit it parsing to an empty routine (overlay falls back to hints).
+  routine_steps: z.array(routineStepSchema).optional().default([]),
 }) satisfies z.ZodType<BreakEvent>;
 
 export const postponeStateSchema = z.object({

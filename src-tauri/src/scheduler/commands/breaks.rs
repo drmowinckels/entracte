@@ -175,6 +175,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
             } else {
                 0.0
             },
+            routine_steps: super::super::routines::resolve_routine_steps(kind, &s),
         },
         delivery,
         s.monitor_placement,
@@ -547,6 +548,7 @@ fn resume_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEve
         } else {
             0.0
         },
+        routine_steps: super::super::routines::resolve_routine_steps(kind, s),
     }
 }
 
