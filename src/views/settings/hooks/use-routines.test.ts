@@ -26,9 +26,9 @@ describe("useRoutines", () => {
   it("starts empty and loads the routines the backend returns", async () => {
     const invoke = vi.fn().mockResolvedValue(VALID);
     const { result } = renderHook(() => useRoutines({ invoke }));
-    expect(result.current).toEqual([]);
-    await waitFor(() => expect(result.current).toHaveLength(2));
-    expect(result.current[0].id).toBe("micro-eye-reset");
+    expect(result.current.routines).toEqual([]);
+    await waitFor(() => expect(result.current.routines).toHaveLength(2));
+    expect(result.current.routines[0].id).toBe("micro-eye-reset");
     expect(invoke).toHaveBeenCalledWith("get_routines");
   });
 
@@ -36,13 +36,25 @@ describe("useRoutines", () => {
     const invoke = vi.fn().mockRejectedValue(new Error("no backend"));
     const { result } = renderHook(() => useRoutines({ invoke }));
     await Promise.resolve();
-    expect(result.current).toEqual([]);
+    expect(result.current.routines).toEqual([]);
   });
 
   it("stays empty when the payload fails schema validation", async () => {
     const invoke = vi.fn().mockResolvedValue([{ id: 1, nope: true }]);
     const { result } = renderHook(() => useRoutines({ invoke }));
     await waitFor(() => expect(invoke).toHaveBeenCalled());
-    expect(result.current).toEqual([]);
+    expect(result.current.routines).toEqual([]);
+  });
+
+  it("re-fetches when reload() is called (picks up imported routines)", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(VALID);
+    const { result } = renderHook(() => useRoutines({ invoke }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(result.current.routines).toEqual([]);
+    result.current.reload();
+    await waitFor(() => expect(result.current.routines).toHaveLength(2));
   });
 });

@@ -384,4 +384,27 @@ mod tests {
         assert_eq!(dst.sleep_hints, src.sleep_hints);
         assert_eq!(dst.custom_routines, src.custom_routines);
     }
+
+    #[test]
+    fn merge_into_default_settings_adds_only_the_deltas() {
+        // The realistic path: a pack exported from a profile (defaults + a few
+        // extras) imported into another profile that already has the defaults.
+        // Only the deltas should transfer; the shared defaults dedup away.
+        let mut src = Settings::default();
+        src.micro_physical_hints.push("Delta idea".to_string());
+        src.custom_routines = vec![sample_routine("delta-rt")];
+
+        let pack = export_pack("Deltas", &src);
+
+        let mut dst = Settings::default();
+        let before = dst.micro_physical_hints.len();
+        let summary = merge_pack(&pack, &mut dst);
+
+        // Exactly one new hint + one new routine crossed over.
+        assert_eq!(summary.hints_added, 1);
+        assert_eq!(summary.routines_added, 1);
+        assert_eq!(dst.micro_physical_hints.len(), before + 1);
+        assert!(dst.micro_physical_hints.contains(&"Delta idea".to_string()));
+        assert_eq!(dst.custom_routines.len(), 1);
+    }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
@@ -19,18 +19,34 @@ export type UseRoutinesDeps = {
   invoke?: typeof invoke;
 };
 
-// Load the bundled guided-break routines from the backend for the Breaks-tab
-// picker. The set is static, so this fetches once on mount; a parse failure
-// or IPC error leaves the list empty (the picker then offers only "None").
-export function useRoutines(deps: UseRoutinesDeps = {}): Routine[] {
+export type UseRoutines = {
+  routines: Routine[];
+  /** Re-fetch the routine list — call after importing a content pack, since
+   * `get_routines` now returns imported routines too, not just the static
+   * starters. */
+  reload: () => void;
+};
+
+// Load the guided-break routines (bundled starters + any imported via content
+// packs) from the backend for the Breaks-tab picker. Fetches on mount and
+// whenever `reload` is called; a parse failure or IPC error leaves the list
+// empty (the picker then offers only "None").
+export function useRoutines(deps: UseRoutinesDeps = {}): UseRoutines {
   const invokeFn = deps.invoke ?? invoke;
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const mounted = useRef(true);
   useEffect(() => {
-    let cancelled = false;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const reload = useCallback(() => {
     invokeFn("get_routines")
       .then((raw) => {
+        if (!mounted.current) return;
         const parsed = routinesSchema.safeParse(raw);
-        if (cancelled) return;
         if (parsed.success) setRoutines(parsed.data);
         else
           console.warn(
@@ -38,10 +54,14 @@ export function useRoutines(deps: UseRoutinesDeps = {}): Routine[] {
             parsed.error,
           );
       })
-      .catch((e) => console.warn("get_routines failed", e));
-    return () => {
-      cancelled = true;
-    };
+      .catch((e) => {
+        if (mounted.current) console.warn("get_routines failed", e);
+      });
   }, [invokeFn]);
-  return routines;
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  return { routines, reload };
 }

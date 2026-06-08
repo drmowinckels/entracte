@@ -38,7 +38,7 @@ export function BreaksTab({
   reload: () => Promise<unknown>;
 }) {
   const isSupporter = supporter.is_supporter;
-  const routines = useRoutines();
+  const { routines, reload: reloadRoutines } = useRoutines();
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),
@@ -540,7 +540,12 @@ export function BreaksTab({
 
       <h2>Content packs</h2>
       <section>
-        <ContentPacks reload={reload} />
+        <ContentPacks
+          reload={async () => {
+            await reload();
+            reloadRoutines();
+          }}
+        />
       </section>
 
       {isSupporter && (
