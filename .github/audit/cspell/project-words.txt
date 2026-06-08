@@ -184,3 +184,9 @@ winddown
 cmdorctrl
 commandorcontrol
 xoxp
+wasmtime
+extism
+WASI
+removability
+ungranted
+unsandboxed
