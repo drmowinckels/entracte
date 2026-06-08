@@ -4,4 +4,6 @@ If you've never touched the code, **[Architecture internals](./architecture-inte
 
 The user-facing [Architecture](../architecture/) section covers the high-level "how Entracte works" — useful as a refresher but not where to start when you're editing the code.
 
+**[Plugin API design](./plugin-api-design)** is the review-gate design doc for the longer-term local-only plugin API ([#156](https://github.com/drmowinckels/entracte/issues/156)) — it settles the security boundary, manifest schema, permission model, and threat model before any implementation.
+
 **[Releases](./releases)** describes the tag-triggered pipeline that cuts and signs bundles, and where the in-app updater fits in. The **API references** ([Rust](./rust-api) via `rustdoc` over the Tauri crate with private items, [TypeScript](./ts-api) via `typedoc` over the React frontend) are flat browsers over every symbol in the source tree with the same one-line summaries that appear in IDE hovers — useful when you remember a name but not where it lives.
