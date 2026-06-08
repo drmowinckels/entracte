@@ -187,3 +187,9 @@ xoxp
 unclickable
 titlebar
 headerbar
+wasmtime
+extism
+WASI
+removability
+ungranted
+unsandboxed
