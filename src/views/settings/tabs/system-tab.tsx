@@ -5,6 +5,7 @@ import {
 } from "../../../lib/tray-countdown";
 import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
+import { HotkeysSection } from "../components/hotkeys-section";
 import { HOOK_EVENTS } from "../constants";
 import type { UseHooks } from "../hooks/use-hooks";
 import type { UseSettings } from "../hooks/use-settings";
@@ -121,6 +122,11 @@ export function SystemTab({
           multiplier={1}
           onChange={(v) => update("prebreak_notification_seconds", v)}
         />
+      </section>
+
+      <h2>Global hotkeys</h2>
+      <section>
+        <HotkeysSection settings={settings} update={update} />
       </section>
 
       <h2>Tray countdown</h2>

@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::hooks::Hook;
 
+use super::hotkeys::Hotkey;
 use super::timers::parse_hhmm;
 use super::types::{BreakDelivery, BreakKind};
 
@@ -564,6 +565,14 @@ pub struct Settings {
     pub long_schedule_mode: ScheduleMode,
     pub hooks_enabled: bool,
     pub hooks: Vec<Hook>,
+    /// Master switch for the native global hotkeys; when off, nothing is
+    /// registered with the OS regardless of `hotkeys`.
+    #[serde(default)]
+    pub hotkeys_enabled: bool,
+    /// User-configured global-hotkey bindings (action + accelerator). See
+    /// [`super::hotkeys`]; resolved by `registrable_bindings`.
+    #[serde(default)]
+    pub hotkeys: Vec<Hotkey>,
     pub daily_screen_time_enabled: bool,
     pub daily_screen_time_budget_minutes: u64,
     pub daily_screen_time_remind_again_minutes: u64,
@@ -669,6 +678,8 @@ impl Default for Settings {
             long_schedule_mode: ScheduleMode::default(),
             hooks_enabled: false,
             hooks: Vec::new(),
+            hotkeys_enabled: false,
+            hotkeys: Vec::new(),
             daily_screen_time_enabled: false,
             daily_screen_time_budget_minutes: 8 * 60,
             daily_screen_time_remind_again_minutes: 60,

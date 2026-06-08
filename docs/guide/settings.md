@@ -60,6 +60,7 @@ The System tab covers app/OS integration.
 
 - **Startup** — Start Entracte at login.
 - **Notifications** — pre-break heads-up toggle and lead time (seconds).
+- **Global hotkeys** — register OS-level keyboard shortcuts for the same actions the CLI exposes: pause, resume, take a micro/long break now, skip the next micro/long break, and switch to the next profile. Off by default; enable it, then type an accelerator per action (e.g. `CmdOrCtrl+Alt+P`) — clear a field to unbind it. Because the shortcuts are registered natively, they fire whether or not the Preferences window is focused. Binding the same chord to two actions is flagged inline so you can give each a unique combination. Bindings are stored per profile, so switching profiles re-applies that profile's hotkeys.
 - **Tray countdown** — show a live `M:SS` / `MM:SS` countdown next to the tray icon, ticking down to the next break. Choose whether it tracks the next micro break, the next long break, or whichever is sooner. Defaults to on, target "next". Cleared while paused (shows "paused") and during an active break. macOS shows the text right next to the menu-bar icon; Linux shows it where the tray applet renders titles (varies by desktop environment). Windows does not support tray titles, so the toggle has no visible effect there.
 - **Show advanced (hooks)** (collapsible) — bind shell commands to break events. Off by default; only enable if you understand the security risk of letting arbitrary commands run.
 

@@ -69,6 +69,12 @@ pub async fn set_active_profile_impl<R: Runtime>(
         reset_timers_keep_sleep(&mut t);
     }
     super::super::persist_profiles(scheduler).await;
+    {
+        // The new profile may carry different hotkey bindings — re-register
+        // from its settings so a profile switch keeps the chords in sync.
+        let settings = scheduler.settings.lock().await.clone();
+        super::super::apply_hotkeys(app, &settings);
+    }
     let _ = app.emit("profile:changed", &name);
     Ok(())
 }

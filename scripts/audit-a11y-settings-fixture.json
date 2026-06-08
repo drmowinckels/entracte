@@ -77,6 +77,8 @@
   "long_schedule_mode": "both",
   "hooks_enabled": true,
   "hooks": [{ "event": "break_start", "command": "echo hi", "enabled": true }],
+  "hotkeys_enabled": true,
+  "hotkeys": [{ "action": "pause", "accelerator": "CmdOrCtrl+Alt+P" }],
   "daily_screen_time_enabled": true,
   "daily_screen_time_budget_minutes": 480,
   "daily_screen_time_remind_again_minutes": 30,
