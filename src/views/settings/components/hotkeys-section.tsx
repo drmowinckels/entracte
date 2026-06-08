@@ -2,6 +2,7 @@ import {
   HOTKEY_ACTIONS,
   acceleratorFor,
   conflictingAccelerators,
+  isValidAccelerator,
   normalizeAccelerator,
   setAccelerator,
 } from "../../../lib/hotkeys";
@@ -36,9 +37,16 @@ export function HotkeysSection({
         <div className="hotkeys-list">
           {HOTKEY_ACTIONS.map(({ action, label }) => {
             const accelerator = acceleratorFor(settings.hotkeys, action);
+            const hasValue = accelerator.trim().length > 0;
+            const invalid = hasValue && !isValidAccelerator(accelerator);
             const conflicting =
-              accelerator.trim().length > 0 &&
-              conflicts.has(normalizeAccelerator(accelerator));
+              hasValue && conflicts.has(normalizeAccelerator(accelerator));
+            // Invalid syntax is the more fundamental problem, so it wins the
+            // message when both would apply.
+            const problemText = invalid
+              ? "Not a recognised shortcut. Use one or more modifiers (CmdOrCtrl, Alt, Shift) plus a single key, e.g. CmdOrCtrl+Alt+P."
+              : "This shortcut is also bound to another action. Give each action a unique chord.";
+            const problem = invalid || conflicting;
             return (
               // A plain div, not a <label>: the row holds two controls (the
               // accelerator field and Clear), so a wrapping label would
@@ -47,12 +55,7 @@ export function HotkeysSection({
               <div className="row" key={action}>
                 <span>
                   {label}
-                  {conflicting && (
-                    <InfoTip
-                      text="This shortcut is also bound to another action. Give each action a unique chord."
-                      warn
-                    />
-                  )}
+                  {problem && <InfoTip text={problemText} warn />}
                 </span>
                 <span className="hotkey-input">
                   <input
@@ -61,7 +64,7 @@ export function HotkeysSection({
                     spellCheck={false}
                     placeholder="e.g. CmdOrCtrl+Alt+P"
                     value={accelerator}
-                    aria-invalid={conflicting || undefined}
+                    aria-invalid={problem || undefined}
                     onChange={(e) =>
                       update(
                         "hotkeys",

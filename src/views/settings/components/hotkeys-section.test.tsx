@@ -70,6 +70,21 @@ describe("HotkeysSection", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("flags an unparseable accelerator as invalid", () => {
+    renderSection(true, [{ action: "pause", accelerator: "Ctrl+Foo" }]);
+    const pause = screen.getByLabelText("Pause breaks");
+    expect(pause.getAttribute("aria-invalid")).toBe("true");
+    expect(
+      screen.getAllByRole("button", { name: /warning/i }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not flag a well-formed accelerator", () => {
+    renderSection(true, [{ action: "pause", accelerator: "CmdOrCtrl+Alt+P" }]);
+    const pause = screen.getByLabelText("Pause breaks");
+    expect(pause.getAttribute("aria-invalid")).toBeNull();
+  });
+
   it("disables Clear when there is nothing to clear", () => {
     renderSection(true, []);
     const clear = screen.getByRole("button", {

@@ -45,16 +45,45 @@ pub struct Hotkey {
     pub accelerator: String,
 }
 
+/// Canonical form of an accelerator for conflict comparison:
+/// case-insensitive and modifier-order-insensitive. Mirrors the renderer's
+/// `normalizeAccelerator` (`src/lib/hotkeys.ts`) so the in-app conflict
+/// warning and the backend's conflict handling agree.
+fn normalize_accelerator(accelerator: &str) -> String {
+    let mut parts: Vec<String> = accelerator
+        .split('+')
+        .map(|p| p.trim().to_lowercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    parts.sort();
+    parts.join("+")
+}
+
 /// The bindings that should actually be registered with the OS: only when
-/// hotkeys are enabled, and only entries with a non-blank accelerator. Pure
-/// so the enable/blank gating is unit-testable without touching the OS.
+/// hotkeys are enabled, only entries with a non-blank accelerator, and only
+/// chords bound to exactly one action. A chord bound to two or more actions
+/// is dropped entirely (none of them fire) so behaviour is unambiguous and
+/// matches the conflict the renderer flags — rather than letting whichever
+/// action registers first silently win. Pure so the gating is unit-testable
+/// without touching the OS.
 pub fn registrable_bindings(s: &Settings) -> Vec<Hotkey> {
     if !s.hotkeys_enabled {
         return Vec::new();
     }
-    s.hotkeys
+    let candidates: Vec<&Hotkey> = s
+        .hotkeys
         .iter()
         .filter(|h| !h.accelerator.trim().is_empty())
+        .collect();
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for h in &candidates {
+        *counts
+            .entry(normalize_accelerator(&h.accelerator))
+            .or_insert(0) += 1;
+    }
+    candidates
+        .into_iter()
+        .filter(|h| counts.get(&normalize_accelerator(&h.accelerator)) == Some(&1))
         .cloned()
         .collect()
 }
@@ -195,6 +224,23 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].action, HotkeyAction::Pause);
         assert_eq!(got[1].action, HotkeyAction::TriggerLong);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn registrable_bindings_drops_conflicting_chords() {
+        let mut s = Settings::default();
+        s.hotkeys_enabled = true;
+        s.hotkeys = vec![
+            // Same chord (modifier order differs) on two actions — both dropped.
+            hk(HotkeyAction::Pause, "CmdOrCtrl+Alt+P"),
+            hk(HotkeyAction::Resume, "Alt+CmdOrCtrl+P"),
+            // A distinct, unique chord survives.
+            hk(HotkeyAction::SkipMicro, "CmdOrCtrl+Alt+M"),
+        ];
+        let got = registrable_bindings(&s);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].action, HotkeyAction::SkipMicro);
     }
 
     #[test]

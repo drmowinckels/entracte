@@ -27,6 +27,72 @@ export function normalizeAccelerator(accelerator: string): string {
     .join("+");
 }
 
+// Accelerator-string tokens we recognise. These mirror the chord syntax
+// `tauri-plugin-global-shortcut` accepts (modifiers + a single key). The
+// check is intentionally a touch lenient on the key (any single
+// alphanumeric, an F-key, or a common named key) — its job is to catch
+// obvious typos in the UI ("Ctrl+Foo", "P+P", a dangling "Ctrl+") and give
+// feedback, not to perfectly reproduce the parser. A modifier is required so
+// a binding can't silently hijack a bare key system-wide.
+const MODIFIER_TOKENS = new Set([
+  "cmdorctrl",
+  "commandorcontrol",
+  "cmd",
+  "command",
+  "ctrl",
+  "control",
+  "alt",
+  "option",
+  "shift",
+  "super",
+  "meta",
+]);
+
+const NAMED_KEY_TOKENS = new Set([
+  "space",
+  "tab",
+  "enter",
+  "return",
+  "escape",
+  "esc",
+  "backspace",
+  "delete",
+  "up",
+  "down",
+  "left",
+  "right",
+  "home",
+  "end",
+  "pageup",
+  "pagedown",
+  "plus",
+  "comma",
+  "period",
+  "minus",
+]);
+
+function isKeyToken(token: string): boolean {
+  return (
+    /^[a-z0-9]$/.test(token) ||
+    /^f([1-9]|1[0-9]|2[0-4])$/.test(token) ||
+    NAMED_KEY_TOKENS.has(token)
+  );
+}
+
+// Whether `accelerator` is a plausible chord: at least one modifier and
+// exactly one recognised key. Used to flag obviously-broken bindings in the
+// UI before they're saved (they would otherwise register-fail silently and
+// look bound but never fire).
+export function isValidAccelerator(accelerator: string): boolean {
+  const tokens = accelerator
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length > 0);
+  const modifiers = tokens.filter((t) => MODIFIER_TOKENS.has(t));
+  const keys = tokens.filter((t) => !MODIFIER_TOKENS.has(t));
+  return modifiers.length >= 1 && keys.length === 1 && isKeyToken(keys[0]);
+}
+
 // The normalised accelerators that are bound to more than one action — i.e.
 // the chords that clash. Blank accelerators are ignored (they're unbound).
 export function conflictingAccelerators(hotkeys: Hotkey[]): Set<string> {

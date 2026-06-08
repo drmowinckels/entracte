@@ -2,10 +2,30 @@ import { describe, expect, it } from "vitest";
 import {
   acceleratorFor,
   conflictingAccelerators,
+  isValidAccelerator,
   normalizeAccelerator,
   setAccelerator,
 } from "./hotkeys";
 import type { Hotkey } from "../views/settings/types";
+
+describe("isValidAccelerator", () => {
+  it("accepts a modifier plus a single key", () => {
+    expect(isValidAccelerator("CmdOrCtrl+Alt+P")).toBe(true);
+    expect(isValidAccelerator("Ctrl+Shift+F5")).toBe(true);
+    expect(isValidAccelerator("Alt+Space")).toBe(true);
+  });
+
+  it("rejects an unrecognised key token", () => {
+    expect(isValidAccelerator("Ctrl+Foo")).toBe(false);
+  });
+
+  it("rejects structural garbage", () => {
+    expect(isValidAccelerator("P+P")).toBe(false); // two keys
+    expect(isValidAccelerator("Ctrl+")).toBe(false); // no key
+    expect(isValidAccelerator("P")).toBe(false); // bare key, no modifier
+    expect(isValidAccelerator("")).toBe(false);
+  });
+});
 
 describe("normalizeAccelerator", () => {
   it("is case- and modifier-order-insensitive", () => {
