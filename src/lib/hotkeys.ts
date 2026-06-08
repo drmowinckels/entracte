@@ -13,6 +13,8 @@ export const HOTKEY_ACTIONS: { action: HotkeyAction; label: string }[] = [
   { action: "cycle_profile", label: "Switch to next profile" },
 ];
 
+const ACTION_ORDER = new Map(HOTKEY_ACTIONS.map((a, i) => [a.action, i]));
+
 // Canonicalise an accelerator for comparison: case-insensitive and
 // modifier-order-insensitive ("Shift+CmdOrCtrl+P" == "cmdorctrl+shift+p").
 // Used only for in-app conflict detection, not for OS registration.
@@ -59,8 +61,8 @@ export function setAccelerator(
   const others = hotkeys.filter((hk) => hk.action !== action);
   const next =
     trimmed.length > 0 ? [...others, { action, accelerator: trimmed }] : others;
-  const order = new Map(HOTKEY_ACTIONS.map((a, i) => [a.action, i]));
   return next.sort(
-    (a, b) => (order.get(a.action) ?? 0) - (order.get(b.action) ?? 0),
+    (a, b) =>
+      (ACTION_ORDER.get(a.action) ?? 0) - (ACTION_ORDER.get(b.action) ?? 0),
   );
 }
