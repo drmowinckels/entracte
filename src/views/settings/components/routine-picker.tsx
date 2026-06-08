@@ -80,7 +80,7 @@ export function RoutinePicker({
       </label>
       {mode === "random" && (
         <>
-          <div className="row routine-filter">
+          <div className="row">
             <span>
               Categories
               <InfoTip text="Draw routines only from the ticked categories. Leave all unticked to draw from every category." />

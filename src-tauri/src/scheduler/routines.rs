@@ -515,4 +515,19 @@ mod tests {
     fn get_routines_returns_the_starter_set() {
         assert_eq!(get_routines(), starter_routines());
     }
+
+    #[test]
+    fn random_index_zero_is_safe() {
+        // The empty-pool guard: index 0 is the only sensible value.
+        assert_eq!(random_index(0), 0);
+    }
+
+    #[test]
+    fn random_index_stays_in_range() {
+        for n in 1..=8usize {
+            for _ in 0..64 {
+                assert!(random_index(n) < n, "random_index({n}) out of range");
+            }
+        }
+    }
 }
