@@ -234,6 +234,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                     },
                     s.monitor_placement,
                     super::settings::is_windowed_mode(BreakKind::Sleep, &s),
+                    super::settings::windowed_fraction_for(BreakKind::Sleep, &s),
                 );
                 hooks::run_hooks(
                     &s,
@@ -547,6 +548,7 @@ async fn deliver_scheduled_break<R: Runtime>(
         event,
         delivery,
         s.monitor_placement,
+        super::settings::windowed_fraction_for(kind, s),
     );
     hooks::run_hooks(
         s,

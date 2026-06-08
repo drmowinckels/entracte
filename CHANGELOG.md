@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Windowed breaks can now be resized.** The windowed break overlay was fixed at 80% of the monitor; the Breaks tab (Overlay → advanced) now exposes a **Windowed break size** control with 70% / 80% / 90% presets and a custom slider, plus optional per-kind overrides so a quick micro break can be smaller than a long one. The default stays 80%, so existing setups are unchanged on upgrade. ([#151](https://github.com/drmowinckels/entracte/issues/151))
+
 ## [0.0.6] — 2026-06-06
 
 ### Added
