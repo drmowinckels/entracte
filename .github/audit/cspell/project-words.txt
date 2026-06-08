@@ -184,3 +184,6 @@ winddown
 cmdorctrl
 commandorcontrol
 xoxp
+unclickable
+titlebar
+headerbar
