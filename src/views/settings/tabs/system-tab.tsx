@@ -6,15 +6,10 @@ import {
 import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
 import { HotkeysSection } from "../components/hotkeys-section";
-import { HOOK_EVENTS } from "../constants";
+import { HookRow } from "../components/hook-row";
 import type { UseHooks } from "../hooks/use-hooks";
 import type { UseSettings } from "../hooks/use-settings";
-import type {
-  ClockFormat,
-  HookConfig,
-  HookEvent,
-  SchedulerSettings,
-} from "../types";
+import type { ClockFormat, HookConfig, SchedulerSettings } from "../types";
 
 function newUiId(): string {
   if (
@@ -163,11 +158,18 @@ export function SystemTab({
 
       <Advanced label="Show advanced (hooks)">
         <h3>Event hooks</h3>
-        <p className="placeholder">
-          Run shell commands when break events fire. Off by default — only
-          enable if you understand the security risk of letting arbitrary
-          commands run. Changes only apply after you click{" "}
-          <strong>Save hooks</strong> and confirm in the system dialog.
+        <p className="placeholder hook-warning">
+          ⚠ Hooks run shell commands on your machine with your full user
+          permissions — a hostile command can read or delete your files, send
+          data over the network, or run other programs. Only add commands you
+          wrote or fully understand. Use <strong>Test</strong> to see exactly
+          what a command does before relying on it. Off by default; changes only
+          take effect after <strong>Save hooks</strong> and a confirmation
+          dialog. Commands run via argv (no shell), so pipes, redirects and{" "}
+          <code>$ENV</code> expansion need an explicit <code>sh -c "…"</code>{" "}
+          wrapper. Available variables: <code>$ENTRACTE_EVENT</code>,{" "}
+          <code>$ENTRACTE_KIND</code>, <code>$ENTRACTE_DURATION_SECS</code>,{" "}
+          <code>$ENTRACTE_OUTCOME</code>.
         </p>
         <label className="row">
           <span>Run shell commands on break events</span>
@@ -180,47 +182,12 @@ export function SystemTab({
         {hooks.draftEnabled && (
           <div className="hooks-list">
             {hooks.draft.map((hook, idx) => (
-              <div className="hook-row" key={idsRef.current[idx]}>
-                <select
-                  aria-label="Hook event"
-                  value={hook.event}
-                  onChange={(e) =>
-                    updateHookAt(idx, { event: e.target.value as HookEvent })
-                  }
-                >
-                  {HOOK_EVENTS.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  aria-label="Hook command"
-                  className="hook-command"
-                  placeholder={`e.g. sh -c "osascript -e 'tell app \\"Spotify\\" to pause'"`}
-                  value={hook.command}
-                  onChange={(e) =>
-                    updateHookAt(idx, { command: e.target.value })
-                  }
-                />
-                <label className="hook-toggle">
-                  <input
-                    type="checkbox"
-                    checked={hook.enabled}
-                    onChange={(e) =>
-                      updateHookAt(idx, { enabled: e.target.checked })
-                    }
-                  />
-                  <span>On</span>
-                </label>
-                <button
-                  className="secondary hook-remove"
-                  onClick={() => removeHookAt(idx)}
-                >
-                  Remove
-                </button>
-              </div>
+              <HookRow
+                key={idsRef.current[idx]}
+                hook={hook}
+                onChange={(patch) => updateHookAt(idx, patch)}
+                onRemove={() => removeHookAt(idx)}
+              />
             ))}
             <div className="actions inline">
               <button className="secondary" onClick={addHook}>

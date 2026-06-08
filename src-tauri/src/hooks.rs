@@ -209,26 +209,24 @@ pub(crate) fn spawn_hook(command: &str, env: &[(String, String)]) {
     spawn_hook_with_timeout(command, env, HOOK_TIMEOUT);
 }
 
-fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Duration) {
-    let argv = match shell_words::split(command) {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(
-                "hooks: failed to parse command (len={}): {e}",
-                command.len()
-            );
-            return;
-        }
-    };
+/// Split a hook `command` into `(program, args)` using `shell-words` (no
+/// shell is involved). Errors are the user-facing strings the test-run
+/// surfaces; the fire path logs them. Pure, so the parse rules are testable.
+fn parse_command(command: &str) -> Result<(String, Vec<String>), String> {
+    let argv = shell_words::split(command).map_err(|e| format!("could not parse command: {e}"))?;
     let mut iter = argv.into_iter();
-    let program = match iter.next() {
-        Some(p) => p,
-        None => {
-            warn!("hooks: empty command");
+    let program = iter.next().ok_or_else(|| "command is empty".to_string())?;
+    Ok((program, iter.collect()))
+}
+
+fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Duration) {
+    let (program, args) = match parse_command(command) {
+        Ok(pa) => pa,
+        Err(e) => {
+            warn!("hooks: {e} (len={})", command.len());
             return;
         }
     };
-    let args: Vec<String> = iter.collect();
     let program_basename = program_log_label(&program);
     let mut cmd = Command::new(&program);
     cmd.args(&args);
@@ -260,6 +258,102 @@ fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Dur
     if let Ok(None) = crate::proc::reap_or_kill(&mut child, timeout) {
         let secs = timeout.as_secs();
         warn!("hooks: killed {program_basename} after exceeding {secs}s");
+    }
+}
+
+/// Timeout for a one-off hook test-run from the Settings UI. Shorter than
+/// the fire-path [`HOOK_TIMEOUT`] so a hung command doesn't leave the user
+/// staring at a spinner.
+pub const HOOK_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Cap on captured stdout/stderr returned to the renderer, so a chatty
+/// command can't balloon the IPC payload.
+const MAX_TEST_OUTPUT_BYTES: usize = 8 * 1024;
+
+/// Result of a one-off hook test-run, surfaced in the Settings UI so a user
+/// can see what a command does before relying on it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HookTestOutcome {
+    /// The command launched and ran to completion (regardless of exit code).
+    pub ok: bool,
+    /// Process exit code, or `None` if it was killed by a signal / timeout.
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    /// Set when the command couldn't be parsed, spawned, or timed out.
+    pub error: Option<String>,
+}
+
+impl HookTestOutcome {
+    fn failed(error: String) -> Self {
+        Self {
+            ok: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            error: Some(error),
+        }
+    }
+}
+
+/// Lossy-UTF8 a captured stream and cap it at `max` bytes (on a char
+/// boundary), flagging truncation. Pure.
+fn truncate_output(bytes: &[u8], max: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    if text.len() <= max {
+        return text.into_owned();
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}…[truncated]", &text[..cut])
+}
+
+/// The env a test-run exposes, so a command using `$ENTRACTE_*` shows
+/// realistic values. Uses a representative break-start context.
+pub fn sample_test_env() -> Vec<(String, String)> {
+    build_env(
+        HookEvent::BreakStart,
+        &HookContext::with_kind_duration(BreakKind::Micro, 300),
+    )
+}
+
+/// Run `command` once with `env`, capturing stdout/stderr and exit code,
+/// killing it after `timeout`. Powers the Settings "Test" button. Like the
+/// fire path, no shell is involved — pipes/redirects need an explicit
+/// `sh -c` wrapper. The capture/spawn is the OS shim; the parsing
+/// ([`parse_command`]) and output handling ([`truncate_output`]) are pure
+/// and tested, and this whole function is exercised against real commands in
+/// the unit tests.
+pub fn run_command_capture(
+    command: &str,
+    env: &[(String, String)],
+    timeout: Duration,
+) -> HookTestOutcome {
+    use crate::proc::CommandTimeoutExt;
+    let (program, args) = match parse_command(command) {
+        Ok(pa) => pa,
+        Err(e) => return HookTestOutcome::failed(e),
+    };
+    let mut cmd = Command::new(&program);
+    cmd.args(&args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    match cmd.output_timeout(timeout) {
+        Ok(output) => HookTestOutcome {
+            ok: true,
+            exit_code: output.status.code(),
+            stdout: truncate_output(&output.stdout, MAX_TEST_OUTPUT_BYTES),
+            stderr: truncate_output(&output.stderr, MAX_TEST_OUTPUT_BYTES),
+            error: None,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => HookTestOutcome::failed(format!(
+            "command was still running after {}s and was stopped",
+            timeout.as_secs()
+        )),
+        Err(e) => HookTestOutcome::failed(format!("could not run command: {e}")),
     }
 }
 
@@ -742,5 +836,100 @@ mod tests {
         );
         std::thread::sleep(std::time::Duration::from_millis(150));
         assert!(!output.exists(), "hook ran despite hooks_enabled=false");
+    }
+
+    #[test]
+    fn parse_command_splits_program_and_args() {
+        let (program, args) = parse_command("echo hello world").unwrap();
+        assert_eq!(program, "echo");
+        assert_eq!(args, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn parse_command_honours_quotes() {
+        let (program, args) = parse_command(r#"sh -c "echo a b""#).unwrap();
+        assert_eq!(program, "sh");
+        assert_eq!(args, vec!["-c", "echo a b"]);
+    }
+
+    #[test]
+    fn parse_command_rejects_empty_and_unbalanced() {
+        assert!(parse_command("   ").unwrap_err().contains("empty"));
+        assert!(parse_command(r#"echo "unterminated"#).is_err());
+    }
+
+    #[test]
+    fn truncate_output_passes_short_text_through() {
+        assert_eq!(truncate_output(b"hello", 64), "hello");
+    }
+
+    #[test]
+    fn truncate_output_caps_long_text_on_a_char_boundary() {
+        let big = "x".repeat(100);
+        let out = truncate_output(big.as_bytes(), 10);
+        assert!(out.starts_with("xxxxxxxxxx"));
+        assert!(out.ends_with("…[truncated]"));
+        // Multi-byte input must not be cut mid-codepoint.
+        let multi = "é".repeat(50); // 2 bytes each
+        let out = truncate_output(multi.as_bytes(), 5);
+        assert!(out.contains("…[truncated]"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    mod capture {
+        use super::*;
+
+        #[test]
+        fn captures_stdout_and_zero_exit() {
+            let outcome = run_command_capture("/bin/echo hi there", &[], Duration::from_secs(5));
+            assert!(outcome.ok);
+            assert_eq!(outcome.exit_code, Some(0));
+            assert_eq!(outcome.stdout.trim(), "hi there");
+            assert!(outcome.error.is_none());
+        }
+
+        #[test]
+        fn captures_nonzero_exit_and_stderr() {
+            let outcome = run_command_capture(
+                r#"/bin/sh -c "echo oops 1>&2; exit 3""#,
+                &[],
+                Duration::from_secs(5),
+            );
+            assert!(outcome.ok);
+            assert_eq!(outcome.exit_code, Some(3));
+            assert_eq!(outcome.stderr.trim(), "oops");
+        }
+
+        #[test]
+        fn exposes_sample_env_to_the_command() {
+            let outcome = run_command_capture(
+                r#"/bin/sh -c "echo $ENTRACTE_EVENT $ENTRACTE_KIND""#,
+                &sample_test_env(),
+                Duration::from_secs(5),
+            );
+            assert_eq!(outcome.stdout.trim(), "break_start micro");
+        }
+
+        #[test]
+        fn reports_a_parse_error_without_running() {
+            let outcome = run_command_capture(r#"echo "unterminated"#, &[], Duration::from_secs(5));
+            assert!(!outcome.ok);
+            assert!(outcome.error.unwrap().contains("parse"));
+        }
+
+        #[test]
+        fn reports_a_spawn_failure() {
+            let outcome = run_command_capture("/no/such/program-xyz", &[], Duration::from_secs(5));
+            assert!(!outcome.ok);
+            assert!(outcome.error.is_some());
+        }
+
+        #[test]
+        fn kills_and_reports_a_command_that_overruns_the_timeout() {
+            let outcome =
+                run_command_capture("/bin/sh -c \"sleep 5\"", &[], Duration::from_millis(200));
+            assert!(!outcome.ok);
+            assert!(outcome.error.unwrap().contains("still running"));
+        }
     }
 }
