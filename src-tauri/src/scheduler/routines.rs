@@ -83,7 +83,6 @@ fn step(text: &str, seconds: u64) -> RoutineStep {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn routine(
     id: &str,
     label: &str,
