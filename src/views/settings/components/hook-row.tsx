@@ -13,18 +13,15 @@ export type HookRowProps = {
 };
 
 function HookTestResult({ result }: { result: HookTestOutcome }) {
+  const succeeded = result.exit_code === 0;
   return (
     <div className="hook-test-result" role="status" aria-live="polite">
       {result.error ? (
         <p className="hook-test-error">⚠ {result.error}</p>
       ) : (
         <>
-          <p
-            className={
-              result.exit_code === 0 ? "hook-test-ok" : "hook-test-fail"
-            }
-          >
-            {result.exit_code === 0
+          <p className={succeeded ? "hook-test-ok" : "hook-test-fail"}>
+            {succeeded
               ? "✓ Exited 0"
               : `Exited with code ${result.exit_code ?? "unknown"}`}
           </p>
