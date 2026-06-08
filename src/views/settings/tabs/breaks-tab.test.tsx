@@ -46,6 +46,10 @@ const baseSettings = {
   sleep_hints: ["Wind down"],
   micro_routine: "",
   long_routine: "",
+  micro_routine_categories: [],
+  long_routine_categories: [],
+  micro_routine_max_difficulty: "active",
+  long_routine_max_difficulty: "active",
   custom_css: "",
 } as unknown as SchedulerSettings;
 
@@ -93,12 +97,16 @@ describe("BreaksTab guided routines", () => {
         id: "micro-eye-reset",
         label: "Eye reset",
         kind: "micro",
+        category: "eyes",
+        difficulty: "gentle",
         steps: [{ text: "Look away", seconds: 5 }],
       },
       {
         id: "long-stretch",
         label: "Full-body stretch",
         kind: "long",
+        category: "mobility",
+        difficulty: "moderate",
         steps: [{ text: "Reach up", seconds: 20 }],
       },
     ]);

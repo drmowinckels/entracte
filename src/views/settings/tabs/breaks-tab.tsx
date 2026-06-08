@@ -10,6 +10,7 @@ import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
 import { InfoTip } from "../components/info-tip";
 import { WindowedSizeRow } from "../components/windowed-size-row";
+import { RoutinePicker } from "../components/routine-picker";
 import {
   MONITOR_PLACEMENTS,
   OVERLAY_THEMES,
@@ -65,29 +66,16 @@ export function BreaksTab({
   const fontScalePct = Math.round(settings.overlay_font_scale * 100);
   const soundVolumePct = Math.round(settings.sound_volume * 100);
 
-  const routinePicker = (
-    kind: "micro" | "long",
-    key: "micro_routine" | "long_routine",
-  ) => (
-    <label className="row">
-      <span>
-        Guided routine
-        <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
-      </span>
-      <select
-        value={settings[key]}
-        onChange={(e) => update(key, e.target.value)}
-      >
-        <option value="">None (rotate ideas)</option>
-        {routines
-          .filter((r) => r.kind === kind)
-          .map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.label}
-            </option>
-          ))}
-      </select>
-    </label>
+  const routinePicker = (kind: "micro" | "long") => (
+    <RoutinePicker
+      kind={kind}
+      routineKey={`${kind}_routine`}
+      categoriesKey={`${kind}_routine_categories`}
+      difficultyKey={`${kind}_routine_max_difficulty`}
+      settings={settings}
+      update={update}
+      routines={routines}
+    />
   );
 
   return (
@@ -455,7 +443,7 @@ export function BreaksTab({
             <option value="psychological">Psychological only</option>
           </select>
         </label>
-        {routinePicker("micro", "micro_routine")}
+        {routinePicker("micro")}
         {isSupporter && (
           <>
             <label className="row stacked">
@@ -507,7 +495,7 @@ export function BreaksTab({
             <option value="social">Social only</option>
           </select>
         </label>
-        {routinePicker("long", "long_routine")}
+        {routinePicker("long")}
         {isSupporter && (
           <>
             <label className="row stacked">

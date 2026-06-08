@@ -929,6 +929,20 @@ body,
   margin-top: 0.5rem;
 }
 
+.settings .routine-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: flex-end;
+}
+
+.settings .routine-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
 .settings .hotkeys-list {
   display: flex;
   flex-direction: column;

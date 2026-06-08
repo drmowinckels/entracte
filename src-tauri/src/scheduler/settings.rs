@@ -4,6 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::hooks::Hook;
 
 use super::hotkeys::Hotkey;
+use super::routines::{RoutineCategory, RoutineDifficulty};
 use super::timers::parse_hhmm;
 use super::types::{BreakDelivery, BreakKind};
 
@@ -313,6 +314,10 @@ fn default_windowed_fraction() -> f64 {
     0.8
 }
 
+fn default_routine_max_difficulty() -> RoutineDifficulty {
+    RoutineDifficulty::Active
+}
+
 fn default_micro_physical_hints() -> Vec<String> {
     vec![
         "Look at something 20 feet away.",
@@ -542,14 +547,25 @@ pub struct Settings {
     pub long_social_hints: Vec<String>,
     pub long_hint_mix: HintMix,
     pub sleep_hints: Vec<String>,
-    /// Selected guided-routine id for micro / long breaks, or `""` for none
-    /// (fall back to plain hint rotation). Ids reference the bundled routines
-    /// in [`super::routines::starter_routines`]; an unknown id resolves to no
-    /// routine. Sleep breaks never run routines.
+    /// Guided-routine mode for micro / long breaks: `""` (off, fall back to
+    /// hint rotation), a routine id (always that routine), or `"random"` (the
+    /// engine picks one per break from the filtered pool). See
+    /// [`super::routines::resolve_routine_steps`].
     #[serde(default)]
     pub micro_routine: String,
     #[serde(default)]
     pub long_routine: String,
+    /// Engine filters, applied only when the matching `*_routine` is
+    /// `"random"`: the categories to draw from (empty = all) and the maximum
+    /// difficulty to include.
+    #[serde(default)]
+    pub micro_routine_categories: Vec<RoutineCategory>,
+    #[serde(default)]
+    pub long_routine_categories: Vec<RoutineCategory>,
+    #[serde(default = "default_routine_max_difficulty")]
+    pub micro_routine_max_difficulty: RoutineDifficulty,
+    #[serde(default = "default_routine_max_difficulty")]
+    pub long_routine_max_difficulty: RoutineDifficulty,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
     pub typing_grace_secs: u64,
@@ -663,6 +679,10 @@ impl Default for Settings {
             sleep_hints: default_sleep_hints(),
             micro_routine: String::new(),
             long_routine: String::new(),
+            micro_routine_categories: Vec::new(),
+            long_routine_categories: Vec::new(),
+            micro_routine_max_difficulty: default_routine_max_difficulty(),
+            long_routine_max_difficulty: default_routine_max_difficulty(),
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
             typing_grace_secs: 10,
