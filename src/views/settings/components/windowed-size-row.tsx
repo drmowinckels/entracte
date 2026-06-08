@@ -56,9 +56,11 @@ export function WindowedSizeRow({
           }}
         >
           {allowInherit && <option value="inherit">Same as global</option>}
-          <option value="0.7">70%</option>
-          <option value="0.8">80%</option>
-          <option value="0.9">90%</option>
+          {PRESETS.map((p) => (
+            <option key={p} value={String(p)}>
+              {toPct(p)}%
+            </option>
+          ))}
           <option value="custom" disabled>
             Custom
           </option>
