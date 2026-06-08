@@ -25,6 +25,9 @@ const invokeMock = vi.fn(async (cmd: string, _args?: unknown) => {
   if (cmd === "get_settings") return currentSettings;
   if (cmd === "get_current_break") return currentBreak;
   if (cmd === "get_postpone_state") return currentPostpone;
+  // Report a long idle so the typing-pause poll leaves the countdown running
+  // (a null/0 here would read as "actively typing" and pause every break).
+  if (cmd === "get_idle_secs") return 999;
   return null;
 });
 
@@ -454,5 +457,46 @@ describe("BreakOverlay guided routines", () => {
     });
     expect(getByText("Look away")).toBeTruthy();
     expect(container.querySelector(".overlay-routine")).toBeNull();
+  });
+
+  it("advances to the next step as the countdown crosses a step boundary", async () => {
+    // Drives the real countdown with fake timers so the wiring from
+    // `remaining` → `routineProgress` → step label is exercised (the pure
+    // advancement is covered separately in routine.test.ts).
+    vi.useFakeTimers();
+    try {
+      currentSettings = { ...DEFAULT_OVERLAY_SETTINGS };
+      currentBreak = null;
+      const { getByLabelText } = render(<BreakOverlay />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0); // flush listen() registration
+      });
+      await act(async () => {
+        listeners.get("break:start")?.({
+          payload: {
+            ...sampleBreak,
+            duration_secs: 30,
+            routine_steps: [
+              { text: "Step A", seconds: 5 },
+              { text: "Step B", seconds: 7 },
+            ],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(0); // flush applyBreak's awaits
+      });
+      expect(getByLabelText("Step 1 of 2: Step A")).toBeTruthy();
+      // Five 1s ticks → elapsed 5s → the routine is now on step B. Advance a
+      // second at a time so React processes each countdown tick.
+      for (let i = 0; i < 5; i += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+      }
+      expect(getByLabelText("Step 2 of 2: Step B")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+      listeners.clear();
+      currentBreak = null;
+    }
   });
 });

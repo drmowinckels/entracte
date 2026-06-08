@@ -28,9 +28,15 @@ export function useRoutines(deps: UseRoutinesDeps = {}): Routine[] {
     invokeFn("get_routines")
       .then((raw) => {
         const parsed = routinesSchema.safeParse(raw);
-        if (!cancelled && parsed.success) setRoutines(parsed.data);
+        if (cancelled) return;
+        if (parsed.success) setRoutines(parsed.data);
+        else
+          console.warn(
+            "get_routines returned an unexpected shape",
+            parsed.error,
+          );
       })
-      .catch(() => {});
+      .catch((e) => console.warn("get_routines failed", e));
     return () => {
       cancelled = true;
     };
