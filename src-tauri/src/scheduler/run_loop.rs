@@ -231,6 +231,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                         } else {
                             0.0
                         },
+                        routine_steps: Vec::new(),
                     },
                     s.monitor_placement,
                     super::settings::is_windowed_mode(BreakKind::Sleep, &s),
@@ -592,6 +593,7 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
         } else {
             0.0
         },
+        routine_steps: super::routines::resolve_routine_steps(kind, s),
     }
 }
 

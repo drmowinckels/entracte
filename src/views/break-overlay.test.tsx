@@ -423,3 +423,36 @@ describe("BreakOverlay ARIA contract", () => {
     expect(getByTestId("overlay-milestone").textContent).toBe("");
   });
 });
+
+describe("BreakOverlay guided routines", () => {
+  it("shows the first routine step and its progress at break start", async () => {
+    const { container, getByText } = await startBreak(false, {
+      duration_secs: 30,
+      hints: ["Look away"],
+      routine_steps: [
+        { text: "Roll your shoulders", seconds: 10 },
+        { text: "Drop your right ear down", seconds: 10 },
+      ],
+    });
+    expect(getByText("Roll your shoulders")).toBeTruthy();
+    expect(
+      container.querySelector(".overlay-routine-progress")?.textContent,
+    ).toContain("Step 1 of 2");
+  });
+
+  it("labels the routine step with its position for screen readers", async () => {
+    const { getByLabelText } = await startBreak(false, {
+      routine_steps: [{ text: "Reach overhead", seconds: 20 }],
+    });
+    expect(getByLabelText("Step 1 of 1: Reach overhead")).toBeTruthy();
+  });
+
+  it("falls back to the rotating hint when no routine is selected", async () => {
+    const { container, getByText } = await startBreak(false, {
+      hints: ["Look away"],
+      routine_steps: [],
+    });
+    expect(getByText("Look away")).toBeTruthy();
+    expect(container.querySelector(".overlay-routine")).toBeNull();
+  });
+});

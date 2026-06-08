@@ -1,9 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
 }));
+
+import { invoke } from "@tauri-apps/api/core";
+const invokeMock = vi.mocked(invoke);
+afterEach(() => {
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValue(undefined);
+});
 
 const { BreaksTab } = await import("./breaks-tab");
 import type { SchedulerSettings, SupporterStatus } from "../types";
@@ -37,6 +44,8 @@ const baseSettings = {
   long_hints: ["Take a walk"],
   long_social_hints: ["Call a friend"],
   sleep_hints: ["Wind down"],
+  micro_routine: "",
+  long_routine: "",
   custom_css: "",
 } as unknown as SchedulerSettings;
 
@@ -68,6 +77,49 @@ function selectWithOption(optionName: string): HTMLSelectElement {
   if (!select) throw new Error(`no <select> owns option "${optionName}"`);
   return select;
 }
+
+describe("BreaksTab guided routines", () => {
+  it("offers a 'None' guided-routine option for both break kinds", () => {
+    renderTab(false);
+    // One picker per kind; both default to None when no routine is set.
+    expect(
+      screen.getAllByRole("option", { name: "None (rotate ideas)" }),
+    ).toHaveLength(2);
+  });
+
+  it("lists the backend routines for the matching kind and persists the choice", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "micro-eye-reset",
+        label: "Eye reset",
+        kind: "micro",
+        steps: [{ text: "Look away", seconds: 5 }],
+      },
+      {
+        id: "long-stretch",
+        label: "Full-body stretch",
+        kind: "long",
+        steps: [{ text: "Reach up", seconds: 20 }],
+      },
+    ]);
+    const update = vi.fn();
+    renderTab(false, update);
+
+    const microOption = (await waitFor(() =>
+      screen.getByRole("option", { name: "Eye reset" }),
+    )) as HTMLOptionElement;
+    // The micro routine appears under the micro picker, not the long one.
+    expect(microOption.closest("select")?.value).toBe("");
+    // ...and the long routine is filtered into the long picker.
+    expect(
+      screen.getByRole("option", { name: "Full-body stretch" }),
+    ).toBeTruthy();
+
+    const microSelect = microOption.closest("select") as HTMLSelectElement;
+    fireEvent.change(microSelect, { target: { value: "micro-eye-reset" } });
+    expect(update).toHaveBeenCalledWith("micro_routine", "micro-eye-reset");
+  });
+});
 
 describe("BreaksTab break ideas", () => {
   it("shows the micro and long mix selectors to free users", () => {

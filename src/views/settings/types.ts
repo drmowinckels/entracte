@@ -93,6 +93,8 @@ export type SchedulerSettings = {
   long_social_hints: string[];
   long_hint_mix: LongHintMix;
   sleep_hints: string[];
+  micro_routine: string;
+  long_routine: string;
   hint_rotate_seconds: number;
   delay_break_if_typing: boolean;
   typing_grace_secs: number;

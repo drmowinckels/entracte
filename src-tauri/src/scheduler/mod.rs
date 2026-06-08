@@ -2,6 +2,7 @@ mod break_stats;
 mod commands;
 mod overlay;
 mod pause;
+mod routines;
 mod run_loop;
 mod screen_time;
 pub(crate) mod session_lock;
@@ -35,6 +36,10 @@ pub use commands::profiles::*;
 pub use commands::settings::*;
 pub use commands::stats::*;
 pub use pause::PauseState;
+// Glob so the `#[tauri::command]` `__cmd__get_routines` sibling resolves at
+// `scheduler::get_routines` for the handler in lib.rs (same reason the
+// command modules above are re-exported with `*`).
+pub use routines::*;
 pub use settings::Settings;
 // `MonitorPlacement` only has consumers inside `config::tests`; preserve the
 // pre-split flat path so the test doesn't have to know the new module layout.

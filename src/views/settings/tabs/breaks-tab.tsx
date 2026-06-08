@@ -16,6 +16,7 @@ import {
   ROTATION_GRADIENT,
 } from "../constants";
 import type { UseSettings } from "../hooks/use-settings";
+import { useRoutines } from "../hooks/use-routines";
 import type {
   MonitorPlacement,
   SchedulerSettings,
@@ -33,6 +34,7 @@ export function BreaksTab({
   supporter: SupporterStatus;
 }) {
   const isSupporter = supporter.is_supporter;
+  const routines = useRoutines();
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),
@@ -428,6 +430,25 @@ export function BreaksTab({
             <option value="psychological">Psychological only</option>
           </select>
         </label>
+        <label className="row">
+          <span>
+            Guided routine
+            <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
+          </span>
+          <select
+            value={settings.micro_routine}
+            onChange={(e) => update("micro_routine", e.target.value)}
+          >
+            <option value="">None (rotate ideas)</option>
+            {routines
+              .filter((r) => r.kind === "micro")
+              .map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+          </select>
+        </label>
         {isSupporter && (
           <>
             <label className="row stacked">
@@ -477,6 +498,25 @@ export function BreaksTab({
             <option value="both">Both</option>
             <option value="solo">Solo only</option>
             <option value="social">Social only</option>
+          </select>
+        </label>
+        <label className="row">
+          <span>
+            Guided routine
+            <InfoTip text="Step-by-step prompts that advance through the break instead of a single rotating idea. Choose None to keep the rotating ideas above." />
+          </span>
+          <select
+            value={settings.long_routine}
+            onChange={(e) => update("long_routine", e.target.value)}
+          >
+            <option value="">None (rotate ideas)</option>
+            {routines
+              .filter((r) => r.kind === "long")
+              .map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
           </select>
         </label>
         {isSupporter && (

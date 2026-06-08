@@ -5,6 +5,11 @@ export type BreakKind = "micro" | "long" | "sleep";
 
 export type ClockFormat = "12h" | "24h";
 
+export type RoutineStep = {
+  text: string;
+  seconds: number;
+};
+
 export type BreakEvent = {
   kind: BreakKind;
   duration_secs: number;
@@ -15,6 +20,11 @@ export type BreakEvent = {
   hints: string[];
   hint_rotate_seconds: number;
   health_intensity: number;
+  // Resolved guided-routine steps for this break. The backend always sends
+  // it (empty when no routine is selected); optional here so the many test
+  // fixtures and older payloads without it still type-check, and the schema
+  // defaults it to `[]`.
+  routine_steps?: RoutineStep[];
 };
 
 export type OverlaySettings = {
