@@ -164,6 +164,8 @@
   "long_schedule_mode": "interval",
   "hooks_enabled": false,
   "hooks": [],
+  "hotkeys_enabled": false,
+  "hotkeys": [],
   "daily_screen_time_enabled": false,
   "daily_screen_time_budget_minutes": 480,
   "daily_screen_time_remind_again_minutes": 60,

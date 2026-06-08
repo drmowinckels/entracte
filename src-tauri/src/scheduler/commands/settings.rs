@@ -35,6 +35,7 @@ pub async fn get_settings(
 /// Returns when the write hits disk.
 #[tauri::command]
 pub async fn update_settings(
+    app: tauri::AppHandle,
     scheduler: tauri::State<'_, Scheduler>,
     supporter_state: tauri::State<'_, SupporterAppState>,
     new: Settings,
@@ -61,6 +62,7 @@ pub async fn update_settings(
         }
     }
     super::super::persist_profiles(scheduler.inner()).await;
+    super::super::apply_hotkeys(&app, &merged);
     Ok(())
 }
 

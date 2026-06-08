@@ -929,6 +929,39 @@ body,
   margin-top: 0.5rem;
 }
 
+.settings .hotkeys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+
+.settings .hotkey-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings .hotkey-input input {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  min-width: 160px;
+}
+
+.settings .hotkey-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings .hotkey-input input[aria-invalid="true"] {
+  border-color: var(--danger, #d9534f);
+}
+
 .settings .hook-row {
   display: flex;
   flex-wrap: wrap;

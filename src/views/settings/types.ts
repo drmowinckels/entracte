@@ -34,6 +34,22 @@ export type HookConfig = {
   enabled: boolean;
 };
 
+// Mirrors the Rust `HotkeyAction` serde enum (snake_case) in
+// `src-tauri/src/scheduler/hotkeys.rs`.
+export type HotkeyAction =
+  | "pause"
+  | "resume"
+  | "trigger_micro"
+  | "trigger_long"
+  | "skip_micro"
+  | "skip_long"
+  | "cycle_profile";
+
+export type Hotkey = {
+  action: HotkeyAction;
+  accelerator: string;
+};
+
 export type SchedulerSettings = {
   micro_interval_secs: number;
   micro_duration_secs: number;
@@ -110,6 +126,8 @@ export type SchedulerSettings = {
   long_schedule_mode: ScheduleMode;
   hooks_enabled: boolean;
   hooks: HookConfig[];
+  hotkeys_enabled: boolean;
+  hotkeys: Hotkey[];
   daily_screen_time_enabled: boolean;
   daily_screen_time_budget_minutes: number;
   daily_screen_time_remind_again_minutes: number;

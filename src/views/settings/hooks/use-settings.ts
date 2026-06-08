@@ -29,6 +29,19 @@ const hookConfigSchema = z.object({
   enabled: z.boolean(),
 });
 
+const hotkeySchema = z.object({
+  action: z.enum([
+    "pause",
+    "resume",
+    "trigger_micro",
+    "trigger_long",
+    "skip_micro",
+    "skip_long",
+    "cycle_profile",
+  ]),
+  accelerator: z.string(),
+});
+
 export const schedulerSettingsSchema = z.object({
   micro_interval_secs: z.number(),
   micro_duration_secs: z.number(),
@@ -105,6 +118,8 @@ export const schedulerSettingsSchema = z.object({
   long_schedule_mode: z.enum(["interval", "fixed", "both"]),
   hooks_enabled: z.boolean(),
   hooks: z.array(hookConfigSchema),
+  hotkeys_enabled: z.boolean(),
+  hotkeys: z.array(hotkeySchema),
   daily_screen_time_enabled: z.boolean(),
   daily_screen_time_budget_minutes: z.number(),
   daily_screen_time_remind_again_minutes: z.number(),

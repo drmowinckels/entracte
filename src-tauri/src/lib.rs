@@ -133,6 +133,7 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             scheduler::get_settings,
             scheduler::update_settings,
@@ -231,8 +232,16 @@ pub fn run() {
             );
 
             let scheduler = Scheduler::new(config_path, pause_path, events_path, screen_time_path);
+            // Snapshot the loaded settings before `spawn` so the run loop
+            // can't be holding the lock — used to register global hotkeys
+            // once the app is up.
+            let initial_settings = scheduler.settings.try_lock().map(|s| s.clone()).ok();
             scheduler.spawn(app.handle().clone());
             app.manage(scheduler);
+
+            if let Some(settings) = initial_settings {
+                scheduler::apply_hotkeys(app.handle(), &settings);
+            }
 
             app.manage(audio::AudioPlayer::spawn());
 

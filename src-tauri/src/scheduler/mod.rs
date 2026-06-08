@@ -1,5 +1,6 @@
 mod break_stats;
 mod commands;
+mod hotkeys;
 mod overlay;
 mod pause;
 mod routines;
@@ -35,6 +36,7 @@ pub use commands::hooks::*;
 pub use commands::profiles::*;
 pub use commands::settings::*;
 pub use commands::stats::*;
+pub use hotkeys::apply_hotkeys;
 pub use pause::PauseState;
 // Glob so the `#[tauri::command]` `__cmd__get_routines` sibling resolves at
 // `scheduler::get_routines` for the handler in lib.rs (same reason the

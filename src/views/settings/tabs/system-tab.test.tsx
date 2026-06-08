@@ -32,6 +32,8 @@ const baseSettings = {
   tray_countdown_target: "next",
   hooks_enabled: true,
   hooks: [],
+  hotkeys_enabled: false,
+  hotkeys: [],
 } as unknown as SchedulerSettings;
 
 function Harness({ initial }: { initial: HookConfig[] }) {
