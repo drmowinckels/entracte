@@ -474,4 +474,55 @@ mod tests {
             .collect();
         assert!(validate_manifest(&m).unwrap_err().contains("more than"));
     }
+
+    #[test]
+    fn capability_parse_rejects_overlong_scope() {
+        let raw = format!("detect:file:{}", "a".repeat(MAX_SCOPE_LEN + 1));
+        assert!(Capability::parse(&raw).unwrap_err().contains("too long"));
+    }
+
+    #[test]
+    fn capability_parse_rejects_unknown_scoped_prefix() {
+        assert!(Capability::parse("foo:bar:baz")
+            .unwrap_err()
+            .contains("unknown"));
+    }
+
+    #[test]
+    fn validate_rejects_overlong_string_field() {
+        let mut m = detector_manifest();
+        m.description = "a".repeat(MAX_STRING_LEN + 1);
+        assert!(validate_manifest(&m).unwrap_err().contains("exceeds"));
+    }
+
+    #[test]
+    fn validate_rejects_overlong_id() {
+        let mut m = detector_manifest();
+        m.id = format!("com.{}", "a".repeat(MAX_ID_LEN));
+        assert!(validate_manifest(&m).unwrap_err().contains("exceeds"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_name_and_version() {
+        let mut m = detector_manifest();
+        m.name = "   ".to_string();
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("missing a name"));
+
+        let mut m = detector_manifest();
+        m.version = String::new();
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("missing a version"));
+    }
+
+    #[test]
+    fn validate_forbids_abi_version_on_content() {
+        let mut m = content_manifest();
+        m.abi_version = Some(SUPPORTED_ABI_VERSION);
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must not declare an abi_version"));
+    }
 }

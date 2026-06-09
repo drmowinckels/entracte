@@ -32,9 +32,10 @@ pub fn sha256(bytes: &[u8]) -> [u8; 32] {
 /// the signer and the verifier produce identical input.
 pub fn signing_payload(manifest: &Manifest, module_sha256: Option<[u8; 32]>) -> Vec<u8> {
     let mut value = serde_json::to_value(manifest).expect("manifest is always serialisable");
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("signature");
-    }
+    value
+        .as_object_mut()
+        .expect("a manifest always serialises to a JSON object")
+        .remove("signature");
     let mut bytes = serde_json::to_vec(&value).expect("json value is always serialisable");
     if let Some(hash) = module_sha256 {
         bytes.extend_from_slice(&hash);
@@ -202,6 +203,47 @@ mod tests {
         assert!(verify_signature(&m, None)
             .unwrap_err()
             .contains("64-byte ed25519 signature"));
+    }
+
+    #[test]
+    fn rejects_public_key_of_wrong_length() {
+        // Valid base64 but decodes to fewer than 32 bytes.
+        let mut m = unsigned_detector();
+        m.signature.public_key = BASE64_STANDARD.encode([0u8; 10]);
+        m.signature.sig = BASE64_STANDARD.encode([0u8; 64]);
+        assert!(verify_signature(&m, None)
+            .unwrap_err()
+            .contains("not a 32-byte ed25519 key"));
+    }
+
+    #[test]
+    fn rejects_a_32_byte_value_that_is_not_a_valid_curve_point() {
+        use ed25519_dalek::VerifyingKey;
+        // Decodes to 32 bytes (so the length check passes) but is not a
+        // valid compressed Edwards point, so VerifyingKey::from_bytes fails.
+        // Search deterministically for such an encoding — not every 32-byte
+        // value decompresses (e.g. [0xFF; 32] happens to), so pick one that
+        // genuinely doesn't.
+        let invalid = (0u8..=255)
+            .map(|b| [b; 32])
+            .find(|bytes| VerifyingKey::from_bytes(bytes).is_err())
+            .expect("some [b; 32] is not a valid curve point");
+        let mut m = unsigned_detector();
+        m.signature.public_key = BASE64_STANDARD.encode(invalid);
+        m.signature.sig = BASE64_STANDARD.encode([0u8; 64]);
+        assert!(verify_signature(&m, None)
+            .unwrap_err()
+            .contains("not a valid ed25519 key"));
+    }
+
+    #[test]
+    fn rejects_sig_that_is_not_valid_base64() {
+        let mut m = unsigned_detector();
+        m.signature.public_key = BASE64_STANDARD.encode([0u8; 32]);
+        m.signature.sig = "not base64!!!".to_string();
+        assert!(verify_signature(&m, None)
+            .unwrap_err()
+            .contains("sig is not valid base64"));
     }
 
     #[test]
