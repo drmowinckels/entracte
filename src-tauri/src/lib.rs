@@ -11,6 +11,7 @@ mod media;
 mod notifications;
 mod pause_store;
 mod platform;
+mod plugins;
 mod proc;
 mod renderer_log;
 mod scheduler;
