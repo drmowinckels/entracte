@@ -59,6 +59,10 @@ base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+# Local-only plugin sandbox (#156). extism embeds wasmtime; modules run with
+# no ambient authority (WASI disabled) and can only call host functions a
+# granted capability registers. See docs/developer/plugin-api-design.md.
+extism = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -85,6 +89,9 @@ panic = "abort"
 tempfile = "3"
 mockito = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Compile WAT → wasm in-memory for plugin-runtime tests, so we don't commit
+# binary fixtures or require the extism PDK toolchain in CI.
+wat = "1"
 
 # Enables `tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime}`
 # for the integration-test rig (`test_support::mock_app_with_scheduler`).
