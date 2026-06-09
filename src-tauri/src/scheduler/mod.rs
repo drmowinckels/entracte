@@ -327,3 +327,22 @@ pub async fn persist_plugins(sched: &Scheduler) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::plugins_path_for;
+    use std::path::PathBuf;
+
+    #[test]
+    fn plugins_path_is_beside_settings() {
+        let p = plugins_path_for(&PathBuf::from("/cfg/dir/settings.json"));
+        assert_eq!(p, PathBuf::from("/cfg/dir/plugins.json"));
+    }
+
+    #[test]
+    fn plugins_path_falls_back_when_config_has_no_parent() {
+        let p = plugins_path_for(&PathBuf::from("settings.json"));
+        // A bare filename has a parent of "" — joining still yields the file.
+        assert_eq!(p.file_name().unwrap(), "plugins.json");
+    }
+}

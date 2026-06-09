@@ -148,6 +148,20 @@ describe("Plugins", () => {
     expect(await screen.findByText(/Removed "Stretch pack"/)).toBeTruthy();
   });
 
+  it("surfaces an uninstall error", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_plugins") return Promise.resolve([summary()]);
+      if (cmd === "uninstall_plugin") return Promise.reject("not installed");
+      return Promise.resolve();
+    });
+    render(<Plugins reload={async () => {}} />);
+    await screen.findByText("Stretch pack");
+    fireEvent.click(
+      screen.getByRole("button", { name: /uninstall stretch pack/i }),
+    );
+    expect(await screen.findByText(/Uninstall failed/)).toBeTruthy();
+  });
+
   it("surfaces an install error", async () => {
     openDialog.mockResolvedValue("/tmp/bad.json");
     invoke.mockImplementation((cmd: string) => {
