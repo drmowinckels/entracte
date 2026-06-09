@@ -68,6 +68,13 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Segment the cache per runner image. swatinem/rust-cache keys on
+          # `runner.os` ("Linux"), which is identical for ubuntu-22.04 and
+          # ubuntu-24.04, so a 22.04 job can restore a 24.04 cache and then
+          # run a glibc-2.39 build-script binary that the 22.04 glibc-2.35
+          # can't load (`GLIBC_2.39 not found` building gtk). Keying on the
+          # matrix image keeps each runner's caches separate.
+          prefix-key: "rust-${{ matrix.platform }}"
 
       - run: npm ci
 
