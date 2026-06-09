@@ -47,6 +47,24 @@ describe("Plugins", () => {
     expect(await screen.findByText("No plugins installed.")).toBeTruthy();
   });
 
+  it("surfaces a listing error", async () => {
+    invoke.mockRejectedValue("backend exploded");
+    render(<Plugins reload={async () => {}} />);
+    expect(await screen.findByText(/Could not list plugins/)).toBeTruthy();
+  });
+
+  it("omits the author prefix when there is no author", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "list_plugins"
+        ? Promise.resolve([summary({ author: "" })])
+        : Promise.resolve(),
+    );
+    render(<Plugins reload={async () => {}} />);
+    expect(
+      await screen.findByText(/^v1.0.0 · 2 ideas, 1 routine/),
+    ).toBeTruthy();
+  });
+
   it("guards against a non-array list result", async () => {
     // The shared test harness mocks invoke to resolve a string; the
     // component must not crash trying to map over it.

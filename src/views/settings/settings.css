@@ -934,11 +934,6 @@ body,
   font-size: 0.9rem;
 }
 
-.settings .plugin-warning {
-  color: var(--danger, #d9534f);
-  font-size: 0.9rem;
-}
-
 .settings .plugin-list {
   list-style: none;
   margin: 0.5rem 0 0;
