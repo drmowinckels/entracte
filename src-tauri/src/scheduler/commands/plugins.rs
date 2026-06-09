@@ -438,6 +438,33 @@ mod tests {
             .contains("failed to read plugin file"));
     }
 
+    #[test]
+    fn read_manifest_text_rejects_an_oversized_file() {
+        let dir = crate::test_support::temp_dir();
+        let path = dir.path().join("huge.json");
+        std::fs::write(&path, vec![b'x'; (MAX_MANIFEST_BYTES + 1) as usize]).unwrap();
+        assert!(read_manifest_text(&path.display().to_string())
+            .unwrap_err()
+            .contains("too large"));
+    }
+
+    #[tokio::test]
+    async fn apply_install_pushes_active_profile_when_absent() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        *sched.active_profile_name.lock().await = "Ghost".to_string();
+        apply_install(&sched, &content_manifest("com.example.stretch")).await;
+        let profiles = sched.profiles.lock().await;
+        let ghost = profiles
+            .iter()
+            .find(|p| p.name == "Ghost")
+            .expect("absent active profile was pushed");
+        assert!(ghost
+            .settings
+            .custom_routines
+            .iter()
+            .any(|r| r.id == "plugin-rt"));
+    }
+
     #[tokio::test]
     async fn apply_install_writes_into_the_active_profile() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
@@ -481,11 +508,211 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_for_dialog_clips_at_max_chars() {
+        let out = sanitize_for_dialog(&"x".repeat(50), 8);
+        assert_eq!(out.chars().count(), 9); // 8 + the ellipsis
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
     fn dialog_busy_guard_resets_flag_on_drop() {
         let flag = Arc::new(AtomicBool::new(true));
         {
             let _g = DialogBusyGuard(flag.clone());
         }
         assert!(!flag.load(std::sync::atomic::Ordering::Acquire));
+    }
+}
+
+// Integration tests that need a Tauri `AppHandle` / `WebviewWindow` /
+// `State`, driven through `tauri::test`'s MockRuntime. Gated off Windows
+// like the rest of the mock-app rig (see Cargo.toml). These cover the
+// command wrappers around the unit-tested cores: the main-window gate,
+// `list_plugins`, `uninstall_plugin`, and `install_content_plugin`'s
+// pre-dialog error paths. The native confirmation dialog itself can't be
+// driven headless, so the post-consent install path is covered via
+// `apply_install` in the unit tests above.
+#[cfg(all(test, not(target_os = "windows")))]
+mod mock_app_tests {
+    use super::*;
+    use crate::plugins::{InstalledPlugin, PluginKind};
+    use crate::scheduler::content_pack::AddedContent;
+    use crate::test_support::{temp_dir, test_scheduler, wrap_in_mock_app};
+    use tauri::test::MockRuntime;
+    use tauri::{App, Manager, WebviewWindowBuilder};
+
+    fn webview(app: &App<MockRuntime>, label: &str) -> tauri::WebviewWindow<MockRuntime> {
+        WebviewWindowBuilder::new(app, label, Default::default())
+            .build()
+            .expect("mock webview builds")
+    }
+
+    fn installed(id: &str) -> InstalledPlugin {
+        InstalledPlugin {
+            id: id.to_string(),
+            name: "Pack".to_string(),
+            author: "Me".to_string(),
+            version: "1.0.0".to_string(),
+            kind: PluginKind::Content,
+            public_key: "AA==".to_string(),
+            added: AddedContent {
+                micro_physical: vec!["Stretch".to_string()],
+                ..AddedContent::default()
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_main_window_accepts_main_rejects_others() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let app = wrap_in_mock_app(sched);
+        assert!(ensure_main_window(&webview(&app, MAIN_WINDOW_LABEL)).is_ok());
+        assert!(ensure_main_window(&webview(&app, "overlay"))
+            .unwrap_err()
+            .contains("restricted to the main window"));
+    }
+
+    #[tokio::test]
+    async fn list_plugins_command_returns_summaries() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        sched.plugins.lock().await.insert(installed("com.x.pack"));
+        let app = wrap_in_mock_app(sched);
+        let out = list_plugins(app.state::<Scheduler>()).await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "com.x.pack");
+        assert_eq!(out[0].hints_added, 1);
+    }
+
+    #[tokio::test]
+    async fn uninstall_plugin_command_removes_record() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        sched.plugins.lock().await.insert(installed("com.x.pack"));
+        let app = wrap_in_mock_app(sched.clone());
+        uninstall_plugin(app.state::<Scheduler>(), "com.x.pack".to_string())
+            .await
+            .unwrap();
+        assert!(!sched.plugins.lock().await.contains("com.x.pack"));
+
+        // The not-installed path through the wrapper.
+        assert!(
+            uninstall_plugin(app.state::<Scheduler>(), "com.nope".to_string())
+                .await
+                .unwrap_err()
+                .contains("not installed")
+        );
+    }
+
+    #[tokio::test]
+    async fn install_rejects_a_non_main_window_before_any_dialog() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let app = wrap_in_mock_app(sched);
+        let err = install_content_plugin(
+            app.handle().clone(),
+            webview(&app, "overlay"),
+            app.state::<Scheduler>(),
+            "/whatever.json".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("restricted to the main window"));
+    }
+
+    #[tokio::test]
+    async fn install_reports_an_unreadable_file_before_any_dialog() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let app = wrap_in_mock_app(sched);
+        let err = install_content_plugin(
+            app.handle().clone(),
+            webview(&app, MAIN_WINDOW_LABEL),
+            app.state::<Scheduler>(),
+            "/no/such/plugin.json".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("failed to read plugin file"));
+    }
+
+    #[tokio::test]
+    async fn install_rejects_a_malformed_manifest_before_any_dialog() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let app = wrap_in_mock_app(sched);
+        let dir = temp_dir();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, b"{ not a manifest").unwrap();
+        let err = install_content_plugin(
+            app.handle().clone(),
+            webview(&app, MAIN_WINDOW_LABEL),
+            app.state::<Scheduler>(),
+            path.display().to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("not a valid plugin manifest"));
+    }
+
+    /// Write a validly-signed content-plugin manifest to a temp file and
+    /// return its path. Lets the install command get past `prepare_content_
+    /// install` to the dialog-guard logic.
+    fn write_signed_content_plugin(dir: &std::path::Path) -> String {
+        use crate::plugins::{signing_payload, Signature};
+        use crate::scheduler::content_pack::{ContentPack, PackHints, CONTENT_PACK_VERSION};
+        use base64::prelude::{Engine, BASE64_STANDARD};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let mut m = Manifest {
+            manifest_version: crate::plugins::MANIFEST_VERSION,
+            id: "com.example.signed".to_string(),
+            name: "Signed pack".to_string(),
+            version: "1.0.0".to_string(),
+            author: "Jane".to_string(),
+            description: String::new(),
+            kind: crate::plugins::PluginKind::Content,
+            module: None,
+            abi_version: None,
+            imports: vec![],
+            content: Some(ContentPack {
+                version: CONTENT_PACK_VERSION,
+                name: "Signed pack".to_string(),
+                hints: PackHints {
+                    micro_physical: vec!["Breathe".to_string()],
+                    ..PackHints::default()
+                },
+                routines: vec![],
+            }),
+            signature: Signature {
+                alg: "ed25519".to_string(),
+                public_key: String::new(),
+                sig: String::new(),
+            },
+        };
+        let key = SigningKey::from_bytes(&[11u8; 32]);
+        m.signature.public_key = BASE64_STANDARD.encode(key.verifying_key().to_bytes());
+        m.signature.sig = BASE64_STANDARD.encode(key.sign(&signing_payload(&m, None)).to_bytes());
+        let path = dir.join("signed.json");
+        std::fs::write(&path, serde_json::to_string(&m).unwrap()).unwrap();
+        path.display().to_string()
+    }
+
+    #[tokio::test]
+    async fn install_rejects_when_a_dialog_is_already_pending() {
+        // A valid signed plugin gets past prepare; with the dialog flag
+        // already set, the single-flight guard rejects before any dialog —
+        // exercising the guard branch without a blocking native prompt.
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        sched
+            .plugin_dialog_busy
+            .store(true, std::sync::atomic::Ordering::Release);
+        let app = wrap_in_mock_app(sched);
+        let dir = temp_dir();
+        let path = write_signed_content_plugin(dir.path());
+        let err = install_content_plugin(
+            app.handle().clone(),
+            webview(&app, MAIN_WINDOW_LABEL),
+            app.state::<Scheduler>(),
+            path,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("another plugin install is already pending"));
     }
 }

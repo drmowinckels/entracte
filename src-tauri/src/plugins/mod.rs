@@ -34,4 +34,4 @@ pub use manifest::{
     MANIFEST_VERSION, SUPPORTED_ABI_VERSION,
 };
 #[allow(unused_imports)]
-pub use signature::{sha256, verify_signature};
+pub use signature::{sha256, signing_payload, verify_signature};
