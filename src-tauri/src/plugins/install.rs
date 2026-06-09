@@ -76,6 +76,7 @@ mod tests {
             module: None,
             abi_version: None,
             imports: vec![],
+            detect: None,
             content: Some(pack()),
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
@@ -141,6 +142,7 @@ mod tests {
             module: Some("module.wasm".to_string()),
             abi_version: Some(crate::plugins::manifest::SUPPORTED_ABI_VERSION),
             imports: vec!["detect:foreground-window".to_string()],
+            detect: None,
             content: None,
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),

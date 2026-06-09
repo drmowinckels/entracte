@@ -108,6 +108,7 @@ mod tests {
             module: Some("module.wasm".to_string()),
             abi_version: Some(SUPPORTED_ABI_VERSION),
             imports: vec!["detect:foreground-window".to_string()],
+            detect: None,
             content: None,
             signature: Signature {
                 alg: "ed25519".to_string(),

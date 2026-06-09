@@ -121,6 +121,19 @@ impl Capability {
     }
 }
 
+/// Detector configuration: the parameters the host matches against when it
+/// computes a detector's gated booleans. Only meaningful for a detector
+/// plugin. The `detect:file:<path>` scope lives in the capability itself, so
+/// only the process pattern needs declaring here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DetectConfig {
+    /// Substring (case-insensitive) matched against running process names by
+    /// the `host_process_running` host function. Requires a `detect:processes`
+    /// import.
+    #[serde(default)]
+    pub process_name: Option<String>,
+}
+
 /// The detached signature over `canonical(manifest-without-signature)` plus
 /// the module hash. ed25519; keys and signature are base64.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,6 +163,8 @@ pub struct Manifest {
     pub abi_version: Option<u32>,
     #[serde(default)]
     pub imports: Vec<String>,
+    #[serde(default)]
+    pub detect: Option<DetectConfig>,
     #[serde(default)]
     pub content: Option<ContentPack>,
     pub signature: Signature,
@@ -273,6 +288,18 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
         }
     }
 
+    if let Some(detect) = &m.detect {
+        if m.kind != PluginKind::Detector {
+            return Err("only a detector plugin may carry a detect config".to_string());
+        }
+        if let Some(pattern) = &detect.process_name {
+            check_string(pattern, "detect process_name")?;
+            if !m.imports.iter().any(|i| i == "detect:processes") {
+                return Err("detect.process_name requires a 'detect:processes' import".to_string());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -300,6 +327,7 @@ mod tests {
             module: Some("module.wasm".to_string()),
             abi_version: Some(SUPPORTED_ABI_VERSION),
             imports: vec!["detect:foreground-window".to_string()],
+            detect: None,
             content: None,
             signature: sig(),
         }
@@ -317,6 +345,7 @@ mod tests {
             module: None,
             abi_version: None,
             imports: vec![],
+            detect: None,
             content: Some(sample_pack()),
             signature: sig(),
         }
@@ -534,6 +563,53 @@ mod tests {
         assert!(validate_manifest(&m)
             .unwrap_err()
             .contains("missing a version"));
+    }
+
+    #[test]
+    fn validate_accepts_a_detector_with_a_process_detect_config() {
+        let mut m = detector_manifest();
+        m.imports = vec!["detect:processes".to_string()];
+        m.detect = Some(DetectConfig {
+            process_name: Some("zoom".to_string()),
+        });
+        assert!(validate_manifest(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_detect_config_on_non_detector() {
+        let mut m = content_manifest();
+        m.detect = Some(DetectConfig::default());
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("only a detector plugin may carry a detect config"));
+    }
+
+    #[test]
+    fn validate_accepts_a_detector_with_an_empty_detect_config() {
+        let mut m = detector_manifest();
+        m.detect = Some(DetectConfig::default()); // no process_name → no extra requirement
+        assert!(validate_manifest(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_an_overlong_process_name() {
+        let mut m = detector_manifest();
+        m.imports = vec!["detect:processes".to_string()];
+        m.detect = Some(DetectConfig {
+            process_name: Some("a".repeat(MAX_STRING_LEN + 1)),
+        });
+        assert!(validate_manifest(&m).unwrap_err().contains("exceeds"));
+    }
+
+    #[test]
+    fn validate_rejects_process_name_without_the_processes_import() {
+        let mut m = detector_manifest(); // imports detect:foreground-window only
+        m.detect = Some(DetectConfig {
+            process_name: Some("zoom".to_string()),
+        });
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("requires a 'detect:processes' import"));
     }
 
     #[test]
