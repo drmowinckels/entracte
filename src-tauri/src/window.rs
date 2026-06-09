@@ -11,7 +11,7 @@ use tauri::{Manager, Runtime};
 ///
 /// Pure so the "which size forces a configure" decision is unit-testable
 /// without a windowing system; the actual `set_size` FFI stays in
-/// [`nudge_configure`].
+/// `nudge_configure` (Linux-only, so not linked here).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn nudged_dimension(value: u32) -> u32 {
     value.checked_add(1).unwrap_or_else(|| value - 1)
