@@ -934,6 +934,37 @@ body,
   font-size: 0.9rem;
 }
 
+.settings .plugin-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings .plugin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings .plugin-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings .plugin-name {
+  font-weight: 600;
+}
+
+.settings .plugin-sub {
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
 .settings .routine-categories {
   display: flex;
   flex-wrap: wrap;

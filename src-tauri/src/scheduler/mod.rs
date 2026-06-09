@@ -1,6 +1,6 @@
 mod break_stats;
 mod commands;
-mod content_pack;
+pub(crate) mod content_pack;
 mod hotkeys;
 mod overlay;
 mod pause;
@@ -35,6 +35,7 @@ pub use commands::backup::*;
 pub use commands::breaks::*;
 pub use commands::content_pack::*;
 pub use commands::hooks::*;
+pub use commands::plugins::*;
 pub use commands::profiles::*;
 pub use commands::settings::*;
 pub use commands::stats::*;
@@ -143,6 +144,14 @@ pub struct Scheduler {
     pub pause_path: PathBuf,
     pub events_path: PathBuf,
     pub screen_time_path: PathBuf,
+    /// Installed content plugins + the merge-and-track record of what each
+    /// added, persisted to `plugins.json` beside `settings.json`. See
+    /// `docs/developer/plugin-api-design.md`.
+    pub plugins_path: PathBuf,
+    pub plugins: Arc<Mutex<crate::plugins::PluginRegistry>>,
+    /// Single-flight guard for the plugin-install confirmation dialog,
+    /// mirroring [`Scheduler::hook_dialog_busy`].
+    pub plugin_dialog_busy: Arc<AtomicBool>,
     pub timers: Arc<Mutex<BreakTimers>>,
     pub stats: Arc<Mutex<BreakStats>>,
     pub screen_time: Arc<Mutex<InternalScreenTimeState>>,
@@ -188,6 +197,8 @@ impl Scheduler {
             crate::screen_time_store::load(&screen_time_path),
             &today,
         );
+        let plugins_path = plugins_path_for(&config_path);
+        let plugins = crate::plugin_store::load(&plugins_path);
         Self {
             settings: Arc::new(Mutex::new(initial)),
             pause_state: Arc::new(Mutex::new(pause_state)),
@@ -198,6 +209,9 @@ impl Scheduler {
             pause_path,
             events_path,
             screen_time_path,
+            plugins_path,
+            plugins: Arc::new(Mutex::new(plugins)),
+            plugin_dialog_busy: Arc::new(AtomicBool::new(false)),
             timers: Arc::new(Mutex::new(BreakTimers::new())),
             stats: Arc::new(Mutex::new(BreakStats::default())),
             screen_time: Arc::new(Mutex::new(screen_time)),
@@ -249,6 +263,9 @@ impl Scheduler {
             pause_path: dir.join("pause.json"),
             events_path: events_path.clone(),
             screen_time_path: dir.join("screen_time.json"),
+            plugins_path: dir.join("plugins.json"),
+            plugins: Arc::new(Mutex::new(crate::plugins::PluginRegistry::default())),
+            plugin_dialog_busy: Arc::new(AtomicBool::new(false)),
             timers: Arc::new(Mutex::new(BreakTimers::new())),
             stats: Arc::new(Mutex::new(BreakStats::default())),
             screen_time: Arc::new(Mutex::new(InternalScreenTimeState::from_snapshot(
@@ -286,5 +303,46 @@ pub async fn persist_profiles(sched: &Scheduler) {
             "config: failed to save {}: {e}",
             sched.config_path.display()
         );
+    }
+}
+
+/// The plugin registry lives beside `settings.json` in the same config dir.
+/// Derived rather than threaded through `Scheduler::new` so adding it didn't
+/// change the constructor signature.
+pub(crate) fn plugins_path_for(config_path: &std::path::Path) -> PathBuf {
+    match config_path.parent() {
+        Some(dir) => dir.join("plugins.json"),
+        None => PathBuf::from("plugins.json"),
+    }
+}
+
+/// Atomically persist the installed-plugin registry. Called after every
+/// install / uninstall so a crash never loses the merge-and-track record.
+pub async fn persist_plugins(sched: &Scheduler) {
+    let registry = sched.plugins.lock().await.clone();
+    if let Err(e) = crate::plugin_store::save(&sched.plugins_path, &registry) {
+        warn!(
+            "plugin_store: failed to save {}: {e}",
+            sched.plugins_path.display()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plugins_path_for;
+    use std::path::PathBuf;
+
+    #[test]
+    fn plugins_path_is_beside_settings() {
+        let p = plugins_path_for(&PathBuf::from("/cfg/dir/settings.json"));
+        assert_eq!(p, PathBuf::from("/cfg/dir/plugins.json"));
+    }
+
+    #[test]
+    fn plugins_path_falls_back_when_config_has_no_parent() {
+        let p = plugins_path_for(&PathBuf::from("settings.json"));
+        // A bare filename has a parent of "" — joining still yields the file.
+        assert_eq!(p.file_name().unwrap(), "plugins.json");
     }
 }

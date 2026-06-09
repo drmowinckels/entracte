@@ -11,6 +11,7 @@ mod media;
 mod notifications;
 mod pause_store;
 mod platform;
+mod plugin_store;
 mod plugins;
 mod proc;
 mod renderer_log;
@@ -148,6 +149,9 @@ pub fn run() {
             scheduler::import_backup_from_path,
             scheduler::import_content_pack,
             scheduler::export_content_pack,
+            scheduler::install_content_plugin,
+            scheduler::uninstall_plugin,
+            scheduler::list_plugins,
             scheduler::get_pause_info,
             scheduler::end_break,
             scheduler::trigger_test_break,

@@ -7,6 +7,7 @@ import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
 import { HotkeysSection } from "../components/hotkeys-section";
 import { HookRow } from "../components/hook-row";
+import { Plugins } from "../components/plugins";
 import type { UseHooks } from "../hooks/use-hooks";
 import type { UseSettings } from "../hooks/use-settings";
 import type { ClockFormat, HookConfig, SchedulerSettings } from "../types";
@@ -26,11 +27,13 @@ export function SystemTab({
   update,
   setAutostart,
   hooks,
+  reload,
 }: {
   settings: SchedulerSettings;
   update: UseSettings["update"];
   setAutostart: UseSettings["setAutostart"];
   hooks: UseHooks;
+  reload: () => Promise<unknown>;
 }) {
   // Stable IDs for hook rows so React keys survive reordering / mid-list edits.
   // The IDs are local UI state only; they never leave the component.
@@ -154,6 +157,11 @@ export function SystemTab({
             ))}
           </select>
         </label>
+      </section>
+
+      <h2>Plugins</h2>
+      <section>
+        <Plugins reload={reload} />
       </section>
 
       <Advanced label="Show advanced (hooks)">

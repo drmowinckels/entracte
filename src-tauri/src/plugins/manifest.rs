@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::scheduler::content_pack::{validate_pack, ContentPack};
+
 /// Manifest schema version this build reads and writes. Bumped only on a
 /// breaking change to the manifest shape.
 pub const MANIFEST_VERSION: u32 = 1;
@@ -128,9 +130,9 @@ pub struct Signature {
     pub sig: String,
 }
 
-/// A parsed plugin manifest. The `content` payload is left as a raw JSON
-/// value at this slice; the content-provider slice swaps in the typed
-/// `content_pack::ContentPack` when it wires the merge path.
+/// A parsed plugin manifest. A content plugin carries a typed
+/// [`ContentPack`] payload (validated via `content_pack::validate_pack`);
+/// code-bearing kinds carry a wasm `module` and declared `imports` instead.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Manifest {
     pub manifest_version: u32,
@@ -149,7 +151,7 @@ pub struct Manifest {
     #[serde(default)]
     pub imports: Vec<String>,
     #[serde(default)]
-    pub content: Option<serde_json::Value>,
+    pub content: Option<ContentPack>,
     pub signature: Signature,
 }
 
@@ -233,6 +235,9 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
         if m.imports.is_empty() {
             return Err("a code-bearing plugin must import at least one capability".to_string());
         }
+        if m.content.is_some() {
+            return Err("a code-bearing plugin must not carry a content payload".to_string());
+        }
     } else {
         // Content plugins are pure data: no module, no ABI, no capabilities.
         if m.module.is_some() {
@@ -244,8 +249,9 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
         if !m.imports.is_empty() {
             return Err("a content plugin must not import capabilities".to_string());
         }
-        if m.content.is_none() {
-            return Err("a content plugin must carry a content payload".to_string());
+        match &m.content {
+            Some(pack) => validate_pack(pack)?,
+            None => return Err("a content plugin must carry a content payload".to_string()),
         }
     }
 
@@ -311,8 +317,21 @@ mod tests {
             module: None,
             abi_version: None,
             imports: vec![],
-            content: Some(serde_json::json!({ "version": 1, "name": "p" })),
+            content: Some(sample_pack()),
             signature: sig(),
+        }
+    }
+
+    fn sample_pack() -> ContentPack {
+        use crate::scheduler::content_pack::PackHints;
+        ContentPack {
+            version: crate::scheduler::content_pack::CONTENT_PACK_VERSION,
+            name: "Idea pack".to_string(),
+            hints: PackHints {
+                micro_physical: vec!["Roll your shoulders".to_string()],
+                ..PackHints::default()
+            },
+            routines: vec![],
         }
     }
 
@@ -515,6 +534,15 @@ mod tests {
         assert!(validate_manifest(&m)
             .unwrap_err()
             .contains("missing a version"));
+    }
+
+    #[test]
+    fn validate_forbids_content_payload_on_code_bearing() {
+        let mut m = detector_manifest();
+        m.content = Some(sample_pack());
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must not carry a content payload"));
     }
 
     #[test]

@@ -56,6 +56,7 @@ function Harness({ initial }: { initial: HookConfig[] }) {
       update={() => {}}
       setAutostart={async () => {}}
       hooks={hooks}
+      reload={async () => {}}
     />
   );
 }
@@ -184,6 +185,7 @@ function renderTab(
       update={update as unknown as Parameters<typeof SystemTab>[0]["update"]}
       setAutostart={setAutostart}
       hooks={hooks}
+      reload={async () => {}}
     />,
   );
   return { ...utils, update, setAutostart, hooks, settings };
@@ -347,6 +349,7 @@ describe("SystemTab — Hooks editor", () => {
           isDirty: () => true,
           saving: true,
         })}
+        reload={async () => {}}
       />,
     );
     const waiting = screen.getByRole("button", {
@@ -366,6 +369,7 @@ describe("SystemTab — Hooks editor", () => {
           save,
           isDirty: () => false,
         })}
+        reload={async () => {}}
       />,
     );
     const idle = screen.getByRole("button", {

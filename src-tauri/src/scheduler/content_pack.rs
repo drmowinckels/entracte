@@ -159,10 +159,11 @@ pub fn validate_pack(pack: &ContentPack) -> Result<(), String> {
 }
 
 /// Append `additions` to `pool`, skipping blanks and exact duplicates
-/// (against both the existing pool and earlier additions). Returns the count
-/// actually added. Order-preserving and non-clobbering.
-fn merge_pool(pool: &mut Vec<String>, additions: &[String]) -> usize {
-    let mut added = 0;
+/// (against both the existing pool and earlier additions). Returns the
+/// strings actually added (so an uninstall can remove exactly those).
+/// Order-preserving and non-clobbering.
+fn merge_pool(pool: &mut Vec<String>, additions: &[String]) -> Vec<String> {
+    let mut added = Vec::new();
     for hint in additions {
         let trimmed = hint.trim();
         if trimmed.is_empty() {
@@ -172,43 +173,112 @@ fn merge_pool(pool: &mut Vec<String>, additions: &[String]) -> usize {
             continue;
         }
         pool.push(hint.clone());
-        added += 1;
+        added.push(hint.clone());
     }
     added
 }
 
-/// Merge a validated pack into `settings`: append hints to each pool and add
-/// routines to `custom_routines`, skipping ids that collide with a bundled
-/// starter or an already-present custom routine. Non-destructive — nothing is
-/// removed or overwritten. Returns what was added.
-pub fn merge_pack(pack: &ContentPack, settings: &mut Settings) -> MergeSummary {
-    let mut summary = MergeSummary::default();
-    summary.hints_added += merge_pool(
-        &mut settings.micro_physical_hints,
-        &pack.hints.micro_physical,
-    );
-    summary.hints_added += merge_pool(
-        &mut settings.micro_psychological_hints,
-        &pack.hints.micro_psychological,
-    );
-    summary.hints_added += merge_pool(&mut settings.long_hints, &pack.hints.long_solo);
-    summary.hints_added += merge_pool(&mut settings.long_social_hints, &pack.hints.long_social);
-    summary.hints_added += merge_pool(&mut settings.sleep_hints, &pack.hints.sleep);
+/// The concrete content a merge added, so an uninstall can remove exactly
+/// those entries (the merge-and-track model). Mirrors [`PackHints`] plus the
+/// ids of routines that were appended to `custom_routines`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AddedContent {
+    #[serde(default)]
+    pub micro_physical: Vec<String>,
+    #[serde(default)]
+    pub micro_psychological: Vec<String>,
+    #[serde(default)]
+    pub long_solo: Vec<String>,
+    #[serde(default)]
+    pub long_social: Vec<String>,
+    #[serde(default)]
+    pub sleep: Vec<String>,
+    #[serde(default)]
+    pub routine_ids: Vec<String>,
+}
 
-    let mut taken: std::collections::HashSet<String> = starter_routines()
-        .into_iter()
-        .map(|r| r.id)
-        .chain(settings.custom_routines.iter().map(|r| r.id.clone()))
-        .collect();
-    for r in &pack.routines {
-        if taken.contains(&r.id) {
-            continue;
-        }
-        taken.insert(r.id.clone());
-        settings.custom_routines.push(r.clone());
-        summary.routines_added += 1;
+/// Merge a validated pack into `settings`, recording exactly what was added.
+/// Append hints to each pool and routines to `custom_routines`, skipping ids
+/// that collide with a bundled starter or an already-present custom routine.
+/// Non-destructive — nothing is removed or overwritten. Returns the summary
+/// counts plus the concrete [`AddedContent`] for a later [`remove_content`].
+pub fn merge_pack_tracked(
+    pack: &ContentPack,
+    settings: &mut Settings,
+) -> (MergeSummary, AddedContent) {
+    let added = AddedContent {
+        micro_physical: merge_pool(
+            &mut settings.micro_physical_hints,
+            &pack.hints.micro_physical,
+        ),
+        micro_psychological: merge_pool(
+            &mut settings.micro_psychological_hints,
+            &pack.hints.micro_psychological,
+        ),
+        long_solo: merge_pool(&mut settings.long_hints, &pack.hints.long_solo),
+        long_social: merge_pool(&mut settings.long_social_hints, &pack.hints.long_social),
+        sleep: merge_pool(&mut settings.sleep_hints, &pack.hints.sleep),
+        routine_ids: {
+            let mut taken: std::collections::HashSet<String> = starter_routines()
+                .into_iter()
+                .map(|r| r.id)
+                .chain(settings.custom_routines.iter().map(|r| r.id.clone()))
+                .collect();
+            let mut ids = Vec::new();
+            for r in &pack.routines {
+                if taken.contains(&r.id) {
+                    continue;
+                }
+                taken.insert(r.id.clone());
+                settings.custom_routines.push(r.clone());
+                ids.push(r.id.clone());
+            }
+            ids
+        },
+    };
+    let summary = MergeSummary {
+        hints_added: added.micro_physical.len()
+            + added.micro_psychological.len()
+            + added.long_solo.len()
+            + added.long_social.len()
+            + added.sleep.len(),
+        routines_added: added.routine_ids.len(),
+    };
+    (summary, added)
+}
+
+/// Merge a validated pack into `settings`, returning only the summary counts.
+/// Thin wrapper over [`merge_pack_tracked`] for the content-pack import path,
+/// which has no uninstall and so doesn't need the [`AddedContent`] record.
+pub fn merge_pack(pack: &ContentPack, settings: &mut Settings) -> MergeSummary {
+    merge_pack_tracked(pack, settings).0
+}
+
+/// Remove exactly the content recorded in `added` from `settings` (the
+/// uninstall half of merge-and-track): drop the recorded hint strings from
+/// each pool and the recorded routine ids from `custom_routines`. Tolerant
+/// of intervening user edits — anything already gone is simply skipped.
+/// Returns `(hints_removed, routines_removed)`.
+pub fn remove_content(settings: &mut Settings, added: &AddedContent) -> (usize, usize) {
+    fn drop_all(pool: &mut Vec<String>, remove: &[String]) -> usize {
+        let before = pool.len();
+        pool.retain(|h| !remove.contains(h));
+        before - pool.len()
     }
-    summary
+    let hints_removed = drop_all(&mut settings.micro_physical_hints, &added.micro_physical)
+        + drop_all(
+            &mut settings.micro_psychological_hints,
+            &added.micro_psychological,
+        )
+        + drop_all(&mut settings.long_hints, &added.long_solo)
+        + drop_all(&mut settings.long_social_hints, &added.long_social)
+        + drop_all(&mut settings.sleep_hints, &added.sleep);
+    let before = settings.custom_routines.len();
+    settings
+        .custom_routines
+        .retain(|r| !added.routine_ids.contains(&r.id));
+    let routines_removed = before - settings.custom_routines.len();
+    (hints_removed, routines_removed)
 }
 
 /// Build a content pack capturing the user's current pools + custom routines,
@@ -383,6 +453,68 @@ mod tests {
         assert_eq!(dst.long_social_hints, src.long_social_hints);
         assert_eq!(dst.sleep_hints, src.sleep_hints);
         assert_eq!(dst.custom_routines, src.custom_routines);
+    }
+
+    #[test]
+    fn merge_pack_tracked_records_exact_additions() {
+        let mut s = Settings {
+            micro_physical_hints: Vec::new(),
+            sleep_hints: Vec::new(),
+            custom_routines: Vec::new(),
+            ..Settings::default()
+        };
+        let pack = pack_with(
+            vec![sample_routine("rt-a")],
+            PackHints {
+                micro_physical: vec!["Stand up".to_string()],
+                sleep: vec!["Dim the lights".to_string()],
+                ..PackHints::default()
+            },
+        );
+        let (summary, added) = merge_pack_tracked(&pack, &mut s);
+        assert_eq!(summary.hints_added, 2);
+        assert_eq!(summary.routines_added, 1);
+        assert_eq!(added.micro_physical, vec!["Stand up".to_string()]);
+        assert_eq!(added.sleep, vec!["Dim the lights".to_string()]);
+        assert_eq!(added.routine_ids, vec!["rt-a".to_string()]);
+    }
+
+    #[test]
+    fn remove_content_undoes_a_tracked_merge() {
+        let mut s = Settings::default();
+        let before_physical = s.micro_physical_hints.clone();
+        let before_routines = s.custom_routines.len();
+        let pack = pack_with(
+            vec![sample_routine("rt-x")],
+            PackHints {
+                micro_physical: vec!["A brand-new idea".to_string()],
+                ..PackHints::default()
+            },
+        );
+        let (_, added) = merge_pack_tracked(&pack, &mut s);
+        assert!(s
+            .micro_physical_hints
+            .contains(&"A brand-new idea".to_string()));
+
+        let (hints_removed, routines_removed) = remove_content(&mut s, &added);
+        assert_eq!(hints_removed, 1);
+        assert_eq!(routines_removed, 1);
+        // Back to exactly the pre-merge state — no collateral removal.
+        assert_eq!(s.micro_physical_hints, before_physical);
+        assert_eq!(s.custom_routines.len(), before_routines);
+    }
+
+    #[test]
+    fn remove_content_tolerates_entries_the_user_already_deleted() {
+        let mut s = Settings::default();
+        let added = AddedContent {
+            micro_physical: vec!["never present".to_string()],
+            routine_ids: vec!["ghost".to_string()],
+            ..AddedContent::default()
+        };
+        let (hints_removed, routines_removed) = remove_content(&mut s, &added);
+        assert_eq!(hints_removed, 0);
+        assert_eq!(routines_removed, 0);
     }
 
     #[test]
