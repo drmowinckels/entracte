@@ -489,7 +489,7 @@ pub struct Settings {
     pub show_hint: bool,
     pub monitor_placement: MonitorPlacement,
     /// Fraction of the monitor a windowed-mode break overlay fills,
-    /// clamped to `[0.1, 1.0]` by [`centered_windowed_rect`]. Defaults to
+    /// clamped to `[0.1, 1.0]` by [`crate::scheduler::overlay::centered_windowed_rect`]. Defaults to
     /// `0.8` — the historical hardcoded value — so existing users see no
     /// change. Per-kind overrides below take precedence when set; the
     /// effective value is resolved by [`windowed_fraction_for`].
@@ -1063,7 +1063,7 @@ pub fn is_windowed_mode(kind: BreakKind, s: &Settings) -> bool {
 /// Resolve the windowed-overlay size fraction for a break kind: the
 /// per-kind override when set, otherwise the global `windowed_fraction`.
 /// The result is clamped to `[0.1, 1.0]` (matching
-/// [`centered_windowed_rect`]) so a corrupt on-disk value can't size the
+/// [`crate::scheduler::overlay::centered_windowed_rect`]) so a corrupt on-disk value can't size the
 /// overlay off-screen. Sleep has no override and falls back to the global
 /// value (it never renders windowed anyway).
 pub fn windowed_fraction_for(kind: BreakKind, s: &Settings) -> f64 {
