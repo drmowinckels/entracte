@@ -96,7 +96,7 @@ impl Capability {
         }
     }
 
-    /// The canonical manifest/consent string form, round-tripping [`parse`].
+    /// The canonical manifest/consent string form, round-tripping [`Self::parse`].
     pub fn as_string(&self) -> String {
         match self {
             Capability::DetectForegroundWindow => "detect:foreground-window".to_string(),
