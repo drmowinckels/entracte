@@ -19,7 +19,10 @@ use sha2::{Digest, Sha256};
 use super::manifest::Manifest;
 
 /// SHA-256 of `bytes`, as a fixed 32-byte array. Used to hash a plugin's
-/// wasm module for inclusion in the signed payload.
+/// wasm module for inclusion in the signed payload. Only code-bearing
+/// plugins ship a module, so this has no non-test caller until the runtime
+/// slice; content plugins sign over the manifest alone.
+#[allow(dead_code)]
 pub fn sha256(bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(bytes);

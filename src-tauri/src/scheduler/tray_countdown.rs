@@ -321,6 +321,9 @@ mod tests {
             pause_path,
             events_path,
             screen_time_path,
+            plugins_path: dir.path().join("plugins.json"),
+            plugins: Arc::new(TokioMutex::new(crate::plugins::PluginRegistry::default())),
+            plugin_dialog_busy: Arc::new(AtomicBool::new(false)),
             timers: Arc::new(TokioMutex::new(BreakTimers::new())),
             stats: Arc::new(TokioMutex::new(BreakStats::default())),
             screen_time: Arc::new(TokioMutex::new(ScreenTimeState::from_snapshot(

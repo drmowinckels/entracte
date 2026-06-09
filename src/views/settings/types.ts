@@ -85,6 +85,25 @@ export type ContentPackSummary = {
   routines_added: number;
 };
 
+export type PluginKind = "content" | "detector" | "export";
+
+export type PluginSummary = {
+  id: string;
+  name: string;
+  author: string;
+  version: string;
+  kind: PluginKind;
+  hints_added: number;
+  routines_added: number;
+};
+
+export type InstallOutcome = {
+  id: string;
+  name: string;
+  hints_added: number;
+  routines_added: number;
+};
+
 export type SchedulerSettings = {
   micro_interval_secs: number;
   micro_duration_secs: number;

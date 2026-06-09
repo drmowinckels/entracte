@@ -140,6 +140,7 @@ export default function Settings() {
                 update={update}
                 setAutostart={setAutostart}
                 hooks={hooks}
+                reload={reloadFromActive}
               />
             </div>
             <div
