@@ -145,7 +145,7 @@ pub fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{nudged_dimension, WaylandFix};
+    use super::{nudged_dimension, wayland_fix_strategy, WaylandFix, WL_FIX_ENV};
 
     #[test]
     fn grows_normal_dimension_by_one() {
@@ -193,6 +193,16 @@ mod tests {
             WaylandFix::Titlebar
         );
         assert_eq!(WaylandFix::from_env_value(Some("nudge")), WaylandFix::Nudge);
+    }
+
+    #[test]
+    fn strategy_reads_the_process_environment() {
+        // Only this test touches ENTRACTE_WL_FIX, so mutating the
+        // process-global env can't race another test reading it.
+        std::env::set_var(WL_FIX_ENV, "maximize");
+        assert_eq!(wayland_fix_strategy(), WaylandFix::Maximize);
+        std::env::remove_var(WL_FIX_ENV);
+        assert_eq!(wayland_fix_strategy(), WaylandFix::Nudge);
     }
 
     #[test]
