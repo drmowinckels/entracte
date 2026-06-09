@@ -72,21 +72,6 @@ pub fn host_function_name(cap: &Capability) -> &'static str {
     }
 }
 
-/// The distinct host-function names the granted capabilities unlock, in a
-/// stable order with duplicates removed (two `detect:file:<path>` grants map
-/// to one `host_read_flag`). Pure — the registration list without a wasm
-/// engine.
-pub fn host_function_names_for(grants: &[Capability]) -> Vec<&'static str> {
-    let mut names = Vec::new();
-    for cap in grants {
-        let name = host_function_name(cap);
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    names
-}
-
 /// Set the single i64 output of a host function to a boolean (1/0).
 fn set_bool(outputs: &mut [Val], value: bool) {
     if let Some(out) = outputs.first_mut() {
@@ -108,11 +93,36 @@ fn host_stub(
     Ok(())
 }
 
-/// Register the host function a single capability unlocks, with a body that's
-/// scope-checked by construction: the data each closure needs (the process
-/// pattern, the granted file path) is captured here from the grant + context,
-/// never supplied by the module. All host functions are `() -> i64` booleans
-/// in this ABI.
+/// Register a `() -> i64` boolean host function whose answer is `probe(data)`.
+/// `data` is captured host-side from the grant/context — never supplied by
+/// the module — so the probe is scope-checked by construction.
+fn register_probe<'a, T, F>(
+    builder: PluginBuilder<'a>,
+    name: &str,
+    data: T,
+    probe: F,
+) -> PluginBuilder<'a>
+where
+    T: Send + Sync + 'static,
+    F: Fn(&T) -> bool + Send + Sync + 'static,
+{
+    builder.with_function(
+        name,
+        [],
+        [ValType::I64],
+        UserData::new(data),
+        move |_p, _in, out, ud| {
+            let guard = ud.get()?;
+            set_bool(out, probe(&guard.lock().unwrap()));
+            Ok(())
+        },
+    )
+}
+
+/// Register the host function a single capability unlocks. All host functions
+/// are `() -> i64` booleans in this ABI; the data each one reads (the process
+/// pattern, the granted file path) is captured from the grant + context, so a
+/// module cannot influence what's probed.
 fn register_capability<'a>(
     builder: PluginBuilder<'a>,
     cap: &Capability,
@@ -122,33 +132,14 @@ fn register_capability<'a>(
     match cap {
         Capability::DetectProcesses => {
             let pattern = ctx.process_pattern.clone().unwrap_or_default();
-            builder.with_function(
-                name,
-                [],
-                [ValType::I64],
-                UserData::new(pattern),
-                |_p, _in, out, ud| {
-                    let data = ud.get()?;
-                    let pattern = data.lock().unwrap();
-                    set_bool(out, detect::process_running(&pattern));
-                    Ok(())
-                },
-            )
+            register_probe(builder, name, pattern, |p: &String| {
+                detect::process_running(p)
+            })
         }
         Capability::DetectFile(path) => {
-            let path = PathBuf::from(path);
-            builder.with_function(
-                name,
-                [],
-                [ValType::I64],
-                UserData::new(path),
-                |_p, _in, out, ud| {
-                    let data = ud.get()?;
-                    let path = data.lock().unwrap();
-                    set_bool(out, detect::read_flag(&path));
-                    Ok(())
-                },
-            )
+            register_probe(builder, name, PathBuf::from(path), |p: &PathBuf| {
+                detect::read_flag(p)
+            })
         }
         // Foreground-window and the export sinks are stubbed until their
         // slices; registered (gated) but inert.
@@ -205,19 +196,6 @@ mod tests {
     }
 
     #[test]
-    fn host_function_names_dedupe_and_map_per_capability() {
-        let grants = vec![
-            Capability::DetectForegroundWindow,
-            Capability::DetectFile("/a".to_string()),
-            Capability::DetectFile("/b".to_string()), // same host fn → one entry
-        ];
-        assert_eq!(
-            host_function_names_for(&grants),
-            vec!["host_foreground_window", "host_read_flag"]
-        );
-    }
-
-    #[test]
     fn host_function_name_covers_every_capability() {
         for cap in [
             Capability::DetectForegroundWindow,
@@ -268,18 +246,16 @@ mod tests {
 
     #[test]
     fn host_process_running_reports_a_live_process_to_the_module() {
-        let exe = std::env::current_exe().unwrap();
-        let stem = exe.file_stem().unwrap().to_string_lossy().to_string();
-        let needle = stem[..stem.len().min(6)].to_string();
-
-        // Pattern matches a live process (this test binary) → host returns
-        // true → the module traps → the call errors.
+        // "entracte" is a whole token of the test binary's process name on
+        // every platform (see the detect.rs test for the rationale).
+        // Pattern matches a live process → host returns true → the module
+        // traps → the call errors.
         let module = trap_if_true_module("host_process_running");
         let mut plugin = build_sandboxed_plugin(
             &module,
             &[Capability::DetectProcesses],
             &SandboxContext {
-                process_pattern: Some(needle),
+                process_pattern: Some("entracte".to_string()),
             },
         )
         .expect("granted detect:processes builds");

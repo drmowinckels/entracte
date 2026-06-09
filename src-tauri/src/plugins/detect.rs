@@ -16,15 +16,13 @@ use std::path::Path;
 
 use sysinfo::{ProcessesToUpdate, System};
 
-/// Case-insensitive substring match of `target` within `running`. Empty
-/// `target` never matches. Pure — the testable core of the process probe.
-pub fn name_matches(running_lower: &str, target_lower: &str) -> bool {
-    !target_lower.is_empty() && running_lower.contains(target_lower)
-}
+use crate::proc_match::process_match_lower;
 
-/// Whether any running process's name matches `pattern` (case-insensitive
-/// substring). Refreshes the process list on each call; callers throttle.
-/// Cross-platform via `sysinfo`, so no per-OS shim.
+/// Whether any running process's name matches `pattern`, using the same
+/// token-aware semantics as the app-pause guard ([`process_match_lower`]) —
+/// so `zoom` matches Zoom but not `zoominfo`. Refreshes the process list on
+/// each call; callers throttle. Cross-platform via `sysinfo`, so no per-OS
+/// shim.
 pub fn process_running(pattern: &str) -> bool {
     let target = pattern.trim().to_lowercase();
     if target.is_empty() {
@@ -34,7 +32,7 @@ pub fn process_running(pattern: &str) -> bool {
     sys.refresh_processes(ProcessesToUpdate::All, false);
     sys.processes().values().any(|p| {
         let name = p.name().to_string_lossy().to_lowercase();
-        name_matches(&name, &target)
+        process_match_lower(&name, &target)
     })
 }
 
@@ -53,27 +51,16 @@ pub fn flag_is_truthy(contents: &str) -> bool {
 
 /// Whether the sentinel file at `path` exists and holds a truthy value. A
 /// missing, oversized, or unreadable file reads as `false` (no signal).
+/// Reuses [`crate::secure_io::read_capped`] for the size-bounded read.
 pub fn read_flag(path: &Path) -> bool {
-    match std::fs::metadata(path) {
-        Ok(meta) if meta.is_file() && meta.len() <= MAX_FLAG_BYTES => {}
-        _ => return false,
-    }
-    match std::fs::read_to_string(path) {
-        Ok(contents) => flag_is_truthy(&contents),
-        Err(_) => false,
-    }
+    crate::secure_io::read_capped(path, MAX_FLAG_BYTES)
+        .map(|contents| flag_is_truthy(&contents))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn name_matches_is_substring_and_rejects_empty() {
-        assert!(name_matches("my-focus-app", "focus"));
-        assert!(!name_matches("anything", ""));
-        assert!(!name_matches("editor", "browser"));
-    }
 
     #[test]
     fn flag_truthy_accepts_known_tokens_only() {
@@ -87,14 +74,11 @@ mod tests {
 
     #[test]
     fn process_running_finds_the_current_process_and_misses_a_bogus_one() {
-        // The test binary is itself a running process, so its own name is a
-        // reliable cross-platform positive. A random name is a reliable
-        // negative.
-        let exe = std::env::current_exe().unwrap();
-        let stem = exe.file_stem().unwrap().to_string_lossy().to_string();
-        // Use a distinctive substring of the test binary's name.
-        let needle = &stem[..stem.len().min(6)];
-        assert!(process_running(needle), "should find self by '{needle}'");
+        // The test binary's name carries "entracte" as a whole token on every
+        // platform (the cargo target is `entracte[_lib]-<hash>`, and it fits
+        // inside Linux's 15-char `comm`), so token-aware matching finds it. A
+        // multi-token bogus target uses substring fallback and matches nothing.
+        assert!(process_running("entracte"), "should find the test binary");
         assert!(!process_running("entracte-no-such-process-zzz"));
         assert!(!process_running("   "));
     }

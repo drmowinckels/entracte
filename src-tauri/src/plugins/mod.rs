@@ -43,6 +43,6 @@ pub use signature::{sha256, signing_payload, verify_signature};
 // tested ahead of its consumers (the wat-driven tests exercise it directly).
 #[allow(unused_imports)]
 pub use runtime::{
-    build_sandboxed_plugin, host_function_name, host_function_names_for, SandboxContext,
-    DEFAULT_FUEL, DEFAULT_MEMORY_MAX_PAGES, DEFAULT_TIMEOUT,
+    build_sandboxed_plugin, host_function_name, SandboxContext, DEFAULT_FUEL,
+    DEFAULT_MEMORY_MAX_PAGES, DEFAULT_TIMEOUT,
 };

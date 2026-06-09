@@ -8,6 +8,7 @@ use user_idle::UserIdle;
 
 use crate::dnd;
 use crate::hooks::{self, HookContext, HookEvent};
+use crate::proc_match::process_match_lower;
 use crate::stats::{EventPayload, GuardReason, Logger};
 
 use super::overlay::deliver_break;
@@ -1030,42 +1031,6 @@ fn fixed_break_due(kind: BreakKind, s: &Settings, now_min: u32) -> bool {
     b.enabled && s.fixed_active(kind) && b.fixed_minutes.contains(&now_min)
 }
 
-// Case-insensitive token match for the app-pause list. We tokenise the
-// running process name on non-alphanumeric boundaries (`.`, `-`, `_`,
-// whitespace, path separators) and accept a target that EITHER equals a
-// token OR is the prefix of a token whose remainder is digits — the
-// `obs64.exe`/`chrome32` Windows versioning convention. That keeps
-// `zoom` matching Zoom (`zoom.us`, `Zoom Meeting Helper`) while
-// rejecting `zoominfo` and `azoomatic`. Multi-token targets (e.g.
-// `osascript -e`) fall back to substring so power-users can still
-// match a distinctive snippet.
-/// Case-insensitive token match assuming both arguments are already
-/// lowercased. The run loop pre-lowercases the target list once at
-/// settings load/update (`derived.app_pause_targets_lower`) and only
-/// lowercases the live process name per scan, so the hot path avoids
-/// re-lowercasing every configured target for every running process.
-fn process_match_lower(running_lower: &str, target_lower: &str) -> bool {
-    if target_lower.is_empty() {
-        return false;
-    }
-    let target_is_single_token = target_lower.chars().all(|c| c.is_alphanumeric());
-    if !target_is_single_token {
-        return running_lower.contains(target_lower);
-    }
-    running_lower
-        .split(|c: char| !c.is_alphanumeric())
-        .any(|tok| {
-            if tok == target_lower {
-                return true;
-            }
-            if let Some(suffix) = tok.strip_prefix(target_lower) {
-                !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
-            } else {
-                false
-            }
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::settings::ScheduleMode;
@@ -1075,14 +1040,6 @@ mod tests {
     // so a Windows build doesn't trip `-D unused-imports`.
     #[cfg(not(target_os = "windows"))]
     use super::super::settings::BreakMode;
-
-    /// Test-only convenience wrapper: lowercases both sides then defers to
-    /// the production `process_match_lower`. Lets the existing match tests
-    /// keep their raw (mixed-case) inputs while production stays on the
-    /// pre-lowercased hot path.
-    fn process_match(running: &str, target: &str) -> bool {
-        process_match_lower(&running.to_lowercase(), &target.to_lowercase())
-    }
 
     // Drives `deliver_scheduled_break` end to end through the
     // Notification delivery path — the one branch that doesn't enumerate
@@ -1417,89 +1374,6 @@ mod tests {
         s.rebuild_derived();
         assert!(!fixed_break_due(BreakKind::Micro, &s, 480));
         assert!(fixed_break_due(BreakKind::Micro, &s, 945));
-    }
-
-    #[test]
-    fn process_match_lower_equals_process_match_for_prelowercased_input() {
-        // The hot path calls `process_match_lower` with both sides already
-        // lowercased; it must return the same answer as the public wrapper
-        // for every case the wrapper covers.
-        let cases = [
-            ("zoom.us", "zoom", true),
-            ("OBS Studio", "obs", true),
-            ("zoominfo.exe", "zoom", false),
-            ("obs64.exe", "obs", true),
-            ("firefoxnightly.exe", "firefox", false),
-            ("/usr/bin/osascript -e foo", "osascript -e", true),
-            ("safari", "zoom", false),
-            ("zoom.us", "", false),
-        ];
-        for (running, target, expected) in cases {
-            assert_eq!(
-                process_match_lower(&running.to_lowercase(), &target.to_lowercase()),
-                expected,
-                "process_match_lower({running:?}, {target:?})"
-            );
-            // And the wrapper agrees, since the run loop relies on parity.
-            assert_eq!(process_match(running, target), expected);
-        }
-    }
-
-    #[test]
-    fn process_match_matches_whole_token() {
-        // Pre-fix this matched anything containing the substring.
-        assert!(process_match("zoom.us", "zoom"));
-        assert!(process_match("OBS Studio", "obs"));
-        assert!(process_match("zoom", "zoom"));
-        assert!(process_match(
-            "/Applications/zoom.us.app/Contents/MacOS/zoom.us",
-            "zoom"
-        ));
-        assert!(process_match("Zoom Meeting Helper", "zoom"));
-    }
-
-    #[test]
-    fn process_match_rejects_substring_collisions() {
-        // The motivating regression: a Zoom-pause rule should not silently
-        // also pause for ZoomInfo or unrelated tools that contain "zoom".
-        assert!(!process_match("zoominfo.exe", "zoom"));
-        assert!(!process_match("azoomatic", "zoom"));
-        assert!(!process_match("doomsday", "doom"));
-    }
-
-    #[test]
-    fn process_match_allows_digit_versioned_binaries() {
-        // Windows often versions binaries with a digit suffix — the OBS
-        // Studio binary is `obs64.exe`, Firefox ships `firefox64.exe`,
-        // etc. Users entering `obs` expect those to match.
-        assert!(process_match("obs64.exe", "obs"));
-        assert!(process_match("OBS32.exe", "obs"));
-        assert!(process_match("firefox64.exe", "firefox"));
-        // But `firefoxnightly.exe` should not — letters after the prefix.
-        assert!(!process_match("firefoxnightly.exe", "firefox"));
-    }
-
-    #[test]
-    fn process_match_rejects_unrelated_apps() {
-        assert!(!process_match("safari", "zoom"));
-        assert!(!process_match("", "zoom"));
-    }
-
-    #[test]
-    fn process_match_falls_back_to_substring_for_multi_token_targets() {
-        // Power-users who type a distinctive multi-token snippet expect
-        // substring semantics — splitting `osascript -e` into tokens would
-        // make it match anything with osascript or -e separately.
-        assert!(process_match("/usr/bin/osascript -e foo", "osascript -e"));
-        assert!(!process_match("osascript", "osascript -e"));
-    }
-
-    #[test]
-    fn process_match_empty_target_never_matches() {
-        // Defensive: a blank line in the pause list shouldn't pause for
-        // every process on the system.
-        assert!(!process_match("zoom.us", ""));
-        assert!(!process_match("", ""));
     }
 
     // Fix #1: anchoring `last_app_refresh` 60s before boot used to be
