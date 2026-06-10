@@ -16,6 +16,13 @@ mod types;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// How often the off-tick task re-evaluates installed detector plugins.
+/// Detectors gate breaks, which fire on the order of minutes, so a few
+/// seconds of latency on a context change is imperceptible while keeping the
+/// wasm work infrequent.
+const DETECTOR_EVAL_INTERVAL: Duration = Duration::from_secs(5);
 
 use log::warn;
 use tauri::AppHandle;
@@ -135,6 +142,11 @@ pub struct Scheduler {
     pub pause_state: Arc<Mutex<PauseState>>,
     pub camera_active: Arc<AtomicBool>,
     pub video_active: Arc<AtomicBool>,
+    /// Whether any installed detector plugin currently votes to suppress
+    /// breaks. Written by the off-tick detector-eval task, read by the 1Hz
+    /// loop's suppression chain — like `camera_active`, an atomic so the
+    /// per-tick read is free.
+    pub plugin_suppress: Arc<AtomicBool>,
     /// 0 = not auto-suppressed; otherwise `SuppressReason::from_u8`
     /// decodes which guard fired. The tray reads this each tick to
     /// pick between the Inactive icon + reason tooltip vs the Normal
@@ -204,6 +216,7 @@ impl Scheduler {
             pause_state: Arc::new(Mutex::new(pause_state)),
             camera_active,
             video_active,
+            plugin_suppress: Arc::new(AtomicBool::new(false)),
             auto_suppress_reason,
             config_path,
             pause_path,
@@ -232,6 +245,39 @@ impl Scheduler {
         tauri::async_runtime::spawn(async move {
             run_loop::run_loop(app, me).await;
         });
+        self.spawn_detector_eval();
+    }
+
+    /// Run the installed detector plugins off the 1Hz tick, on a throttled
+    /// interval, and publish their aggregate verdict to `plugin_suppress` for
+    /// the run loop to read. The wasm work happens on a blocking thread so it
+    /// never stalls the scheduler tick; building/running a detector is
+    /// fail-closed (a broken detector never suppresses). No detectors → the
+    /// flag is cleared and the loop short-circuits.
+    fn spawn_detector_eval(&self) {
+        let registry = self.plugins.clone();
+        let plugins_path = self.plugins_path.clone();
+        let suppress = self.plugin_suppress.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(DETECTOR_EVAL_INTERVAL);
+            loop {
+                interval.tick().await;
+                let snapshots = registry.lock().await.detector_snapshots();
+                if snapshots.is_empty() {
+                    suppress.store(false, Ordering::Relaxed);
+                    continue;
+                }
+                let path = plugins_path.clone();
+                let verdict = tauri::async_runtime::spawn_blocking(move || {
+                    crate::plugins::any_detector_suppresses(&snapshots, |id| {
+                        crate::plugin_store::load_module(&path, id).ok()
+                    })
+                })
+                .await
+                .unwrap_or(false);
+                suppress.store(verdict, Ordering::Relaxed);
+            }
+        });
     }
 
     /// Sibling of `Scheduler::new` for the integration-test rig
@@ -258,6 +304,7 @@ impl Scheduler {
             pause_state: Arc::new(Mutex::new(PauseState::Running)),
             camera_active: Arc::new(AtomicBool::new(false)),
             video_active: Arc::new(AtomicBool::new(false)),
+            plugin_suppress: Arc::new(AtomicBool::new(false)),
             auto_suppress_reason: Arc::new(AtomicU8::new(0)),
             config_path: dir.join("settings.json"),
             pause_path: dir.join("pause.json"),

@@ -31,6 +31,7 @@ pub enum GuardReason {
     AppPause,
     Typing,
     Video,
+    Plugin,
 }
 
 impl GuardReason {
@@ -42,6 +43,7 @@ impl GuardReason {
             GuardReason::AppPause => "Paused-app running",
             GuardReason::Typing => "Actively typing",
             GuardReason::Video => "Video playing",
+            GuardReason::Plugin => "Plugin detector",
         }
     }
 }
@@ -586,6 +588,7 @@ fn guard_str(g: GuardReason) -> &'static str {
         GuardReason::AppPause => "app_pause",
         GuardReason::Typing => "typing",
         GuardReason::Video => "video",
+        GuardReason::Plugin => "plugin",
     }
 }
 

@@ -36,6 +36,23 @@ pub fn save_module(registry_path: &Path, id: &str, bytes: &[u8]) -> io::Result<(
     write_user_only(&module_path(registry_path, id), bytes)
 }
 
+/// Cap on a module read back from disk — matches the install-time decode cap.
+const MAX_MODULE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Read a plugin's wasm module from disk (size-capped). Errors if missing,
+/// oversized, or unreadable — callers treat that as "no detector to run".
+pub fn load_module(registry_path: &Path, id: &str) -> io::Result<Vec<u8>> {
+    let path = module_path(registry_path, id);
+    let meta = std::fs::metadata(&path)?;
+    if meta.len() > MAX_MODULE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plugin module exceeds the size cap",
+        ));
+    }
+    std::fs::read(&path)
+}
+
 /// Remove a plugin's module file. Missing is fine (idempotent uninstall).
 pub fn delete_module(registry_path: &Path, id: &str) {
     let path = module_path(registry_path, id);
@@ -115,6 +132,24 @@ mod tests {
         assert!(!mp.exists());
         // Idempotent: deleting again is a no-op, not an error.
         delete_module(&path, "com.x.detector");
+    }
+
+    #[test]
+    fn load_module_reads_saved_and_errors_on_missing_or_oversized() {
+        let (_d, path) = temp_path();
+        assert!(load_module(&path, "com.x.det").is_err(), "missing → err");
+
+        save_module(&path, "com.x.det", b"\0asm bytes").unwrap();
+        assert_eq!(load_module(&path, "com.x.det").unwrap(), b"\0asm bytes");
+
+        save_module(
+            &path,
+            "com.x.big",
+            &vec![0u8; (MAX_MODULE_BYTES + 1) as usize],
+        )
+        .unwrap();
+        let err = load_module(&path, "com.x.big").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]

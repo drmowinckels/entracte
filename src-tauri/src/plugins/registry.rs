@@ -105,6 +105,26 @@ impl PluginRegistry {
     pub fn summaries(&self) -> Vec<PluginSummary> {
         self.plugins.iter().map(PluginSummary::from).collect()
     }
+
+    /// What the off-tick eval task needs for each installed detector: id (to
+    /// load its module), parsed granted capabilities (to rebuild the sandbox),
+    /// and the process pattern. Capability strings that fail to parse are
+    /// dropped — they were validated at install, so this is belt-and-braces.
+    pub fn detector_snapshots(&self) -> Vec<super::eval::DetectorSnapshot> {
+        self.plugins
+            .iter()
+            .filter(|p| p.kind == PluginKind::Detector)
+            .map(|p| super::eval::DetectorSnapshot {
+                id: p.id.clone(),
+                capabilities: p
+                    .capabilities
+                    .iter()
+                    .filter_map(|c| super::manifest::Capability::parse(c).ok())
+                    .collect(),
+                process_pattern: p.detect.as_ref().and_then(|d| d.process_name.clone()),
+            })
+            .collect()
+    }
 }
 
 /// What the Settings UI shows per installed plugin. Counts come from the
@@ -160,6 +180,38 @@ mod tests {
             capabilities: Vec::new(),
             detect: None,
         }
+    }
+
+    fn detector_record(id: &str) -> InstalledPlugin {
+        InstalledPlugin {
+            id: id.to_string(),
+            name: "Detector".to_string(),
+            author: "Me".to_string(),
+            version: "1.0.0".to_string(),
+            kind: PluginKind::Detector,
+            public_key: "AA==".to_string(),
+            added: AddedContent::default(),
+            // One valid capability + one junk string that must be dropped.
+            capabilities: vec!["detect:processes".to_string(), "garbage".to_string()],
+            detect: Some(DetectConfig {
+                process_name: Some("zoom".to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn detector_snapshots_parses_caps_and_excludes_content() {
+        use super::super::manifest::Capability;
+        let mut reg = PluginRegistry::default();
+        reg.insert(record("com.x.content")); // content → excluded
+        reg.insert(detector_record("com.x.det"));
+
+        let snaps = reg.detector_snapshots();
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].id, "com.x.det");
+        // The junk capability string was dropped; the valid one parsed.
+        assert_eq!(snaps[0].capabilities, vec![Capability::DetectProcesses]);
+        assert_eq!(snaps[0].process_pattern, Some("zoom".to_string()));
     }
 
     #[test]

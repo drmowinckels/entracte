@@ -317,6 +317,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
             camera_live,
             video_live,
             app_pause_active,
+            sched.plugin_suppress.load(Ordering::Relaxed),
         ) {
             let mut t = sched.timers.lock().await;
             if let Some(guard_reason) = outcome.log_as {
@@ -718,6 +719,7 @@ pub(super) fn evaluate_guards(
     camera_active: bool,
     video_active: bool,
     app_pause_active: bool,
+    plugin_suppress: bool,
 ) -> Option<GuardOutcome> {
     if s.work_window_enabled && !in_window(now_min, s.work_start_minutes, s.work_end_minutes) {
         return Some(GuardOutcome {
@@ -747,6 +749,15 @@ pub(super) fn evaluate_guards(
         return Some(GuardOutcome {
             reason: SuppressReason::AppPause,
             log_as: Some(GuardReason::AppPause),
+        });
+    }
+    // A detector plugin voted to suppress. No settings gate: installing a
+    // detector (with consent) is the opt-in, and `plugin_suppress` is only
+    // true when an installed detector's `detect()` returned a verdict.
+    if plugin_suppress {
+        return Some(GuardOutcome {
+            reason: SuppressReason::Plugin,
+            log_as: Some(GuardReason::Plugin),
         });
     }
     None
@@ -1808,7 +1819,7 @@ mod tests {
     #[test]
     fn evaluate_guards_returns_none_when_all_off() {
         let s = settings_for_guards(false, false, false, false, false);
-        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true).is_none());
+        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true, false).is_none());
     }
 
     #[test]
@@ -1816,7 +1827,9 @@ mod tests {
         // work_window_enabled with a current minute inside [start,end)
         // is the happy path — no suppression.
         let s = settings_for_guards(true, false, false, false, false);
-        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false).is_none());
+        assert!(
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false, false).is_none()
+        );
     }
 
     #[test]
@@ -1824,7 +1837,8 @@ mod tests {
         // Outside-hours suppression doesn't log — it's a scheduled
         // silence, not an unexpected event.
         let s = settings_for_guards(true, false, false, false, false);
-        let outcome = evaluate_guards(&s, OUTSIDE_WORK_WINDOW, false, false, false, false).unwrap();
+        let outcome =
+            evaluate_guards(&s, OUTSIDE_WORK_WINDOW, false, false, false, false, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::WorkWindow);
         assert!(
             outcome.log_as.is_none(),
@@ -1835,22 +1849,27 @@ mod tests {
     #[test]
     fn evaluate_guards_dnd_fires_only_when_setting_and_state_both_true() {
         let s_off = settings_for_guards(false, false, false, false, false);
-        assert!(evaluate_guards(&s_off, INSIDE_WORK_WINDOW, true, false, false, false).is_none());
+        assert!(
+            evaluate_guards(&s_off, INSIDE_WORK_WINDOW, true, false, false, false, false).is_none()
+        );
 
         let s_on = settings_for_guards(false, true, false, false, false);
         let outcome =
-            evaluate_guards(&s_on, INSIDE_WORK_WINDOW, true, false, false, false).unwrap();
+            evaluate_guards(&s_on, INSIDE_WORK_WINDOW, true, false, false, false, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::Dnd);
         assert_eq!(outcome.log_as, Some(GuardReason::Dnd));
 
         // Setting on but state false → no suppression.
-        assert!(evaluate_guards(&s_on, INSIDE_WORK_WINDOW, false, false, false, false).is_none());
+        assert!(
+            evaluate_guards(&s_on, INSIDE_WORK_WINDOW, false, false, false, false, false).is_none()
+        );
     }
 
     #[test]
     fn evaluate_guards_camera_logs_camera_reason() {
         let s = settings_for_guards(false, false, true, false, false);
-        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, false, false).unwrap();
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, false, false, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::Camera);
         assert_eq!(outcome.log_as, Some(GuardReason::Camera));
     }
@@ -1858,7 +1877,8 @@ mod tests {
     #[test]
     fn evaluate_guards_video_logs_video_reason() {
         let s = settings_for_guards(false, false, false, true, false);
-        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, false).unwrap();
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, false, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::Video);
         assert_eq!(outcome.log_as, Some(GuardReason::Video));
     }
@@ -1869,13 +1889,37 @@ mod tests {
         // so the guard must not fire even when app_pause_active is true.
         let mut s = settings_for_guards(false, false, false, false, true);
         s.app_pause_list.clear();
-        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true).is_none());
+        assert!(
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true, false).is_none()
+        );
 
         let with_target = settings_for_guards(false, false, false, false, true);
-        let outcome =
-            evaluate_guards(&with_target, INSIDE_WORK_WINDOW, false, false, false, true).unwrap();
+        let outcome = evaluate_guards(
+            &with_target,
+            INSIDE_WORK_WINDOW,
+            false,
+            false,
+            false,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::AppPause);
         assert_eq!(outcome.log_as, Some(GuardReason::AppPause));
+    }
+
+    #[test]
+    fn evaluate_guards_plugin_suppress_fires_without_a_settings_gate() {
+        // No setting toggles plugin suppression — a true verdict suppresses,
+        // a false one doesn't.
+        let s = settings_for_guards(false, false, false, false, false);
+        assert!(
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false, false).is_none()
+        );
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false, true).unwrap();
+        assert_eq!(outcome.reason, SuppressReason::Plugin);
+        assert_eq!(outcome.log_as, Some(GuardReason::Plugin));
     }
 
     #[test]
@@ -1884,7 +1928,8 @@ mod tests {
         // firing simultaneously, work_window short-circuits the rest
         // (and stays silent, per its no-log policy).
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome = evaluate_guards(&s, OUTSIDE_WORK_WINDOW, true, true, true, true).unwrap();
+        let outcome =
+            evaluate_guards(&s, OUTSIDE_WORK_WINDOW, true, true, true, true, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::WorkWindow);
         assert!(outcome.log_as.is_none());
     }
@@ -1893,28 +1938,32 @@ mod tests {
     fn evaluate_guards_dnd_outranks_camera_video_app_pause() {
         let s = settings_for_guards(true, true, true, true, true);
         // Inside the work window, so work_window does NOT fire.
-        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true).unwrap();
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::Dnd);
     }
 
     #[test]
     fn evaluate_guards_camera_outranks_video_and_app_pause() {
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, true, true).unwrap();
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, true, true, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::Camera);
     }
 
     #[test]
     fn evaluate_guards_video_outranks_app_pause() {
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, true).unwrap();
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, true, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::Video);
     }
 
     #[test]
     fn evaluate_guards_app_pause_only_when_higher_guards_quiet() {
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome = evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true).unwrap();
+        let outcome =
+            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true, false).unwrap();
         assert_eq!(outcome.reason, SuppressReason::AppPause);
     }
 
