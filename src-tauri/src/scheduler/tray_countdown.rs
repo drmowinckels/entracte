@@ -316,6 +316,7 @@ mod tests {
             pause_state: Arc::new(TokioMutex::new(PauseState::Running)),
             camera_active: Arc::new(AtomicBool::new(false)),
             video_active: Arc::new(AtomicBool::new(false)),
+            plugin_suppress: Arc::new(AtomicBool::new(false)),
             auto_suppress_reason: Arc::new(AtomicU8::new(0)),
             config_path,
             pause_path,

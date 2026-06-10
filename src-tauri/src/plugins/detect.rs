@@ -7,11 +7,6 @@
 //! `sysinfo` process read is cross-platform (so it's exercised on every OS,
 //! per the coverage policy) rather than a per-OS FFI shim.
 
-// Consumed by the sandbox host functions in `runtime`, which in turn has no
-// non-test caller until the detector eval worker (slice 5b) wires it into the
-// run loop. Scoped allow until then; the tests exercise these directly.
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use sysinfo::{ProcessesToUpdate, System};

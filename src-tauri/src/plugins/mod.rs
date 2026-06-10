@@ -16,11 +16,14 @@
 //! the wasm runtime (a later slice).
 
 mod detect;
+mod eval;
 mod install;
 mod manifest;
 pub(crate) mod registry;
 mod runtime;
 mod signature;
+
+pub use eval::any_detector_suppresses;
 
 pub use install::prepare_content_install;
 #[allow(unused_imports)]

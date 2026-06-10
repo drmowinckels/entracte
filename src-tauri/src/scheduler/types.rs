@@ -97,6 +97,7 @@ pub enum SuppressReason {
     Camera,
     Video,
     AppPause,
+    Plugin,
 }
 
 impl SuppressReason {
@@ -109,6 +110,7 @@ impl SuppressReason {
             Self::Camera => 3,
             Self::Video => 4,
             Self::AppPause => 5,
+            Self::Plugin => 6,
         }
     }
 
@@ -121,6 +123,7 @@ impl SuppressReason {
             3 => Some(Self::Camera),
             4 => Some(Self::Video),
             5 => Some(Self::AppPause),
+            6 => Some(Self::Plugin),
             _ => None,
         }
     }
@@ -134,6 +137,7 @@ impl SuppressReason {
             Self::Camera => "camera",
             Self::Video => "video",
             Self::AppPause => "app paused",
+            Self::Plugin => "plugin",
         }
     }
 
@@ -146,6 +150,7 @@ impl SuppressReason {
             Self::Camera => "Camera in use (Quiet → Pause during camera)",
             Self::Video => "Video keeping the display awake (Quiet → Pause during video)",
             Self::AppPause => "A paused app is running (Quiet → App pause list)",
+            Self::Plugin => "A detector plugin is suppressing breaks (System → Plugins)",
         }
     }
 }
@@ -166,12 +171,13 @@ pub struct PostponeState {
 mod tests {
     use super::*;
 
-    const ALL_REASONS: [SuppressReason; 5] = [
+    const ALL_REASONS: [SuppressReason; 6] = [
         SuppressReason::WorkWindow,
         SuppressReason::Dnd,
         SuppressReason::Camera,
         SuppressReason::Video,
         SuppressReason::AppPause,
+        SuppressReason::Plugin,
     ];
 
     #[test]

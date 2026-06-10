@@ -18,13 +18,6 @@
 //! scope-checked implementations (read the foreground window, POST to the
 //! granted origin, …).
 
-// Foundational slice: the sandbox builder + ABI mapping have no in-crate
-// caller yet (the detector and export slices consume them per the design
-// doc's staging plan), so they read as dead in the non-test build. The
-// wat-driven tests exercise them directly. Scoped to this module; removed
-// when the first consumer lands.
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
