@@ -35,10 +35,13 @@ pub fn sha256(bytes: &[u8]) -> [u8; 32] {
 /// the signer and the verifier produce identical input.
 pub fn signing_payload(manifest: &Manifest, module_sha256: Option<[u8; 32]>) -> Vec<u8> {
     let mut value = serde_json::to_value(manifest).expect("manifest is always serialisable");
-    value
+    let obj = value
         .as_object_mut()
-        .expect("a manifest always serialises to a JSON object")
-        .remove("signature");
+        .expect("a manifest always serialises to a JSON object");
+    obj.remove("signature");
+    // The module bytes are bound by their hash (appended below), not by the
+    // base64 blob in the JSON — so exclude it from the canonical payload.
+    obj.remove("module_base64");
     let mut bytes = serde_json::to_vec(&value).expect("json value is always serialisable");
     if let Some(hash) = module_sha256 {
         bytes.extend_from_slice(&hash);
@@ -106,6 +109,7 @@ mod tests {
             description: String::new(),
             kind: PluginKind::Detector,
             module: Some("module.wasm".to_string()),
+            module_base64: None,
             abi_version: Some(SUPPORTED_ABI_VERSION),
             imports: vec!["detect:foreground-window".to_string()],
             detect: None,

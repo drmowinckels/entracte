@@ -157,8 +157,14 @@ pub struct Manifest {
     #[serde(default)]
     pub description: String,
     pub kind: PluginKind,
+    /// The declared module filename (provenance/metadata, e.g. `module.wasm`).
     #[serde(default)]
     pub module: Option<String>,
+    /// The wasm module itself, base64-encoded, so a code-bearing plugin ships
+    /// as a single signed file. Excluded from the signing payload — the
+    /// signature binds its hash instead (see `signature::signing_payload`).
+    #[serde(default)]
+    pub module_base64: Option<String>,
     #[serde(default)]
     pub abi_version: Option<u32>,
     #[serde(default)]
@@ -255,7 +261,7 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
         }
     } else {
         // Content plugins are pure data: no module, no ABI, no capabilities.
-        if m.module.is_some() {
+        if m.module.is_some() || m.module_base64.is_some() {
             return Err("a content plugin must not reference a module".to_string());
         }
         if m.abi_version.is_some() {
@@ -325,6 +331,7 @@ mod tests {
             description: "Suppress while focused.".to_string(),
             kind: PluginKind::Detector,
             module: Some("module.wasm".to_string()),
+            module_base64: None,
             abi_version: Some(SUPPORTED_ABI_VERSION),
             imports: vec!["detect:foreground-window".to_string()],
             detect: None,
@@ -343,6 +350,7 @@ mod tests {
             description: String::new(),
             kind: PluginKind::Content,
             module: None,
+            module_base64: None,
             abi_version: None,
             imports: vec![],
             detect: None,
