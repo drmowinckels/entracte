@@ -23,6 +23,8 @@ mod runtime;
 mod signature;
 
 pub use install::prepare_content_install;
+#[allow(unused_imports)]
+pub use install::{prepare_detector_install, PreparedDetector};
 pub use registry::{InstalledPlugin, PluginRegistry, PluginSummary};
 
 // The full manifest/signature API surface. Some items are consumed by the
