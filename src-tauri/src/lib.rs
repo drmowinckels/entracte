@@ -14,6 +14,7 @@ mod platform;
 mod plugin_store;
 mod plugins;
 mod proc;
+mod proc_match;
 mod renderer_log;
 mod scheduler;
 mod screen_time_store;

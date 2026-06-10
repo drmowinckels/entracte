@@ -25,13 +25,24 @@
 // when the first consumer lands.
 #![allow(dead_code)]
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use extism::{
     CurrentPlugin, Error as ExtismError, Manifest, PluginBuilder, UserData, Val, ValType, Wasm,
 };
 
+use super::detect;
 use super::manifest::Capability;
+
+/// Per-install context the host functions need beyond the capability scopes
+/// themselves. The `detect:file:<path>` scope lives in the capability; the
+/// process pattern a `detect:processes` grant matches against comes from the
+/// manifest's detect config and is threaded in here.
+#[derive(Debug, Clone, Default)]
+pub struct SandboxContext {
+    pub process_pattern: Option<String>,
+}
 
 /// Memory ceiling for a plugin instance, in 64 KiB wasm pages. 64 pages =
 /// 4 MiB — generous for a detector/export module, tight enough that a
@@ -61,34 +72,83 @@ pub fn host_function_name(cap: &Capability) -> &'static str {
     }
 }
 
-/// The distinct host-function names the granted capabilities unlock, in a
-/// stable order with duplicates removed (two `detect:file:<path>` grants map
-/// to one `host_read_flag`). Pure — the registration list without a wasm
-/// engine.
-pub fn host_function_names_for(grants: &[Capability]) -> Vec<&'static str> {
-    let mut names = Vec::new();
-    for cap in grants {
-        let name = host_function_name(cap);
-        if !names.contains(&name) {
-            names.push(name);
-        }
+/// Set the single i64 output of a host function to a boolean (1/0).
+fn set_bool(outputs: &mut [Val], value: bool) {
+    if let Some(out) = outputs.first_mut() {
+        *out = Val::I64(value as i64);
     }
-    names
 }
 
-/// Stub host-function body for this slice: takes one i64, returns 0. Slices 5
-/// and 6 replace these with real, scope-checked implementations. Registered
-/// only for granted capabilities, so its mere presence is gated.
+/// Placeholder body for host functions whose real implementation lands in a
+/// later slice (foreground-window and the export sinks). Returns 0. Its mere
+/// presence is still gated by the capability, so registering it doesn't widen
+/// the module's reach.
 fn host_stub(
     _plugin: &mut CurrentPlugin,
     _inputs: &[Val],
     outputs: &mut [Val],
     _user_data: UserData<()>,
 ) -> Result<(), ExtismError> {
-    if let Some(out) = outputs.first_mut() {
-        *out = Val::I64(0);
-    }
+    set_bool(outputs, false);
     Ok(())
+}
+
+/// Register a `() -> i64` boolean host function whose answer is `probe(data)`.
+/// `data` is captured host-side from the grant/context — never supplied by
+/// the module — so the probe is scope-checked by construction.
+fn register_probe<'a, T, F>(
+    builder: PluginBuilder<'a>,
+    name: &str,
+    data: T,
+    probe: F,
+) -> PluginBuilder<'a>
+where
+    T: Send + Sync + 'static,
+    F: Fn(&T) -> bool + Send + Sync + 'static,
+{
+    builder.with_function(
+        name,
+        [],
+        [ValType::I64],
+        UserData::new(data),
+        move |_p, _in, out, ud| {
+            let guard = ud.get()?;
+            set_bool(out, probe(&guard.lock().unwrap()));
+            Ok(())
+        },
+    )
+}
+
+/// Register the host function a single capability unlocks. All host functions
+/// are `() -> i64` booleans in this ABI; the data each one reads (the process
+/// pattern, the granted file path) is captured from the grant + context, so a
+/// module cannot influence what's probed.
+fn register_capability<'a>(
+    builder: PluginBuilder<'a>,
+    cap: &Capability,
+    ctx: &SandboxContext,
+) -> PluginBuilder<'a> {
+    let name = host_function_name(cap);
+    match cap {
+        Capability::DetectProcesses => {
+            let pattern = ctx.process_pattern.clone().unwrap_or_default();
+            register_probe(builder, name, pattern, |p: &String| {
+                detect::process_running(p)
+            })
+        }
+        Capability::DetectFile(path) => {
+            register_probe(builder, name, PathBuf::from(path), |p: &PathBuf| {
+                detect::read_flag(p)
+            })
+        }
+        // Foreground-window and the export sinks are stubbed until their
+        // slices; registered (gated) but inert.
+        Capability::DetectForegroundWindow
+        | Capability::ExportFile(_)
+        | Capability::ExportHttp(_) => {
+            builder.with_function(name, [], [ValType::I64], UserData::default(), host_stub)
+        }
+    }
 }
 
 /// Build a sandboxed plugin from `module` bytes, registering host functions
@@ -96,9 +156,13 @@ fn host_stub(
 /// timeout are bounded (see the `DEFAULT_*` consts). Returns a user-facing
 /// error if the module fails to compile, link, or instantiate — including the
 /// case where it imports a host function whose capability wasn't granted.
+///
+/// Duplicate host-function names are registered once (the first grant wins),
+/// so a plugin with two `detect:file:<path>` grants links cleanly.
 pub fn build_sandboxed_plugin(
     module: &[u8],
     capabilities: &[Capability],
+    ctx: &SandboxContext,
 ) -> Result<extism::Plugin, String> {
     let manifest = Manifest::new([Wasm::data(module.to_vec())])
         .with_memory_max(DEFAULT_MEMORY_MAX_PAGES)
@@ -108,14 +172,14 @@ pub fn build_sandboxed_plugin(
         .with_wasi(false)
         .with_fuel_limit(DEFAULT_FUEL);
 
-    for name in host_function_names_for(capabilities) {
-        builder = builder.with_function(
-            name,
-            [ValType::I64],
-            [ValType::I64],
-            UserData::default(),
-            host_stub,
-        );
+    let mut registered: Vec<&str> = Vec::new();
+    for cap in capabilities {
+        let name = host_function_name(cap);
+        if registered.contains(&name) {
+            continue;
+        }
+        registered.push(name);
+        builder = register_capability(builder, cap, ctx);
     }
 
     builder
@@ -132,19 +196,6 @@ mod tests {
     }
 
     #[test]
-    fn host_function_names_dedupe_and_map_per_capability() {
-        let grants = vec![
-            Capability::DetectForegroundWindow,
-            Capability::DetectFile("/a".to_string()),
-            Capability::DetectFile("/b".to_string()), // same host fn → one entry
-        ];
-        assert_eq!(
-            host_function_names_for(&grants),
-            vec!["host_foreground_window", "host_read_flag"]
-        );
-    }
-
-    #[test]
     fn host_function_name_covers_every_capability() {
         for cap in [
             Capability::DetectForegroundWindow,
@@ -157,6 +208,21 @@ mod tests {
         }
     }
 
+    /// A module that calls the named `() -> i64` host function and **traps**
+    /// when it returns non-zero, so a test can read the host's boolean answer
+    /// through call success (false) vs. error (true) — no extism output
+    /// marshalling needed.
+    fn trap_if_true_module(host_fn: &str) -> Vec<u8> {
+        wasm(&format!(
+            r#"(module
+                 (import "extism:host/user" "{host_fn}" (func $f (result i64)))
+                 (memory (export "memory") 1)
+                 (func (export "run") (result i32)
+                   (if (i64.ne (call $f) (i64.const 0)) (then unreachable))
+                   (i32.const 0)))"#
+        ))
+    }
+
     #[test]
     fn loads_a_clean_module_with_no_imports() {
         let module = wasm(
@@ -164,20 +230,14 @@ mod tests {
                  (memory (export "memory") 1)
                  (func (export "run") (result i32) i32.const 0))"#,
         );
-        assert!(build_sandboxed_plugin(&module, &[]).is_ok());
+        assert!(build_sandboxed_plugin(&module, &[], &SandboxContext::default()).is_ok());
     }
 
     #[test]
     fn rejects_a_module_importing_an_ungranted_host_function() {
-        // Imports host_foreground_window but no detect:foreground-window grant.
-        let module = wasm(
-            r#"(module
-                 (import "extism:host/user" "host_foreground_window"
-                   (func $f (param i64) (result i64)))
-                 (memory (export "memory") 1)
-                 (func (export "run") (result i64) (call $f (i64.const 0))))"#,
-        );
-        let err = build_sandboxed_plugin(&module, &[]).unwrap_err();
+        // Imports host_process_running but no detect:processes grant.
+        let module = trap_if_true_module("host_process_running");
+        let err = build_sandboxed_plugin(&module, &[], &SandboxContext::default()).unwrap_err();
         assert!(
             err.contains("failed to load"),
             "ungranted import should fail the load, got: {err}"
@@ -185,24 +245,95 @@ mod tests {
     }
 
     #[test]
-    fn accepts_and_invokes_a_granted_host_function() {
-        // `run` calls the granted host function, so building succeeds and
-        // calling it actually dispatches into the registered host stub.
-        let module = wasm(
-            r#"(module
-                 (import "extism:host/user" "host_foreground_window"
-                   (func $f (param i64) (result i64)))
-                 (memory (export "memory") 1)
-                 (func (export "run") (result i32)
-                   (drop (call $f (i64.const 0)))
-                   (i32.const 0)))"#,
+    fn host_process_running_reports_a_live_process_to_the_module() {
+        // "entracte" is a whole token of the test binary's process name on
+        // every platform (see the detect.rs test for the rationale).
+        // Pattern matches a live process → host returns true → the module
+        // traps → the call errors.
+        let module = trap_if_true_module("host_process_running");
+        let mut plugin = build_sandboxed_plugin(
+            &module,
+            &[Capability::DetectProcesses],
+            &SandboxContext {
+                process_pattern: Some("entracte".to_string()),
+            },
+        )
+        .expect("granted detect:processes builds");
+        assert!(
+            plugin.call::<&str, &str>("run", "").is_err(),
+            "a matching process should be reported true (module traps)"
         );
-        let mut plugin = build_sandboxed_plugin(&module, &[Capability::DetectForegroundWindow])
-            .expect("granting the capability registers the host function");
+
+        // A pattern that matches nothing → host returns false → call succeeds.
+        let module = trap_if_true_module("host_process_running");
+        let mut plugin = build_sandboxed_plugin(
+            &module,
+            &[Capability::DetectProcesses],
+            &SandboxContext {
+                process_pattern: Some("entracte-no-such-process-zzz".to_string()),
+            },
+        )
+        .unwrap();
+        assert!(plugin.call::<&str, &str>("run", "").is_ok());
+    }
+
+    #[test]
+    fn host_read_flag_reports_the_granted_files_truthiness() {
+        let dir = crate::test_support::temp_dir();
+        let flag = dir.path().join("focus.flag");
+        std::fs::write(&flag, "true").unwrap();
+        let cap = Capability::DetectFile(flag.display().to_string());
+
+        // Truthy flag → host returns true → module traps → call errors.
+        let module = trap_if_true_module("host_read_flag");
+        let mut plugin = build_sandboxed_plugin(
+            &module,
+            std::slice::from_ref(&cap),
+            &SandboxContext::default(),
+        )
+        .expect("granted detect:file builds");
+        assert!(plugin.call::<&str, &str>("run", "").is_err());
+
+        // Flip the flag to falsey → host returns false → call succeeds.
+        std::fs::write(&flag, "0").unwrap();
+        let module = trap_if_true_module("host_read_flag");
+        let mut plugin = build_sandboxed_plugin(
+            &module,
+            std::slice::from_ref(&cap),
+            &SandboxContext::default(),
+        )
+        .unwrap();
+        assert!(plugin.call::<&str, &str>("run", "").is_ok());
+    }
+
+    #[test]
+    fn a_stubbed_capability_registers_an_inert_host_function() {
+        // Foreground-window is still a stub: a granted module that calls it
+        // links and the stub returns false, so the trap-if-true module's call
+        // succeeds.
+        let module = trap_if_true_module("host_foreground_window");
+        let mut plugin = build_sandboxed_plugin(
+            &module,
+            &[Capability::DetectForegroundWindow],
+            &SandboxContext::default(),
+        )
+        .expect("granted detect:foreground-window builds");
         assert!(
             plugin.call::<&str, &str>("run", "").is_ok(),
-            "calling the export should dispatch into the host stub and return"
+            "the stub should return false (no suppression)"
         );
+    }
+
+    #[test]
+    fn duplicate_capabilities_register_their_host_function_once() {
+        // Two detect:file grants map to one host_read_flag; the second is
+        // skipped so the module links cleanly against a single registration.
+        let module = trap_if_true_module("host_read_flag");
+        let grants = vec![
+            Capability::DetectFile("/tmp/a.flag".to_string()),
+            Capability::DetectFile("/tmp/b.flag".to_string()),
+        ];
+        assert!(build_sandboxed_plugin(&module, &grants, &SandboxContext::default()).is_ok());
     }
 
     #[test]
@@ -216,7 +347,8 @@ mod tests {
                    (loop $l (br $l))
                    (i32.const 0)))"#,
         );
-        let mut plugin = build_sandboxed_plugin(&module, &[]).expect("module loads");
+        let mut plugin =
+            build_sandboxed_plugin(&module, &[], &SandboxContext::default()).expect("module loads");
         let started = std::time::Instant::now();
         let result = plugin.call::<&str, &str>("run", "");
         let elapsed = started.elapsed();

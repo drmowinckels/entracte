@@ -15,6 +15,7 @@
 //! plugins parse and validate here but cannot yet be installed — they need
 //! the wasm runtime (a later slice).
 
+mod detect;
 mod install;
 mod manifest;
 pub(crate) mod registry;
@@ -42,6 +43,6 @@ pub use signature::{sha256, signing_payload, verify_signature};
 // tested ahead of its consumers (the wat-driven tests exercise it directly).
 #[allow(unused_imports)]
 pub use runtime::{
-    build_sandboxed_plugin, host_function_name, host_function_names_for, DEFAULT_FUEL,
+    build_sandboxed_plugin, host_function_name, SandboxContext, DEFAULT_FUEL,
     DEFAULT_MEMORY_MAX_PAGES, DEFAULT_TIMEOUT,
 };

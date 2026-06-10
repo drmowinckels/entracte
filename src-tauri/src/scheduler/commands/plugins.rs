@@ -338,6 +338,7 @@ mod tests {
             module: None,
             abi_version: None,
             imports: vec![],
+            detect: None,
             content: Some(ContentPack {
                 version: CONTENT_PACK_VERSION,
                 name: "Stretch pack".to_string(),
@@ -670,6 +671,7 @@ mod mock_app_tests {
             module: None,
             abi_version: None,
             imports: vec![],
+            detect: None,
             content: Some(ContentPack {
                 version: CONTENT_PACK_VERSION,
                 name: "Signed pack".to_string(),
