@@ -73,6 +73,7 @@ Wayland
 Xorg
 opencode
 hovancik
+hashlib
 HKCU
 LOCALAPPDATA
 RUSTDOCFLAGS
