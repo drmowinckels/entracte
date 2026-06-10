@@ -4,6 +4,8 @@ Entracte can be extended with **local-only plugins** — files you choose from d
 
 Three plugin kinds are installable: **content providers**, **local context detectors**, and **local export adapters**.
 
+Want to _build_ one rather than install one? See [Writing a plugin](developer/plugin-authoring.md) for the manifest schema, the detector ABI, and how to sign a plugin.
+
 ## Content providers
 
 A content provider supplies break **ideas** and guided **routines**. Installing one merges its content into your active profile, exactly like importing a [content pack](#) — but with provenance (a signed author) and clean removal: uninstalling takes out precisely what the plugin added, and nothing you created yourself.

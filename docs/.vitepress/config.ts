@@ -65,6 +65,13 @@ export default withMermaid({
           ],
         },
         {
+          text: "Plugins",
+          items: [
+            { text: "API design", link: "/developer/plugin-api-design" },
+            { text: "Writing a plugin", link: "/developer/plugin-authoring" },
+          ],
+        },
+        {
           text: "API references",
           items: [
             { text: "Rust", link: "/developer/rust-api" },
