@@ -39,9 +39,10 @@ pub enum PluginKind {
 
 impl PluginKind {
     /// Whether this kind ships an executable wasm module (and therefore must
-    /// declare a `module`, an `abi_version`, and at least one import).
+    /// declare a `module`, an `abi_version`, and at least one import). Only
+    /// detectors run code; content and export plugins are declarative data.
     fn is_code_bearing(self) -> bool {
-        matches!(self, PluginKind::Detector | PluginKind::Export)
+        matches!(self, PluginKind::Detector)
     }
 }
 
@@ -134,6 +135,40 @@ pub struct DetectConfig {
     pub process_name: Option<String>,
 }
 
+/// Where a declarative export adapter delivers break stats.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportSink {
+    /// Write to a local file (the granted path).
+    File,
+    /// POST to a user-controlled URL — the only sink that leaves the machine.
+    Http,
+}
+
+/// The serialisation the host renders break stats in before delivery.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Csv,
+    Json,
+}
+
+/// A declarative export adapter: on the named events, the host renders its
+/// own break stats in `format` and delivers them to `destination` via `sink`.
+/// No wasm — the plugin runs no code; the destination is fixed here (and
+/// shown in the consent dialog), so the plugin can never redirect the data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExportConfig {
+    pub sink: ExportSink,
+    pub format: ExportFormat,
+    /// File path (for `file`) or URL (for `http`). For `http` it must be an
+    /// `http(s)://` URL; the origin is the consent boundary.
+    pub destination: String,
+    /// Which scheduler events trigger a delivery. Reuses the hook event
+    /// vocabulary; must be non-empty.
+    pub on: Vec<crate::hooks::HookEvent>,
+}
+
 /// The detached signature over `canonical(manifest-without-signature)` plus
 /// the module hash. ed25519; keys and signature are base64.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,6 +206,8 @@ pub struct Manifest {
     pub imports: Vec<String>,
     #[serde(default)]
     pub detect: Option<DetectConfig>,
+    #[serde(default)]
+    pub export: Option<ExportConfig>,
     #[serde(default)]
     pub content: Option<ContentPack>,
     pub signature: Signature,
@@ -259,20 +296,41 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
         if m.content.is_some() {
             return Err("a code-bearing plugin must not carry a content payload".to_string());
         }
+        if m.export.is_some() {
+            return Err("a code-bearing plugin must not carry an export config".to_string());
+        }
     } else {
-        // Content plugins are pure data: no module, no ABI, no capabilities.
+        // Declarative kinds (content, export): no module, no ABI, no imports.
         if m.module.is_some() || m.module_base64.is_some() {
-            return Err("a content plugin must not reference a module".to_string());
+            return Err(format!("a {:?} plugin must not reference a module", m.kind).to_lowercase());
         }
         if m.abi_version.is_some() {
-            return Err("a content plugin must not declare an abi_version".to_string());
+            return Err(
+                format!("a {:?} plugin must not declare an abi_version", m.kind).to_lowercase(),
+            );
         }
         if !m.imports.is_empty() {
-            return Err("a content plugin must not import capabilities".to_string());
+            return Err(
+                format!("a {:?} plugin must not import capabilities", m.kind).to_lowercase(),
+            );
         }
-        match &m.content {
-            Some(pack) => validate_pack(pack)?,
-            None => return Err("a content plugin must carry a content payload".to_string()),
+        // Content and export are the only declarative kinds.
+        if m.kind == PluginKind::Content {
+            match &m.content {
+                Some(pack) => validate_pack(pack)?,
+                None => return Err("a content plugin must carry a content payload".to_string()),
+            }
+            if m.export.is_some() {
+                return Err("a content plugin must not carry an export config".to_string());
+            }
+        } else {
+            match &m.export {
+                Some(cfg) => validate_export_config(cfg)?,
+                None => return Err("an export plugin must carry an export config".to_string()),
+            }
+            if m.content.is_some() {
+                return Err("an export plugin must not carry a content payload".to_string());
+            }
         }
     }
 
@@ -309,6 +367,25 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate a declarative export config: a non-empty, length-capped
+/// destination (an `http(s)://` URL for the http sink), and at least one
+/// trigger event.
+fn validate_export_config(cfg: &ExportConfig) -> Result<(), String> {
+    if cfg.destination.trim().is_empty() {
+        return Err("export destination is empty".to_string());
+    }
+    check_string(&cfg.destination, "export destination")?;
+    if cfg.sink == ExportSink::Http
+        && !(cfg.destination.starts_with("http://") || cfg.destination.starts_with("https://"))
+    {
+        return Err("an http export destination must be an http(s):// URL".to_string());
+    }
+    if cfg.on.is_empty() {
+        return Err("an export plugin must subscribe to at least one event".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +412,7 @@ mod tests {
             abi_version: Some(SUPPORTED_ABI_VERSION),
             imports: vec!["detect:foreground-window".to_string()],
             detect: None,
+            export: None,
             content: None,
             signature: sig(),
         }
@@ -354,6 +432,7 @@ mod tests {
             abi_version: None,
             imports: vec![],
             detect: None,
+            export: None,
             content: Some(sample_pack()),
             signature: sig(),
         }
@@ -370,6 +449,112 @@ mod tests {
             },
             routines: vec![],
         }
+    }
+
+    fn export_manifest() -> Manifest {
+        Manifest {
+            manifest_version: MANIFEST_VERSION,
+            id: "com.example.export".to_string(),
+            name: "CSV export".to_string(),
+            version: "1.0.0".to_string(),
+            author: "Jane".to_string(),
+            description: String::new(),
+            kind: PluginKind::Export,
+            module: None,
+            module_base64: None,
+            abi_version: None,
+            imports: vec![],
+            detect: None,
+            export: Some(ExportConfig {
+                sink: ExportSink::Http,
+                format: ExportFormat::Json,
+                destination: "http://127.0.0.1:8080/entracte".to_string(),
+                on: vec![crate::hooks::HookEvent::BreakEnd],
+            }),
+            content: None,
+            signature: sig(),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_a_well_formed_export_plugin() {
+        assert!(validate_manifest(&export_manifest()).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_export_without_a_config() {
+        let mut m = export_manifest();
+        m.export = None;
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must carry an export config"));
+    }
+
+    #[test]
+    fn validate_rejects_export_with_empty_or_non_http_destination() {
+        let mut m = export_manifest();
+        m.export.as_mut().unwrap().destination = "   ".to_string();
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("destination is empty"));
+
+        let mut m = export_manifest();
+        m.export.as_mut().unwrap().destination = "ftp://evil/x".to_string();
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must be an http(s):// URL"));
+    }
+
+    #[test]
+    fn validate_rejects_export_with_no_events() {
+        let mut m = export_manifest();
+        m.export.as_mut().unwrap().on = vec![];
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("at least one event"));
+    }
+
+    #[test]
+    fn validate_rejects_export_carrying_module_or_content() {
+        let mut m = export_manifest();
+        m.module = Some("m.wasm".to_string());
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must not reference a module"));
+
+        let mut m = export_manifest();
+        m.content = Some(sample_pack());
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must not carry a content payload"));
+    }
+
+    #[test]
+    fn validate_rejects_export_config_on_a_content_plugin() {
+        let mut m = content_manifest();
+        m.export = export_manifest().export;
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must not carry an export config"));
+    }
+
+    #[test]
+    fn validate_rejects_export_config_on_a_detector() {
+        let mut m = detector_manifest();
+        m.export = export_manifest().export;
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("a code-bearing plugin must not carry an export config"));
+    }
+
+    #[test]
+    fn validate_accepts_a_file_export_with_any_destination() {
+        let mut m = export_manifest();
+        let cfg = m.export.as_mut().unwrap();
+        cfg.sink = ExportSink::File;
+        cfg.format = ExportFormat::Csv;
+        cfg.destination = "/home/me/breaks.csv".to_string();
+        assert!(validate_manifest(&m).is_ok());
     }
 
     #[test]
