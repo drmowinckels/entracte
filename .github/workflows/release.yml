@@ -85,6 +85,10 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Key the cache per runner image: ubuntu-22.04 and ubuntu-24.04
+          # both report runner.os=Linux, so a cross-image restore can run a
+          # build-script binary against the wrong glibc (GLIBC_2.39 not found).
+          prefix-key: "rust-${{ matrix.platform }}"
 
       - run: npm ci
 
@@ -189,6 +193,10 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Fixed windows-latest runner; key per image for consistency with
+          # the Linux jobs, where 22.04/24.04 sharing runner.os=Linux caused a
+          # cross-image GLIBC mismatch building gtk.
+          prefix-key: "rust-windows-latest"
 
       - run: npm ci
 

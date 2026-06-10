@@ -40,6 +40,10 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Key the cache per runner image: ubuntu-22.04 and ubuntu-24.04
+          # both report runner.os=Linux, so a cross-image restore can run a
+          # build-script binary against the wrong glibc (GLIBC_2.39 not found).
+          prefix-key: "rust-ubuntu-latest"
       - name: Build VitePress site
         working-directory: docs
         run: |
