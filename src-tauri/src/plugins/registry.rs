@@ -129,6 +129,17 @@ impl PluginRegistry {
         self.plugins.iter().map(PluginSummary::from).collect()
     }
 
+    /// The export configs of every installed export adapter subscribed to
+    /// `event`, for the delivery path. Install order.
+    pub fn export_configs_for(&self, event: crate::hooks::HookEvent) -> Vec<ExportConfig> {
+        self.plugins
+            .iter()
+            .filter(|p| p.kind == PluginKind::Export)
+            .filter_map(|p| p.export.clone())
+            .filter(|cfg| cfg.on.contains(&event))
+            .collect()
+    }
+
     /// What the off-tick eval task needs for each installed detector: id (to
     /// load its module), parsed granted capabilities (to rebuild the sandbox),
     /// and the process pattern. Capability strings that fail to parse are

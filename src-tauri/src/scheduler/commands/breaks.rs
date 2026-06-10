@@ -67,6 +67,7 @@ pub async fn pause_impl(scheduler: &Scheduler, duration_secs: Option<u64>) {
             HookEvent::PauseStart,
             HookContext::empty(),
         );
+        crate::scheduler::exports::deliver_on_event(scheduler, HookEvent::PauseStart);
     }
 }
 
@@ -89,6 +90,7 @@ pub async fn resume_impl(scheduler: &Scheduler) {
             HookEvent::PauseEnd,
             HookContext::empty(),
         );
+        crate::scheduler::exports::deliver_on_event(scheduler, HookEvent::PauseEnd);
     }
 }
 
@@ -186,6 +188,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
         HookEvent::BreakStart,
         HookContext::with_kind_duration(kind, duration_secs),
     );
+    crate::scheduler::exports::deliver_on_event(scheduler, HookEvent::BreakStart);
 }
 
 /// Renderer hook to fire a break immediately — used by the "Test now"
@@ -255,6 +258,7 @@ pub async fn end_break<R: Runtime>(
                 HookEvent::BreakEnd,
                 HookContext::with_kind_outcome(kind, reason.clone()),
             );
+            crate::scheduler::exports::deliver_on_event(scheduler.inner(), HookEvent::BreakEnd);
         }
     }
 
@@ -367,6 +371,7 @@ pub async fn postpone_break_impl(
         minutes: minutes_logged.max(1),
     });
     hooks::run_hooks(&s, HookEvent::BreakPostponed, HookContext::with_kind(kind));
+    crate::scheduler::exports::deliver_on_event(scheduler, HookEvent::BreakPostponed);
     {
         let mut t = scheduler.timers.lock().await;
         t.active_break = None;
@@ -444,6 +449,7 @@ pub async fn skip_next_break_impl(scheduler: &Scheduler, kind: BreakKind) -> Res
         source: SkipSource::User,
     });
     hooks::run_hooks(&s, HookEvent::BreakSkipped, HookContext::with_kind(kind));
+    crate::scheduler::exports::deliver_on_event(scheduler, HookEvent::BreakSkipped);
     Ok(())
 }
 
@@ -581,6 +587,7 @@ pub async fn resume_last_break_impl<R: Runtime>(
         HookEvent::BreakStart,
         HookContext::with_kind_duration(kind, duration_secs),
     );
+    crate::scheduler::exports::deliver_on_event(scheduler, HookEvent::BreakStart);
     {
         let mut t = scheduler.timers.lock().await;
         let now = Instant::now();
