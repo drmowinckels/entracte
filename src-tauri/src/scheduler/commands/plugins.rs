@@ -15,8 +15,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
 use crate::plugins::{
-    parse_manifest, prepare_content_install, prepare_detector_install, InstalledPlugin, Manifest,
-    PluginKind, PluginSummary, PreparedDetector,
+    parse_manifest, prepare_content_install, prepare_detector_install, prepare_export_install,
+    InstalledPlugin, Manifest, PluginKind, PluginSummary, PreparedDetector,
 };
 use crate::scheduler::content_pack::{
     merge_pack_tracked, remove_content, AddedContent, MergeSummary,
@@ -78,12 +78,13 @@ pub struct InstallOutcome {
 enum Prepared {
     Content(Manifest),
     Detector(PreparedDetector),
+    Export(Manifest),
 }
 
 impl Prepared {
     fn manifest(&self) -> &Manifest {
         match self {
-            Prepared::Content(m) => m,
+            Prepared::Content(m) | Prepared::Export(m) => m,
             Prepared::Detector(p) => &p.manifest,
         }
     }
@@ -111,7 +112,7 @@ pub async fn install_plugin<R: Runtime>(
         match parse_manifest(&text)?.kind {
             PluginKind::Content => Prepared::Content(prepare_content_install(&text, &registry)?),
             PluginKind::Detector => Prepared::Detector(prepare_detector_install(&text, &registry)?),
-            PluginKind::Export => return Err("export plugins aren't supported yet".to_string()),
+            PluginKind::Export => Prepared::Export(prepare_export_install(&text, &registry)?),
         }
     };
 
@@ -135,6 +136,7 @@ pub async fn install_plugin<R: Runtime>(
     match prepared {
         Prepared::Content(manifest) => Ok(apply_install(scheduler.inner(), &manifest).await),
         Prepared::Detector(prepared) => apply_detector_install(scheduler.inner(), &prepared).await,
+        Prepared::Export(manifest) => Ok(apply_export_install(scheduler.inner(), &manifest).await),
     }
 }
 
@@ -208,6 +210,24 @@ async fn apply_detector_install(
         hints_added: 0,
         routines_added: 0,
     })
+}
+
+/// Register a validated export adapter (declarative — no module, no content
+/// merge). The export config travels in the record for the delivery path.
+/// Split out so it's unit-testable without a `WebviewWindow`/dialog.
+async fn apply_export_install(scheduler: &Scheduler, manifest: &Manifest) -> InstallOutcome {
+    {
+        let mut registry = scheduler.plugins.lock().await;
+        registry.insert(InstalledPlugin::from_export(manifest));
+    }
+    persist_plugins(scheduler).await;
+    InstallOutcome {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        kind: PluginKind::Export,
+        hints_added: 0,
+        routines_added: 0,
+    }
 }
 
 /// Uninstall the plugin `id`: remove exactly the content it added from the
@@ -358,7 +378,7 @@ fn format_install_summary(manifest: &Manifest) -> String {
                 "Adds up to {hints} idea(s) and {routines} routine(s) (duplicates are skipped).\n"
             ));
         }
-        PluginKind::Detector | PluginKind::Export => {
+        PluginKind::Detector => {
             s.push_str("This plugin runs sandboxed code and is granted ONLY these permissions:\n");
             if manifest.imports.is_empty() {
                 s.push_str("• (none)\n");
@@ -371,6 +391,21 @@ fn format_install_summary(manifest: &Manifest) -> String {
                     "• … and {} more\n",
                     manifest.imports.len() - DIALOG_MAX_CAPABILITIES_SHOWN
                 ));
+            }
+        }
+        PluginKind::Export => {
+            if let Some(cfg) = &manifest.export {
+                let where_to = match cfg.sink {
+                    crate::plugins::ExportSink::File => "write your break statistics to the file",
+                    crate::plugins::ExportSink::Http => "SEND your break statistics to",
+                };
+                s.push_str(&format!(
+                    "This plugin will {where_to}:\n• {}\n",
+                    sanitize_for_dialog(&cfg.destination, 200)
+                ));
+                if cfg.sink == crate::plugins::ExportSink::Http {
+                    s.push_str("⚠ This sends data OFF your machine to that address.\n");
+                }
             }
         }
     }
@@ -423,6 +458,7 @@ mod tests {
             abi_version: None,
             imports: vec![],
             detect: None,
+            export: None,
             content: Some(ContentPack {
                 version: CONTENT_PACK_VERSION,
                 name: "Stretch pack".to_string(),
@@ -467,6 +503,7 @@ mod tests {
             detect: Some(DetectConfig {
                 process_name: Some("zoom".to_string()),
             }),
+            export: None,
             content: None,
             signature: Signature {
                 alg: "ed25519".to_string(),
@@ -474,6 +511,73 @@ mod tests {
                 sig: String::new(),
             },
         }
+    }
+
+    fn export_manifest(id: &str) -> Manifest {
+        use crate::plugins::{ExportConfig, ExportFormat, ExportSink};
+        Manifest {
+            manifest_version: crate::plugins::MANIFEST_VERSION,
+            id: id.to_string(),
+            name: "JSON export".to_string(),
+            version: "1.0.0".to_string(),
+            author: "Jane".to_string(),
+            description: String::new(),
+            kind: PluginKind::Export,
+            module: None,
+            module_base64: None,
+            abi_version: None,
+            imports: vec![],
+            detect: None,
+            export: Some(ExportConfig {
+                sink: ExportSink::Http,
+                format: ExportFormat::Json,
+                destination: "http://127.0.0.1:8080/entracte".to_string(),
+                on: vec![crate::hooks::HookEvent::BreakEnd],
+            }),
+            content: None,
+            signature: Signature {
+                alg: "ed25519".to_string(),
+                public_key: "QUJDREVGR0hJSktMTU5PUA==".to_string(),
+                sig: String::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_export_install_registers_and_uninstall_removes() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let outcome = apply_export_install(&sched, &export_manifest("com.example.exp")).await;
+        assert_eq!(outcome.kind, PluginKind::Export);
+        {
+            let reg = sched.plugins.lock().await;
+            assert!(reg.contains("com.example.exp"));
+        }
+        // Uninstall: no module on disk, just the registry record.
+        uninstall_by_id(&sched, "com.example.exp").await.unwrap();
+        assert!(!sched.plugins.lock().await.contains("com.example.exp"));
+    }
+
+    #[test]
+    fn format_install_summary_shows_export_destination_and_egress_warning() {
+        let s = format_install_summary(&export_manifest("com.example.exp"));
+        assert!(s.contains("http://127.0.0.1:8080/entracte"));
+        assert!(s.contains("SEND your break statistics"));
+        assert!(s.contains("OFF your machine"));
+        let warn = s.find("Only click Install").unwrap();
+        let body = s.find("This plugin will").unwrap();
+        assert!(warn < body);
+    }
+
+    #[test]
+    fn format_install_summary_file_export_has_no_egress_warning() {
+        let mut m = export_manifest("com.example.exp");
+        let cfg = m.export.as_mut().unwrap();
+        cfg.sink = crate::plugins::ExportSink::File;
+        cfg.destination = "/home/me/breaks.csv".to_string();
+        let s = format_install_summary(&m);
+        assert!(s.contains("write your break statistics"));
+        assert!(s.contains("/home/me/breaks.csv"));
+        assert!(!s.contains("OFF your machine"));
     }
 
     #[tokio::test]
@@ -731,6 +835,7 @@ mod mock_app_tests {
             },
             capabilities: Vec::new(),
             detect: None,
+            export: None,
         }
     }
 
@@ -844,6 +949,7 @@ mod mock_app_tests {
             abi_version: None,
             imports: vec![],
             detect: None,
+            export: None,
             content: Some(ContentPack {
                 version: CONTENT_PACK_VERSION,
                 name: "Signed pack".to_string(),
@@ -891,13 +997,13 @@ mod mock_app_tests {
     }
 
     #[tokio::test]
-    async fn install_rejects_an_export_plugin_as_unsupported() {
+    async fn install_routes_to_the_export_path_and_surfaces_its_errors() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
         let app = wrap_in_mock_app(sched);
         let dir = temp_dir();
         let path = dir.path().join("export.json");
-        // Minimal parseable export manifest — the kind is peeked and rejected
-        // before any validation, so it needn't be otherwise well-formed.
+        // A parseable export manifest with no export config: routing reaches
+        // the export installer, which rejects it before any dialog.
         std::fs::write(
             &path,
             r#"{"manifest_version":1,"id":"com.x.exp","name":"E","version":"1.0.0","kind":"export","signature":{"alg":"ed25519","public_key":"","sig":""}}"#,
@@ -911,7 +1017,7 @@ mod mock_app_tests {
         )
         .await
         .unwrap_err();
-        assert!(err.contains("export plugins aren't supported yet"));
+        assert!(err.contains("must carry an export config"));
     }
 
     #[tokio::test]

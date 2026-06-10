@@ -25,9 +25,9 @@ mod signature;
 
 pub use eval::any_detector_suppresses;
 
-pub use install::prepare_content_install;
 #[allow(unused_imports)]
-pub use install::{prepare_detector_install, PreparedDetector};
+pub use install::PreparedDetector;
+pub use install::{prepare_content_install, prepare_detector_install, prepare_export_install};
 pub use registry::{InstalledPlugin, PluginRegistry, PluginSummary};
 
 // The full manifest/signature API surface. Some items are consumed by the
@@ -37,8 +37,8 @@ pub use registry::{InstalledPlugin, PluginRegistry, PluginSummary};
 // its consumers.
 #[allow(unused_imports)]
 pub use manifest::{
-    parse_manifest, validate_manifest, Capability, DetectConfig, Manifest, PluginKind, Signature,
-    MANIFEST_VERSION, SUPPORTED_ABI_VERSION,
+    parse_manifest, validate_manifest, Capability, DetectConfig, ExportConfig, ExportFormat,
+    ExportSink, Manifest, PluginKind, Signature, MANIFEST_VERSION, SUPPORTED_ABI_VERSION,
 };
 #[allow(unused_imports)]
 pub use signature::{sha256, signing_payload, verify_signature};

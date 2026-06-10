@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::manifest::{DetectConfig, Manifest, PluginKind};
+use super::manifest::{DetectConfig, ExportConfig, Manifest, PluginKind};
 use crate::scheduler::content_pack::AddedContent;
 
 /// One installed plugin: provenance + what it added to settings.
@@ -39,6 +39,10 @@ pub struct InstalledPlugin {
     /// sandbox context at eval time. `None` for non-detectors.
     #[serde(default)]
     pub detect: Option<DetectConfig>,
+    /// Export configuration (sink / format / destination / events) for an
+    /// export adapter, read by the delivery path. `None` for non-exports.
+    #[serde(default)]
+    pub export: Option<ExportConfig>,
 }
 
 impl InstalledPlugin {
@@ -55,6 +59,7 @@ impl InstalledPlugin {
             added,
             capabilities: Vec::new(),
             detect: None,
+            export: None,
         }
     }
 
@@ -72,6 +77,24 @@ impl InstalledPlugin {
             added: AddedContent::default(),
             capabilities: manifest.imports.clone(),
             detect: manifest.detect.clone(),
+            export: None,
+        }
+    }
+
+    /// Build a registry record for an installed export adapter: its export
+    /// config travels with it so the delivery path can render + deliver stats.
+    pub fn from_export(manifest: &Manifest) -> Self {
+        Self {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            author: manifest.author.clone(),
+            version: manifest.version.clone(),
+            kind: manifest.kind,
+            public_key: manifest.signature.public_key.clone(),
+            added: AddedContent::default(),
+            capabilities: Vec::new(),
+            detect: None,
+            export: manifest.export.clone(),
         }
     }
 }
@@ -179,6 +202,7 @@ mod tests {
             },
             capabilities: Vec::new(),
             detect: None,
+            export: None,
         }
     }
 
@@ -196,6 +220,7 @@ mod tests {
             detect: Some(DetectConfig {
                 process_name: Some("zoom".to_string()),
             }),
+            export: None,
         }
     }
 

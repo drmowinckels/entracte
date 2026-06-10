@@ -45,6 +45,34 @@ pub fn prepare_content_install(
     Ok(manifest)
 }
 
+/// Validate an incoming export-plugin manifest end to end and return it ready
+/// to register. Like content, an export adapter is declarative (no wasm), so
+/// the signature is verified over the manifest alone. Runs: parse → schema
+/// validation (which checks the export config) → export-only gate → signature
+/// → not-already-installed.
+pub fn prepare_export_install(
+    manifest_json: &str,
+    registry: &PluginRegistry,
+) -> Result<Manifest, String> {
+    let manifest = parse_manifest(manifest_json)?;
+    validate_manifest(&manifest)?;
+
+    if manifest.kind != PluginKind::Export {
+        return Err("this installer handles export plugins only".to_string());
+    }
+
+    verify_signature(&manifest, None)?;
+
+    if registry.contains(&manifest.id) {
+        return Err(format!(
+            "plugin '{}' is already installed; remove it first",
+            manifest.id
+        ));
+    }
+
+    Ok(manifest)
+}
+
 /// A detector validated and ready to install: the manifest plus its decoded,
 /// signature-verified, sandbox-linkable wasm module.
 // Fields read by the install command in the next slice.
@@ -158,6 +186,7 @@ mod tests {
             abi_version: None,
             imports: vec![],
             detect: None,
+            export: None,
             content: Some(pack()),
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
@@ -178,6 +207,70 @@ mod tests {
         let m = prepare_content_install(&json, &PluginRegistry::default()).unwrap();
         assert_eq!(m.id, "com.example.pack");
         assert!(m.content.is_some());
+    }
+
+    fn signed_export_manifest_json(id: &str) -> String {
+        use crate::plugins::{ExportConfig, ExportFormat, ExportSink};
+        let mut m = Manifest {
+            manifest_version: crate::plugins::manifest::MANIFEST_VERSION,
+            id: id.to_string(),
+            name: "JSON export".to_string(),
+            version: "1.0.0".to_string(),
+            author: "Jane".to_string(),
+            description: String::new(),
+            kind: PluginKind::Export,
+            module: None,
+            module_base64: None,
+            abi_version: None,
+            imports: vec![],
+            detect: None,
+            export: Some(ExportConfig {
+                sink: ExportSink::Http,
+                format: ExportFormat::Json,
+                destination: "https://example.test/ingest".to_string(),
+                on: vec![crate::hooks::HookEvent::BreakEnd],
+            }),
+            content: None,
+            signature: super::super::manifest::Signature {
+                alg: "ed25519".to_string(),
+                public_key: String::new(),
+                sig: String::new(),
+            },
+        };
+        let key = SigningKey::from_bytes(&[12u8; 32]);
+        m.signature.public_key = BASE64_STANDARD.encode(key.verifying_key().to_bytes());
+        m.signature.sig = BASE64_STANDARD.encode(key.sign(&signing_payload(&m, None)).to_bytes());
+        serde_json::to_string(&m).unwrap()
+    }
+
+    #[test]
+    fn accepts_a_signed_export_plugin() {
+        let json = signed_export_manifest_json("com.example.exp");
+        let m = prepare_export_install(&json, &PluginRegistry::default()).unwrap();
+        assert_eq!(m.id, "com.example.exp");
+        assert!(m.export.is_some());
+    }
+
+    #[test]
+    fn export_install_rejects_a_content_manifest() {
+        // Routed to the wrong installer: a content manifest reaches the
+        // export path and is refused before anything else.
+        let json = signed_content_manifest_json("com.example.pack");
+        assert!(prepare_export_install(&json, &PluginRegistry::default())
+            .unwrap_err()
+            .contains("handles export plugins only"));
+    }
+
+    #[test]
+    fn export_install_rejects_an_already_installed_id() {
+        let json = signed_export_manifest_json("com.example.exp");
+        let mut reg = PluginRegistry::default();
+        reg.insert(InstalledPlugin::from_export(
+            &parse_manifest(&json).unwrap(),
+        ));
+        assert!(prepare_export_install(&json, &reg)
+            .unwrap_err()
+            .contains("already installed"));
     }
 
     #[test]
@@ -205,6 +298,7 @@ mod tests {
             added: Default::default(),
             capabilities: Vec::new(),
             detect: None,
+            export: None,
         });
         assert!(prepare_content_install(&json, &reg)
             .unwrap_err()
@@ -261,6 +355,7 @@ mod tests {
             detect: (import == "detect:processes").then(|| DetectConfig {
                 process_name: Some("zoom".to_string()),
             }),
+            export: None,
             content: None,
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
@@ -310,6 +405,7 @@ mod tests {
             detect: Some(DetectConfig {
                 process_name: Some("zoom".to_string()),
             }),
+            export: None,
             content: None,
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
@@ -435,6 +531,7 @@ mod tests {
             added: Default::default(),
             capabilities: Vec::new(),
             detect: None,
+            export: None,
         });
         assert!(prepare_detector_install(&json, &reg)
             .unwrap_err()

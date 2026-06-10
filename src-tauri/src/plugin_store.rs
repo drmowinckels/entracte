@@ -108,6 +108,7 @@ mod tests {
             added: Default::default(),
             capabilities: Vec::new(),
             detect: None,
+            export: None,
         });
         reg
     }
