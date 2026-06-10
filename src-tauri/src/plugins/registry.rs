@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::manifest::{Manifest, PluginKind};
+use super::manifest::{DetectConfig, Manifest, PluginKind};
 use crate::scheduler::content_pack::AddedContent;
 
 /// One installed plugin: provenance + what it added to settings.
@@ -27,8 +27,18 @@ pub struct InstalledPlugin {
     /// so a future update flow can detect a key change (TOFU pinning).
     pub public_key: String,
     /// The concrete content this plugin added, for a clean uninstall.
+    /// Empty for non-content plugins.
     #[serde(default)]
     pub added: AddedContent,
+    /// Granted capability strings (a detector's imports), so the eval worker
+    /// can rebuild the sandbox with exactly the consented host functions.
+    /// Empty for content plugins.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Detector configuration (the process pattern), threaded into the
+    /// sandbox context at eval time. `None` for non-detectors.
+    #[serde(default)]
+    pub detect: Option<DetectConfig>,
 }
 
 impl InstalledPlugin {
@@ -43,6 +53,25 @@ impl InstalledPlugin {
             kind: manifest.kind,
             public_key: manifest.signature.public_key.clone(),
             added,
+            capabilities: Vec::new(),
+            detect: None,
+        }
+    }
+
+    /// Build a registry record for an installed detector: its granted
+    /// capabilities and detect config travel with it so the eval worker can
+    /// reconstruct the sandbox. The module bytes live on disk, keyed by id.
+    pub fn from_detector(manifest: &Manifest) -> Self {
+        Self {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            author: manifest.author.clone(),
+            version: manifest.version.clone(),
+            kind: manifest.kind,
+            public_key: manifest.signature.public_key.clone(),
+            added: AddedContent::default(),
+            capabilities: manifest.imports.clone(),
+            detect: manifest.detect.clone(),
         }
     }
 }
@@ -128,6 +157,8 @@ mod tests {
                 routine_ids: vec!["r1".to_string()],
                 ..AddedContent::default()
             },
+            capabilities: Vec::new(),
+            detect: None,
         }
     }
 

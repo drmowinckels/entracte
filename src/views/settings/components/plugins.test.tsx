@@ -81,11 +81,12 @@ describe("Plugins", () => {
       if (cmd === "list_plugins") {
         return Promise.resolve(installed ? [summary()] : []);
       }
-      if (cmd === "install_content_plugin") {
+      if (cmd === "install_plugin") {
         installed = true;
         return Promise.resolve({
           id: "com.example.stretch",
           name: "Stretch pack",
+          kind: "content",
           hints_added: 2,
           routines_added: 1,
         });
@@ -98,7 +99,7 @@ describe("Plugins", () => {
     fireEvent.click(screen.getByRole("button", { name: /install plugin/i }));
 
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("install_content_plugin", {
+      expect(invoke).toHaveBeenCalledWith("install_plugin", {
         path: "/tmp/pack.json",
       }),
     );
@@ -114,7 +115,7 @@ describe("Plugins", () => {
     fireEvent.click(screen.getByRole("button", { name: /install plugin/i }));
     await waitFor(() => expect(openDialog).toHaveBeenCalled());
     expect(invoke).not.toHaveBeenCalledWith(
-      "install_content_plugin",
+      "install_plugin",
       expect.anything(),
     );
   });
@@ -166,7 +167,7 @@ describe("Plugins", () => {
     openDialog.mockResolvedValue("/tmp/bad.json");
     invoke.mockImplementation((cmd: string) => {
       if (cmd === "list_plugins") return Promise.resolve([]);
-      if (cmd === "install_content_plugin") {
+      if (cmd === "install_plugin") {
         return Promise.reject("signature does not match the manifest");
       }
       return Promise.resolve();

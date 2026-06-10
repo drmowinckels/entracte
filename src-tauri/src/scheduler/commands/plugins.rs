@@ -14,7 +14,10 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
-use crate::plugins::{prepare_content_install, InstalledPlugin, Manifest, PluginSummary};
+use crate::plugins::{
+    parse_manifest, prepare_content_install, prepare_detector_install, InstalledPlugin, Manifest,
+    PluginKind, PluginSummary, PreparedDetector,
+};
 use crate::scheduler::content_pack::{
     merge_pack_tracked, remove_content, AddedContent, MergeSummary,
 };
@@ -59,21 +62,40 @@ impl Drop for DialogBusyGuard {
     }
 }
 
-/// Result of an install, surfaced to the renderer.
+/// Result of an install, surfaced to the renderer. `hints_added` /
+/// `routines_added` are the content merge effect (zero for a detector).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct InstallOutcome {
     pub id: String,
     pub name: String,
+    pub kind: PluginKind,
     pub hints_added: usize,
     pub routines_added: usize,
 }
 
-/// Install a content plugin from `path`: read (size-capped), parse, validate,
-/// verify the signature, confirm via a native dialog, then merge its pack
-/// into the active profile and record what was added. Returns a summary of
-/// the effect. Errors are user-facing strings.
+/// A validated plugin awaiting consent + apply. Holds enough to show the
+/// confirmation dialog and then apply the right install path.
+enum Prepared {
+    Content(Manifest),
+    Detector(PreparedDetector),
+}
+
+impl Prepared {
+    fn manifest(&self) -> &Manifest {
+        match self {
+            Prepared::Content(m) => m,
+            Prepared::Detector(p) => &p.manifest,
+        }
+    }
+}
+
+/// Install a plugin from `path`: read (size-capped), validate (parse, schema,
+/// signature, and — for detectors — decode + sandbox link check), confirm via
+/// a native dialog, then apply. Content plugins merge their pack into the
+/// active profile; detector plugins persist their module and register their
+/// granted capabilities. Returns a summary of the effect.
 #[tauri::command]
-pub async fn install_content_plugin<R: Runtime>(
+pub async fn install_plugin<R: Runtime>(
     app: AppHandle<R>,
     webview: WebviewWindow<R>,
     scheduler: tauri::State<'_, Scheduler>,
@@ -82,11 +104,15 @@ pub async fn install_content_plugin<R: Runtime>(
     ensure_main_window(&webview)?;
     let text = read_manifest_text(&path)?;
 
-    // Validate against the current registry (parse, schema, signature,
-    // content-only, not-already-installed) before prompting.
-    let manifest = {
+    // Validate fully *before* prompting (so a bad plugin errors without
+    // touching the dialog), dispatching on the declared kind.
+    let prepared = {
         let registry = scheduler.plugins.lock().await;
-        prepare_content_install(&text, &registry)?
+        match parse_manifest(&text)?.kind {
+            PluginKind::Content => Prepared::Content(prepare_content_install(&text, &registry)?),
+            PluginKind::Detector => Prepared::Detector(prepare_detector_install(&text, &registry)?),
+            PluginKind::Export => return Err("export plugins aren't supported yet".to_string()),
+        }
     };
 
     if scheduler
@@ -102,11 +128,14 @@ pub async fn install_content_plugin<R: Runtime>(
         return Err("another plugin install is already pending".to_string());
     }
     let _guard = DialogBusyGuard(scheduler.plugin_dialog_busy.clone());
-    if !confirm_install(&app, &manifest).await {
+    if !confirm_install(&app, prepared.manifest()).await {
         return Err("user declined plugin install".to_string());
     }
 
-    Ok(apply_install(scheduler.inner(), &manifest).await)
+    match prepared {
+        Prepared::Content(manifest) => Ok(apply_install(scheduler.inner(), &manifest).await),
+        Prepared::Detector(prepared) => apply_detector_install(scheduler.inner(), &prepared).await,
+    }
 }
 
 /// Merge a validated content plugin into the active profile, record the
@@ -149,9 +178,36 @@ async fn apply_install(scheduler: &Scheduler, manifest: &Manifest) -> InstallOut
     InstallOutcome {
         id: manifest.id.clone(),
         name: manifest.name.clone(),
+        kind: PluginKind::Content,
         hints_added: summary.hints_added,
         routines_added: summary.routines_added,
     }
+}
+
+/// Persist a validated detector's module to disk and register it (granted
+/// capabilities + detect config travel in the record). Split out so it's
+/// unit-testable without a `WebviewWindow`/dialog. The module bytes are
+/// written first; only on success is the registry updated and persisted, so a
+/// failed write leaves no dangling record.
+async fn apply_detector_install(
+    scheduler: &Scheduler,
+    prepared: &PreparedDetector,
+) -> Result<InstallOutcome, String> {
+    let manifest = &prepared.manifest;
+    crate::plugin_store::save_module(&scheduler.plugins_path, &manifest.id, &prepared.module)
+        .map_err(|e| format!("failed to save plugin module: {e}"))?;
+    {
+        let mut registry = scheduler.plugins.lock().await;
+        registry.insert(InstalledPlugin::from_detector(manifest));
+    }
+    persist_plugins(scheduler).await;
+    Ok(InstallOutcome {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        kind: PluginKind::Detector,
+        hints_added: 0,
+        routines_added: 0,
+    })
 }
 
 /// Uninstall the plugin `id`: remove exactly the content it added from the
@@ -176,6 +232,11 @@ async fn uninstall_by_id(scheduler: &Scheduler, id: &str) -> Result<MergeSummary
     let Some(record) = removed else {
         return Err(format!("plugin '{id}' is not installed"));
     };
+    // A detector's module lives on disk; drop it too.
+    if record.kind == PluginKind::Detector {
+        crate::plugin_store::delete_module(&scheduler.plugins_path, id);
+    }
+    // Content removal is a no-op for a detector (its `added` is empty).
     let outcome = apply_uninstall(scheduler, &record.added).await;
     persist_plugins(scheduler).await;
     Ok(outcome)
@@ -245,24 +306,11 @@ async fn confirm_install<R: Runtime>(app: &AppHandle<R>, manifest: &Manifest) ->
 /// familiar author and spot a substituted one.
 const KEY_FINGERPRINT_CHARS: usize = 16;
 
-fn format_install_summary(manifest: &Manifest) -> String {
-    let pack_hints = manifest
-        .content
-        .as_ref()
-        .map(|p| {
-            p.hints.micro_physical.len()
-                + p.hints.micro_psychological.len()
-                + p.hints.long_solo.len()
-                + p.hints.long_social.len()
-                + p.hints.sleep.len()
-        })
-        .unwrap_or(0);
-    let pack_routines = manifest
-        .content
-        .as_ref()
-        .map(|p| p.routines.len())
-        .unwrap_or(0);
+/// Most capabilities shown in full in the dialog before truncating, so a long
+/// (or padded) import list can't push the safety text off-screen.
+const DIALOG_MAX_CAPABILITIES_SHOWN: usize = 12;
 
+fn format_install_summary(manifest: &Manifest) -> String {
     let author = if manifest.author.trim().is_empty() {
         "(unknown author)".to_string()
     } else {
@@ -276,8 +324,7 @@ fn format_install_summary(manifest: &Manifest) -> String {
         .collect();
 
     let mut s = String::new();
-    s.push_str("⚠ Only click Install if you chose this plugin file yourself.\n");
-    s.push_str("Installing adds its break ideas and routines to your active profile.\n\n");
+    s.push_str("⚠ Only click Install if you chose this plugin file yourself.\n\n");
     s.push_str(&format!(
         "Plugin: {}\n",
         sanitize_for_dialog(&manifest.name, 120)
@@ -288,9 +335,45 @@ fn format_install_summary(manifest: &Manifest) -> String {
         sanitize_for_dialog(&manifest.version, 40)
     ));
     s.push_str(&format!("Signing key: {key}…\n\n"));
-    s.push_str(&format!(
-        "Adds up to {pack_hints} idea(s) and {pack_routines} routine(s) (duplicates are skipped).\n"
-    ));
+
+    match manifest.kind {
+        PluginKind::Content => {
+            let hints = manifest
+                .content
+                .as_ref()
+                .map(|p| {
+                    p.hints.micro_physical.len()
+                        + p.hints.micro_psychological.len()
+                        + p.hints.long_solo.len()
+                        + p.hints.long_social.len()
+                        + p.hints.sleep.len()
+                })
+                .unwrap_or(0);
+            let routines = manifest
+                .content
+                .as_ref()
+                .map(|p| p.routines.len())
+                .unwrap_or(0);
+            s.push_str(&format!(
+                "Adds up to {hints} idea(s) and {routines} routine(s) (duplicates are skipped).\n"
+            ));
+        }
+        PluginKind::Detector | PluginKind::Export => {
+            s.push_str("This plugin runs sandboxed code and is granted ONLY these permissions:\n");
+            if manifest.imports.is_empty() {
+                s.push_str("• (none)\n");
+            }
+            for cap in manifest.imports.iter().take(DIALOG_MAX_CAPABILITIES_SHOWN) {
+                s.push_str(&format!("• {}\n", sanitize_for_dialog(cap, 120)));
+            }
+            if manifest.imports.len() > DIALOG_MAX_CAPABILITIES_SHOWN {
+                s.push_str(&format!(
+                    "• … and {} more\n",
+                    manifest.imports.len() - DIALOG_MAX_CAPABILITIES_SHOWN
+                ));
+            }
+        }
+    }
     s
 }
 
@@ -365,6 +448,91 @@ mod tests {
                 sig: String::new(),
             },
         }
+    }
+
+    fn detector_manifest(id: &str) -> Manifest {
+        use crate::plugins::DetectConfig;
+        Manifest {
+            manifest_version: crate::plugins::MANIFEST_VERSION,
+            id: id.to_string(),
+            name: "Focus detector".to_string(),
+            version: "1.0.0".to_string(),
+            author: "Jane".to_string(),
+            description: String::new(),
+            kind: PluginKind::Detector,
+            module: Some("module.wasm".to_string()),
+            module_base64: None,
+            abi_version: Some(crate::plugins::SUPPORTED_ABI_VERSION),
+            imports: vec!["detect:processes".to_string()],
+            detect: Some(DetectConfig {
+                process_name: Some("zoom".to_string()),
+            }),
+            content: None,
+            signature: Signature {
+                alg: "ed25519".to_string(),
+                public_key: "QUJDREVGR0hJSktMTU5PUA==".to_string(),
+                sig: String::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_detector_install_persists_module_and_record_uninstall_removes_both() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let prepared = PreparedDetector {
+            manifest: detector_manifest("com.example.focus"),
+            module: b"\0asm fake module".to_vec(),
+        };
+        let outcome = apply_detector_install(&sched, &prepared).await.unwrap();
+        assert_eq!(outcome.kind, PluginKind::Detector);
+
+        let module_path =
+            crate::plugin_store::module_path(&sched.plugins_path, "com.example.focus");
+        assert!(module_path.exists(), "module persisted to disk");
+        {
+            let reg = sched.plugins.lock().await;
+            assert!(reg.contains("com.example.focus"));
+        }
+
+        // Uninstall drops both the registry record and the module file.
+        uninstall_by_id(&sched, "com.example.focus").await.unwrap();
+        assert!(!module_path.exists(), "module deleted on uninstall");
+        assert!(!sched.plugins.lock().await.contains("com.example.focus"));
+    }
+
+    #[test]
+    fn prepared_manifest_accessor_returns_the_inner_manifest() {
+        let content = Prepared::Content(content_manifest("com.example.c"));
+        assert_eq!(content.manifest().id, "com.example.c");
+        let detector = Prepared::Detector(PreparedDetector {
+            manifest: detector_manifest("com.example.d"),
+            module: vec![0, 1, 2],
+        });
+        assert_eq!(detector.manifest().id, "com.example.d");
+    }
+
+    #[test]
+    fn format_install_summary_lists_capabilities_for_a_detector() {
+        let s = format_install_summary(&detector_manifest("com.example.focus"));
+        assert!(s.contains("ONLY these permissions"));
+        assert!(s.contains("detect:processes"));
+        let warn = s.find("Only click Install").unwrap();
+        let perms = s.find("ONLY these permissions").unwrap();
+        assert!(warn < perms, "safety warning must come first");
+    }
+
+    #[test]
+    fn format_install_summary_handles_no_and_many_capabilities() {
+        let mut m = detector_manifest("com.example.focus");
+        m.imports = vec![];
+        assert!(format_install_summary(&m).contains("(none)"));
+
+        m.imports = (0..15).map(|i| format!("detect:file:/p/{i}")).collect();
+        let s = format_install_summary(&m);
+        assert!(
+            s.contains("and 3 more"),
+            "15 caps minus the {DIALOG_MAX_CAPABILITIES_SHOWN} shown = 3 more"
+        );
     }
 
     #[tokio::test]
@@ -530,7 +698,7 @@ mod tests {
 // `State`, driven through `tauri::test`'s MockRuntime. Gated off Windows
 // like the rest of the mock-app rig (see Cargo.toml). These cover the
 // command wrappers around the unit-tested cores: the main-window gate,
-// `list_plugins`, `uninstall_plugin`, and `install_content_plugin`'s
+// `list_plugins`, `uninstall_plugin`, and `install_plugin`'s
 // pre-dialog error paths. The native confirmation dialog itself can't be
 // driven headless, so the post-consent install path is covered via
 // `apply_install` in the unit tests above.
@@ -561,6 +729,8 @@ mod mock_app_tests {
                 micro_physical: vec!["Stretch".to_string()],
                 ..AddedContent::default()
             },
+            capabilities: Vec::new(),
+            detect: None,
         }
     }
 
@@ -608,7 +778,7 @@ mod mock_app_tests {
     async fn install_rejects_a_non_main_window_before_any_dialog() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
         let app = wrap_in_mock_app(sched);
-        let err = install_content_plugin(
+        let err = install_plugin(
             app.handle().clone(),
             webview(&app, "overlay"),
             app.state::<Scheduler>(),
@@ -623,7 +793,7 @@ mod mock_app_tests {
     async fn install_reports_an_unreadable_file_before_any_dialog() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
         let app = wrap_in_mock_app(sched);
-        let err = install_content_plugin(
+        let err = install_plugin(
             app.handle().clone(),
             webview(&app, MAIN_WINDOW_LABEL),
             app.state::<Scheduler>(),
@@ -641,7 +811,7 @@ mod mock_app_tests {
         let dir = temp_dir();
         let path = dir.path().join("bad.json");
         std::fs::write(&path, b"{ not a manifest").unwrap();
-        let err = install_content_plugin(
+        let err = install_plugin(
             app.handle().clone(),
             webview(&app, MAIN_WINDOW_LABEL),
             app.state::<Scheduler>(),
@@ -709,7 +879,7 @@ mod mock_app_tests {
         let app = wrap_in_mock_app(sched);
         let dir = temp_dir();
         let path = write_signed_content_plugin(dir.path());
-        let err = install_content_plugin(
+        let err = install_plugin(
             app.handle().clone(),
             webview(&app, MAIN_WINDOW_LABEL),
             app.state::<Scheduler>(),
@@ -718,5 +888,53 @@ mod mock_app_tests {
         .await
         .unwrap_err();
         assert!(err.contains("another plugin install is already pending"));
+    }
+
+    #[tokio::test]
+    async fn install_rejects_an_export_plugin_as_unsupported() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let app = wrap_in_mock_app(sched);
+        let dir = temp_dir();
+        let path = dir.path().join("export.json");
+        // Minimal parseable export manifest — the kind is peeked and rejected
+        // before any validation, so it needn't be otherwise well-formed.
+        std::fs::write(
+            &path,
+            r#"{"manifest_version":1,"id":"com.x.exp","name":"E","version":"1.0.0","kind":"export","signature":{"alg":"ed25519","public_key":"","sig":""}}"#,
+        )
+        .unwrap();
+        let err = install_plugin(
+            app.handle().clone(),
+            webview(&app, MAIN_WINDOW_LABEL),
+            app.state::<Scheduler>(),
+            path.display().to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("export plugins aren't supported yet"));
+    }
+
+    #[tokio::test]
+    async fn install_routes_to_the_detector_path_and_surfaces_its_errors() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let app = wrap_in_mock_app(sched);
+        let dir = temp_dir();
+        let path = dir.path().join("det.json");
+        // A valid detector manifest with no embedded module: routing reaches
+        // the detector installer, which rejects it before any dialog.
+        std::fs::write(
+            &path,
+            r#"{"manifest_version":1,"id":"com.x.det","name":"D","version":"1.0.0","kind":"detector","module":"m.wasm","abi_version":1,"imports":["detect:processes"],"detect":{"process_name":"zoom"},"signature":{"alg":"ed25519","public_key":"","sig":""}}"#,
+        )
+        .unwrap();
+        let err = install_plugin(
+            app.handle().clone(),
+            webview(&app, MAIN_WINDOW_LABEL),
+            app.state::<Scheduler>(),
+            path.display().to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("missing its module"));
     }
 }

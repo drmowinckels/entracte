@@ -4,7 +4,7 @@
 //! empty registry rather than failing startup.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use log::error;
 
@@ -14,6 +14,37 @@ use crate::secure_io::{read_capped, write_user_only};
 /// Defensive cap on the registry file. Generous: each record is small
 /// provenance + a list of the strings the plugin added.
 const MAX_REGISTRY_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Directory holding installed detector/export module binaries, beside
+/// `plugins.json`.
+fn modules_dir(registry_path: &Path) -> PathBuf {
+    match registry_path.parent() {
+        Some(dir) => dir.join("plugin-modules"),
+        None => PathBuf::from("plugin-modules"),
+    }
+}
+
+/// On-disk path for plugin `id`'s wasm module. `id` is reverse-DNS
+/// (`[a-z0-9.-]`, validated at install) so `{id}.wasm` is always a single
+/// filename component — no path separators, no traversal.
+pub fn module_path(registry_path: &Path, id: &str) -> PathBuf {
+    modules_dir(registry_path).join(format!("{id}.wasm"))
+}
+
+/// Atomically persist a plugin's wasm module with owner-only permissions.
+pub fn save_module(registry_path: &Path, id: &str, bytes: &[u8]) -> io::Result<()> {
+    write_user_only(&module_path(registry_path, id), bytes)
+}
+
+/// Remove a plugin's module file. Missing is fine (idempotent uninstall).
+pub fn delete_module(registry_path: &Path, id: &str) {
+    let path = module_path(registry_path, id);
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != io::ErrorKind::NotFound {
+            error!("plugin_store: failed to remove {}: {e}", path.display());
+        }
+    }
+}
 
 /// Load the registry, defaulting to empty on a missing or malformed file.
 pub fn load(path: &Path) -> PluginRegistry {
@@ -58,6 +89,8 @@ mod tests {
             kind: PluginKind::Content,
             public_key: "AA==".to_string(),
             added: Default::default(),
+            capabilities: Vec::new(),
+            detect: None,
         });
         reg
     }
@@ -66,6 +99,41 @@ mod tests {
     fn missing_file_loads_empty() {
         let (_d, path) = temp_path();
         assert_eq!(load(&path), PluginRegistry::default());
+    }
+
+    #[test]
+    fn module_save_load_delete_round_trip() {
+        let (_d, path) = temp_path();
+        let mp = module_path(&path, "com.x.detector");
+        assert_eq!(mp.file_name().unwrap(), "com.x.detector.wasm");
+        assert!(mp.starts_with(path.parent().unwrap().join("plugin-modules")));
+
+        save_module(&path, "com.x.detector", b"\0asm bytes").unwrap();
+        assert_eq!(std::fs::read(&mp).unwrap(), b"\0asm bytes");
+
+        delete_module(&path, "com.x.detector");
+        assert!(!mp.exists());
+        // Idempotent: deleting again is a no-op, not an error.
+        delete_module(&path, "com.x.detector");
+    }
+
+    #[test]
+    fn module_path_falls_back_when_registry_has_no_parent() {
+        // A bare path has no parent dir; modules still resolve to a relative
+        // `plugin-modules/` rather than panicking.
+        let p = module_path(Path::new(""), "com.x.detector");
+        assert_eq!(p, Path::new("plugin-modules").join("com.x.detector.wasm"));
+    }
+
+    #[test]
+    fn delete_module_logs_and_continues_when_the_path_is_not_removable() {
+        // A directory where the module file would be: `remove_file` fails with
+        // a non-NotFound error, which is logged rather than panicking.
+        let (_d, path) = temp_path();
+        let mp = module_path(&path, "com.x.detector");
+        std::fs::create_dir_all(&mp).unwrap();
+        delete_module(&path, "com.x.detector"); // must not panic
+        assert!(mp.exists(), "the directory is left in place");
     }
 
     #[test]

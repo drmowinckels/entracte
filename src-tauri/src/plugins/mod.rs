@@ -34,7 +34,7 @@ pub use registry::{InstalledPlugin, PluginRegistry, PluginSummary};
 // its consumers.
 #[allow(unused_imports)]
 pub use manifest::{
-    parse_manifest, validate_manifest, Capability, Manifest, PluginKind, Signature,
+    parse_manifest, validate_manifest, Capability, DetectConfig, Manifest, PluginKind, Signature,
     MANIFEST_VERSION, SUPPORTED_ABI_VERSION,
 };
 #[allow(unused_imports)]

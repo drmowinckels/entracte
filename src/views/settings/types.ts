@@ -100,6 +100,7 @@ export type PluginSummary = {
 export type InstallOutcome = {
   id: string;
   name: string;
+  kind: PluginKind;
   hints_added: number;
   routines_added: number;
 };
