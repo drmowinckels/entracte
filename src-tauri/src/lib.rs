@@ -150,7 +150,7 @@ pub fn run() {
             scheduler::import_backup_from_path,
             scheduler::import_content_pack,
             scheduler::export_content_pack,
-            scheduler::install_content_plugin,
+            scheduler::install_plugin,
             scheduler::uninstall_plugin,
             scheduler::list_plugins,
             scheduler::get_pause_info,

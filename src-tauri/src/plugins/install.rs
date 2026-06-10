@@ -202,6 +202,8 @@ mod tests {
             kind: PluginKind::Content,
             public_key: "AA==".to_string(),
             added: Default::default(),
+            capabilities: Vec::new(),
+            detect: None,
         });
         assert!(prepare_content_install(&json, &reg)
             .unwrap_err()
@@ -430,6 +432,8 @@ mod tests {
             kind: PluginKind::Detector,
             public_key: "AA==".to_string(),
             added: Default::default(),
+            capabilities: Vec::new(),
+            detect: None,
         });
         assert!(prepare_detector_install(&json, &reg)
             .unwrap_err()

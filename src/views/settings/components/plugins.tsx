@@ -47,16 +47,17 @@ export function Plugins({
       });
       if (typeof path !== "string" || !path) return;
       setBusy(true);
-      const outcome = await invoke<InstallOutcome>("install_content_plugin", {
-        path,
-      });
+      const outcome = await invoke<InstallOutcome>("install_plugin", { path });
       await Promise.all([refresh(), reload()]);
-      const ideas = `${outcome.hints_added} idea${outcome.hints_added === 1 ? "" : "s"}`;
-      const routines = `${outcome.routines_added} routine${outcome.routines_added === 1 ? "" : "s"}`;
-      setStatus({
-        kind: "ok",
-        message: `Installed "${outcome.name}" — added ${ideas} and ${routines}.`,
-      });
+      const message =
+        outcome.kind === "content"
+          ? `Installed "${outcome.name}" — added ${outcome.hints_added} idea${
+              outcome.hints_added === 1 ? "" : "s"
+            } and ${outcome.routines_added} routine${
+              outcome.routines_added === 1 ? "" : "s"
+            }.`
+          : `Installed "${outcome.name}".`;
+      setStatus({ kind: "ok", message });
     } catch (e) {
       setStatus({ kind: "err", message: `Install failed: ${e}` });
     } finally {
