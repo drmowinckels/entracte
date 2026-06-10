@@ -243,6 +243,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                     HookEvent::BreakStart,
                     HookContext::with_kind_duration(BreakKind::Sleep, s.bedtime_duration_secs),
                 );
+                super::exports::deliver_on_event(&sched, HookEvent::BreakStart);
                 sched.logger.log(EventPayload::BreakStart {
                     kind: BreakKind::Sleep,
                     duration_secs: s.bedtime_duration_secs,
@@ -558,6 +559,7 @@ async fn deliver_scheduled_break<R: Runtime>(
         HookEvent::BreakStart,
         HookContext::with_kind_duration(kind, duration_secs),
     );
+    super::exports::deliver_on_event(sched, HookEvent::BreakStart);
     sched.logger.log(EventPayload::BreakStart {
         kind,
         duration_secs,
