@@ -107,6 +107,28 @@ describe("Plugins", () => {
     expect(await screen.findByText(/Installed "Stretch pack"/)).toBeTruthy();
   });
 
+  it("reports a detector install without idea/routine counts", async () => {
+    openDialog.mockResolvedValue("/tmp/detector.json");
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_plugins") return Promise.resolve([]);
+      if (cmd === "install_plugin") {
+        return Promise.resolve({
+          id: "com.example.focus",
+          name: "Focus detector",
+          kind: "detector",
+          hints_added: 0,
+          routines_added: 0,
+        });
+      }
+      return Promise.resolve();
+    });
+    render(<Plugins reload={async () => {}} />);
+    await screen.findByText("No plugins installed.");
+    fireEvent.click(screen.getByRole("button", { name: /install plugin/i }));
+    const status = await screen.findByText(/Installed "Focus detector"\./);
+    expect(status.textContent).not.toMatch(/idea|routine/);
+  });
+
   it("does nothing when the file dialog is cancelled", async () => {
     openDialog.mockResolvedValue(null);
     invoke.mockResolvedValue([]);
