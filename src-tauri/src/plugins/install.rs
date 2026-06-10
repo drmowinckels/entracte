@@ -114,6 +114,7 @@ pub fn prepare_detector_install(
             .detect
             .as_ref()
             .and_then(|d| d.process_name.clone()),
+        ..Default::default()
     };
     build_sandboxed_plugin(&module, &capabilities, &ctx)
         .map_err(|e| format!("plugin module failed the sandbox link check: {e}"))?;

@@ -26,6 +26,8 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use extism::{
@@ -35,13 +37,23 @@ use extism::{
 use super::detect;
 use super::manifest::Capability;
 
+/// The host-function name a detector calls to vote "suppress the next break".
+/// Ungated (every detector may report a verdict) and always registered, so a
+/// detector module always links against it.
+const HOST_SUPPRESS: &str = "host_suppress";
+
 /// Per-install context the host functions need beyond the capability scopes
-/// themselves. The `detect:file:<path>` scope lives in the capability; the
-/// process pattern a `detect:processes` grant matches against comes from the
-/// manifest's detect config and is threaded in here.
+/// themselves, plus the verdict channel.
 #[derive(Debug, Clone, Default)]
 pub struct SandboxContext {
+    /// The process pattern a `detect:processes` grant matches against (from
+    /// the manifest's detect config). The `detect:file:<path>` scope lives in
+    /// the capability itself.
     pub process_pattern: Option<String>,
+    /// Set `true` when the module calls `host_suppress()` during a `detect()`
+    /// run. The evaluator resets it before each run and reads it after, so a
+    /// cached plugin's verdict is fresh each cycle.
+    pub verdict: Arc<AtomicBool>,
 }
 
 /// Memory ceiling for a plugin instance, in 64 KiB wasm pages. 64 pages =
@@ -172,6 +184,19 @@ pub fn build_sandboxed_plugin(
         .with_wasi(false)
         .with_fuel_limit(DEFAULT_FUEL);
 
+    // The ungated verdict channel: calling it flips the shared flag.
+    let verdict = ctx.verdict.clone();
+    builder = builder.with_function(
+        HOST_SUPPRESS,
+        [],
+        [],
+        UserData::new(verdict),
+        |_p, _in, _out, ud| {
+            ud.get()?.lock().unwrap().store(true, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+
     let mut registered: Vec<&str> = Vec::new();
     for cap in capabilities {
         let name = host_function_name(cap);
@@ -185,6 +210,32 @@ pub fn build_sandboxed_plugin(
     builder
         .build()
         .map_err(|e| format!("plugin failed to load in the sandbox: {e}"))
+}
+
+/// Build a detector from its module + granted capabilities, run its `detect()`
+/// export once, and return whether it voted to suppress (by calling
+/// `host_suppress`). A module that fails to build, has no `detect` export, or
+/// traps is treated as **no suppression** — a broken detector never blocks a
+/// break. Pure aside from the probes the granted host functions perform.
+pub fn evaluate_detector(
+    module: &[u8],
+    capabilities: &[Capability],
+    process_pattern: Option<String>,
+) -> bool {
+    let ctx = SandboxContext {
+        process_pattern,
+        verdict: Arc::new(AtomicBool::new(false)),
+    };
+    let verdict = ctx.verdict.clone();
+    let mut plugin = match build_sandboxed_plugin(module, capabilities, &ctx) {
+        Ok(plugin) => plugin,
+        Err(_) => return false,
+    };
+    verdict.store(false, Ordering::Relaxed);
+    // We don't care about the call's output/return — only whether the module
+    // reported a verdict before returning or trapping.
+    let _ = plugin.call::<&str, &str>("detect", "");
+    verdict.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -256,6 +307,7 @@ mod tests {
             &[Capability::DetectProcesses],
             &SandboxContext {
                 process_pattern: Some("entracte".to_string()),
+                ..Default::default()
             },
         )
         .expect("granted detect:processes builds");
@@ -271,6 +323,7 @@ mod tests {
             &[Capability::DetectProcesses],
             &SandboxContext {
                 process_pattern: Some("entracte-no-such-process-zzz".to_string()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -334,6 +387,59 @@ mod tests {
             Capability::DetectFile("/tmp/b.flag".to_string()),
         ];
         assert!(build_sandboxed_plugin(&module, &grants, &SandboxContext::default()).is_ok());
+    }
+
+    /// A detector module that votes to suppress (via `host_suppress`) when
+    /// the granted `host_process_running` probe matches.
+    fn suppress_if_process_module() -> Vec<u8> {
+        wasm(
+            r#"(module
+                 (import "extism:host/user" "host_process_running" (func $proc (result i64)))
+                 (import "extism:host/user" "host_suppress" (func $suppress))
+                 (memory (export "memory") 1)
+                 (func (export "detect") (result i32)
+                   (if (i64.ne (call $proc) (i64.const 0)) (then (call $suppress)))
+                   (i32.const 0)))"#,
+        )
+    }
+
+    #[test]
+    fn evaluate_detector_reports_the_modules_verdict() {
+        let module = suppress_if_process_module();
+        // "entracte" matches the live test binary → module votes suppress.
+        assert!(evaluate_detector(
+            &module,
+            &[Capability::DetectProcesses],
+            Some("entracte".to_string())
+        ));
+        // A pattern matching nothing → no vote → no suppression.
+        assert!(!evaluate_detector(
+            &module,
+            &[Capability::DetectProcesses],
+            Some("entracte-no-such-process-zzz".to_string())
+        ));
+    }
+
+    #[test]
+    fn evaluate_detector_is_false_when_the_module_does_not_vote() {
+        // `detect` exists but calls nothing — no verdict reported.
+        let module = wasm(
+            r#"(module
+                 (memory (export "memory") 1)
+                 (func (export "detect") (result i32) (i32.const 0)))"#,
+        );
+        assert!(!evaluate_detector(&module, &[], None));
+    }
+
+    #[test]
+    fn evaluate_detector_treats_a_broken_module_as_no_suppression() {
+        // No `detect` export → the call fails → false, not a blocked break.
+        let no_export = wasm(r#"(module (memory (export "memory") 1))"#);
+        assert!(!evaluate_detector(&no_export, &[], None));
+
+        // Imports an ungranted host function → fails to build → false.
+        let ungranted = trap_if_true_module("host_foreground_window");
+        assert!(!evaluate_detector(&ungranted, &[], None));
     }
 
     #[test]
