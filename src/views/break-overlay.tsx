@@ -115,9 +115,21 @@ export default function BreakOverlay() {
   // own countdown and takes the place of the rotating hint. With none
   // selected (empty steps) the overlay falls back to the hint above.
   const routineSteps = active.routine_steps ?? [];
+  // Effective pacing: the routine's own declared pacing takes precedence;
+  // fall back to the global `routine_fill` toggle when absent.
+  const effectivePacing =
+    active.routine_pacing ??
+    (appearance.routine_fill ? ("fill" as const) : undefined);
   const routine = routineProgress(
     routineSteps,
     active.duration_secs - remaining,
+    effectivePacing !== undefined
+      ? {
+          fillToSecs: active.duration_secs,
+          pacing: effectivePacing,
+          maxStepSecs: active.routine_max_step_secs,
+        }
+      : undefined,
   );
   const routineText = routine ? routineSteps[routine.index].text : "";
   const intensity = clamp01(active.health_intensity);

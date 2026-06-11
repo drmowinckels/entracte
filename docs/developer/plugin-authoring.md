@@ -98,6 +98,37 @@ The pack has a `version` (currently `1`), a `name`, a `hints` object grouping id
 The five hint pools — `micro_physical`, `micro_psychological`, `long_solo`, `long_social`, `sleep` — match Entracte's own idea categories, and any pool you leave out is treated as empty.
 A routine's `kind` is `micro` or `long`; its `category` is `eyes`, `mobility`, `breathing`, or `desk_yoga`; its `difficulty` is `gentle`, `moderate`, or `active`; and each step is a line of `text` and a number of `seconds`.
 
+### Routine pacing
+
+A routine can optionally declare a `pacing` field to control how its step durations relate to the break length.
+When absent, the user's global **Spread routine steps across the whole break** toggle in Settings → Breaks decides.
+
+| `pacing` value | Step `seconds` meaning | Behaviour |
+| -------------- | ---------------------- | --------- |
+| `"hold"` (default) | Absolute seconds | Steps play at their authored duration. Once the routine finishes the last step is held until the break ends; if the routine is longer than the break it is truncated. |
+| `"fill"` | Relative weights | Step durations are scaled proportionally so the whole sequence exactly fills the break. A 5-second step and a 10-second step in a 30-second break become 10 s and 20 s respectively. |
+| `"loop"` | Absolute seconds | Steps play at their authored durations and restart from step 0 when the sequence finishes, looping until the break ends. Suited to repeating cycles like breathing patterns. |
+
+The optional `max_step_secs` field (a positive integer, maximum `3600`) only applies to `"fill"` pacing.
+If scaling would push any step past this cap, the routine automatically falls back to `"loop"` mode — preserving the authored tempo instead of producing an uncomfortably long hold.
+
+```json
+{
+  "id": "box-breathing",
+  "label": "Box breathing",
+  "kind": "micro",
+  "category": "breathing",
+  "difficulty": "gentle",
+  "pacing": "loop",
+  "steps": [
+    { "text": "Breathe in for four counts", "seconds": 4 },
+    { "text": "Hold for four counts", "seconds": 4 },
+    { "text": "Breathe out for four counts", "seconds": 4 },
+    { "text": "Hold empty for four counts", "seconds": 4 }
+  ]
+}
+```
+
 Merging is additive and idempotent.
 An idea that already exists word-for-word is skipped, and a routine whose `id` collides with one already installed is skipped too, so installing your pack can never clobber what a user typed themselves.
 

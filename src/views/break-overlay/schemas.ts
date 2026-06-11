@@ -41,6 +41,7 @@ export const overlaySettingsSchema = z.object({
   pause_countdown_if_typing: z.boolean(),
   strict_mode: z.boolean(),
   custom_css: z.string(),
+  routine_fill: z.boolean(),
 }) satisfies z.ZodType<OverlaySettings>;
 
 const routineStepSchema = z.object({
@@ -61,6 +62,10 @@ export const breakEventSchema = z.object({
   // Always present on the wire; default keeps older payloads / fixtures that
   // omit it parsing to an empty routine (overlay falls back to hints).
   routine_steps: z.array(routineStepSchema).optional().default([]),
+  // Optional: the routine's own declared pacing. Absent means the overlay
+  // falls back to the global `routine_fill` setting.
+  routine_pacing: z.enum(["hold", "fill", "loop"]).optional(),
+  routine_max_step_secs: z.number().optional(),
 }) satisfies z.ZodType<BreakEvent>;
 
 export const postponeStateSchema = z.object({

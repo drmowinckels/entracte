@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::settings::Settings;
-use super::types::{BreakKind, RoutineStep};
+use super::types::{BreakKind, RoutinePacing, RoutineStep};
 
 /// Which break kind a routine is offered for. Sleep has no routines.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,6 +67,11 @@ impl RoutineDifficulty {
 /// (persisted in settings), a human `label`, and engine metadata
 /// (`category` / `difficulty`). `Deserialize` so user routines can arrive
 /// from imported content packs (#155) and persist in `Settings`.
+///
+/// The optional `pacing` field declares how step durations relate to the
+/// break length (see [`RoutinePacing`]); absent means the global
+/// `routine_fill` setting decides. `max_step_secs` caps the duration of
+/// any single fill-scaled step before the overlay falls back to loop mode.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Routine {
     pub id: String,
@@ -75,6 +80,10 @@ pub struct Routine {
     pub category: RoutineCategory,
     pub difficulty: RoutineDifficulty,
     pub steps: Vec<RoutineStep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pacing: Option<RoutinePacing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_step_secs: Option<u64>,
 }
 
 fn step(text: &str, seconds: u64) -> RoutineStep {
@@ -99,6 +108,8 @@ fn routine(
         category,
         difficulty,
         steps,
+        pacing: None,
+        max_step_secs: None,
     }
 }
 
@@ -277,11 +288,35 @@ fn random_index(n: usize) -> usize {
     (u64::from_le_bytes(buf) % n as u64) as usize
 }
 
-/// Resolve the guided-routine steps for a break of `kind` from the user's
-/// per-kind settings: `""` → none, a routine id → that routine, `"random"` →
-/// the engine picks one from the filtered pool. Unknown ids and the `Sleep`
-/// kind resolve to no routine (the overlay falls back to hint rotation).
-pub fn resolve_routine_steps(kind: BreakKind, s: &Settings) -> Vec<RoutineStep> {
+/// Steps + pacing metadata resolved for a single break, produced by a
+/// single [`random_index`] call so all three fields always come from the
+/// same routine draw.
+pub struct ResolvedRoutine {
+    pub steps: Vec<RoutineStep>,
+    /// The routine's own declared [`RoutinePacing`], if any. `None` means
+    /// the frontend should fall back to the global `routine_fill` setting.
+    pub pacing: Option<RoutinePacing>,
+    /// Per-step duration cap for fill-mode routines. See [`RoutinePacing::Fill`].
+    pub max_step_secs: Option<u64>,
+}
+
+impl ResolvedRoutine {
+    fn empty() -> Self {
+        Self {
+            steps: Vec::new(),
+            pacing: None,
+            max_step_secs: None,
+        }
+    }
+}
+
+/// Resolve the guided routine for a break of `kind` from the user's
+/// per-kind settings: `""` → none, a routine id → that routine,
+/// `"random"` → the engine picks one from the filtered pool. Unknown ids
+/// and the `Sleep` kind resolve to an empty routine. A single
+/// [`random_index`] call is made so steps and pacing always come from the
+/// same pick.
+pub fn resolve_routine(kind: BreakKind, s: &Settings) -> ResolvedRoutine {
     let (id, categories, max_difficulty) = match kind {
         BreakKind::Micro => (
             s.micro_routine.as_str(),
@@ -293,27 +328,36 @@ pub fn resolve_routine_steps(kind: BreakKind, s: &Settings) -> Vec<RoutineStep> 
             &s.long_routine_categories,
             s.long_routine_max_difficulty,
         ),
-        BreakKind::Sleep => return Vec::new(),
+        BreakKind::Sleep => return ResolvedRoutine::empty(),
     };
     let routines = all_routines(s);
-    match id {
-        "" => Vec::new(),
+    let found: Option<Routine> = match id {
+        "" => None,
         "random" => {
-            let count = routines_matching(&routines, kind, categories, max_difficulty).len();
-            select_routine_steps(
-                &routines,
-                kind,
-                categories,
-                max_difficulty,
-                random_index(count),
-            )
+            let matching = routines_matching(&routines, kind, categories, max_difficulty);
+            if matching.is_empty() {
+                None
+            } else {
+                let idx = random_index(matching.len());
+                Some(matching[idx % matching.len()].clone())
+            }
         }
-        other => routines
-            .iter()
-            .find(|r| r.id == other)
-            .map(|r| r.steps.clone())
-            .unwrap_or_default(),
+        other => routines.iter().find(|r| r.id == other).cloned(),
+    };
+    match found {
+        None => ResolvedRoutine::empty(),
+        Some(r) => ResolvedRoutine {
+            steps: r.steps,
+            pacing: r.pacing,
+            max_step_secs: r.max_step_secs,
+        },
     }
+}
+
+/// Thin wrapper that returns only the steps. Callers that need pacing
+/// metadata (break-event construction) should use [`resolve_routine`].
+pub fn resolve_routine_steps(kind: BreakKind, s: &Settings) -> Vec<RoutineStep> {
+    resolve_routine(kind, s).steps
 }
 
 /// Every routine available to a profile: the bundled starters plus any the
@@ -549,6 +593,8 @@ mod tests {
             category: RoutineCategory::Mobility,
             difficulty: RoutineDifficulty::Gentle,
             steps: vec![step("Reach up", 10)],
+            pacing: None,
+            max_step_secs: None,
         };
         // A custom routine reusing a starter id must not shadow the built-in.
         let collide = Routine {
@@ -579,6 +625,8 @@ mod tests {
             category: RoutineCategory::Breathing,
             difficulty: RoutineDifficulty::Gentle,
             steps: vec![step("In", 4), step("Out", 4)],
+            pacing: None,
+            max_step_secs: None,
         }];
         s.micro_routine = "custom-breathe".to_string();
         let steps = resolve_routine_steps(BreakKind::Micro, &s);
@@ -598,5 +646,141 @@ mod tests {
                 assert!(random_index(n) < n, "random_index({n}) out of range");
             }
         }
+    }
+
+    // -- Pacing fields ---------------------------------------------------
+
+    #[test]
+    fn starter_routines_have_no_pacing_by_default() {
+        // Bundled starters are authored without pacing so the global
+        // `routine_fill` setting decides their behaviour.
+        for r in starter_routines() {
+            assert!(
+                r.pacing.is_none(),
+                "{} should have no pacing override",
+                r.id
+            );
+            assert!(
+                r.max_step_secs.is_none(),
+                "{} should have no max_step_secs",
+                r.id
+            );
+        }
+    }
+
+    #[test]
+    fn routine_with_fill_pacing_round_trips_through_serde() {
+        let r = Routine {
+            id: "test".to_string(),
+            label: "Test".to_string(),
+            kind: RoutineKind::Micro,
+            category: RoutineCategory::Breathing,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![step("Breathe in", 4), step("Breathe out", 4)],
+            pacing: Some(RoutinePacing::Fill),
+            max_step_secs: Some(30),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: Routine = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pacing, Some(RoutinePacing::Fill));
+        assert_eq!(back.max_step_secs, Some(30));
+    }
+
+    #[test]
+    fn routine_without_pacing_round_trips_and_omits_null_fields() {
+        let r = Routine {
+            id: "test".to_string(),
+            label: "Test".to_string(),
+            kind: RoutineKind::Micro,
+            category: RoutineCategory::Eyes,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![step("Look away", 5)],
+            pacing: None,
+            max_step_secs: None,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        // skip_serializing_if = "Option::is_none" keeps the JSON compact.
+        assert!(
+            !json.contains("pacing"),
+            "pacing key must be omitted: {json}"
+        );
+        assert!(
+            !json.contains("max_step_secs"),
+            "max_step_secs key must be omitted: {json}"
+        );
+        let back: Routine = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pacing, None);
+        assert_eq!(back.max_step_secs, None);
+    }
+
+    #[test]
+    fn all_pacing_variants_round_trip() {
+        for (variant, expected) in [
+            (RoutinePacing::Hold, "\"hold\""),
+            (RoutinePacing::Fill, "\"fill\""),
+            (RoutinePacing::Loop, "\"loop\""),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected, "{variant:?} serialises to wrong string");
+            let back: RoutinePacing = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, variant, "{variant:?} did not round-trip");
+        }
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn resolve_routine_returns_pacing_from_pinned_routine() {
+        let mut s = Settings::default();
+        s.custom_routines = vec![Routine {
+            id: "fill-breathe".to_string(),
+            label: "Fill breathing".to_string(),
+            kind: RoutineKind::Micro,
+            category: RoutineCategory::Breathing,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![step("In", 4), step("Out", 4)],
+            pacing: Some(RoutinePacing::Fill),
+            max_step_secs: Some(20),
+        }];
+        s.micro_routine = "fill-breathe".to_string();
+        let resolved = resolve_routine(BreakKind::Micro, &s);
+        assert_eq!(resolved.steps, vec![step("In", 4), step("Out", 4)]);
+        assert_eq!(resolved.pacing, Some(RoutinePacing::Fill));
+        assert_eq!(resolved.max_step_secs, Some(20));
+    }
+
+    #[test]
+    fn resolve_routine_returns_none_pacing_for_starter_routine() {
+        let mut s = Settings::default();
+        s.micro_routine = "micro-eye-reset".to_string();
+        let resolved = resolve_routine(BreakKind::Micro, &s);
+        assert!(!resolved.steps.is_empty());
+        assert_eq!(resolved.pacing, None);
+        assert_eq!(resolved.max_step_secs, None);
+    }
+
+    #[test]
+    fn resolve_routine_empty_when_no_routine_selected() {
+        let s = Settings::default();
+        let resolved = resolve_routine(BreakKind::Micro, &s);
+        assert!(resolved.steps.is_empty());
+        assert_eq!(resolved.pacing, None);
+    }
+
+    #[test]
+    fn resolve_routine_empty_for_sleep() {
+        let mut s = Settings::default();
+        s.micro_routine = "random".to_string();
+        let resolved = resolve_routine(BreakKind::Sleep, &s);
+        assert!(resolved.steps.is_empty());
+        assert_eq!(resolved.pacing, None);
+    }
+
+    #[test]
+    fn resolve_routine_steps_is_consistent_with_resolve_routine() {
+        let mut s = Settings::default();
+        s.micro_routine = "micro-eye-reset".to_string();
+        let steps = resolve_routine_steps(BreakKind::Micro, &s);
+        let resolved = resolve_routine(BreakKind::Micro, &s);
+        assert_eq!(steps, resolved.steps);
     }
 }

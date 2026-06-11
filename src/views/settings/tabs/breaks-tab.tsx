@@ -499,6 +499,12 @@ export function BreaksTab({
           </select>
         </label>
         {routinePicker("long")}
+        <CheckboxRow
+          label="Spread routine steps across the whole break"
+          value={settings.routine_fill}
+          onChange={(v) => update("routine_fill", v)}
+          tip="When on, a routine's step durations are treated as relative weights and scaled to fill the full break length. When off (default), steps run at their authored durations and the last step holds until the break ends. A routine can override this per-routine with its own pacing field."
+        />
         {isSupporter && (
           <>
             <label className="row stacked">

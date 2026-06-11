@@ -570,6 +570,14 @@ pub struct Settings {
     /// starters by [`super::routines::all_routines`]. Empty by default.
     #[serde(default)]
     pub custom_routines: Vec<Routine>,
+    /// Default pacing for routines that do not declare their own
+    /// [`super::types::RoutinePacing`]. When `true`, step durations are
+    /// treated as relative weights and scaled to fill the break length
+    /// (`fill` mode). When `false` (default), steps run at their authored
+    /// duration and the last step holds until the break ends (`hold` mode).
+    /// A routine's own `pacing` field always takes precedence.
+    #[serde(default)]
+    pub routine_fill: bool,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
     pub typing_grace_secs: u64,
@@ -688,6 +696,7 @@ impl Default for Settings {
             micro_routine_max_difficulty: default_routine_max_difficulty(),
             long_routine_max_difficulty: default_routine_max_difficulty(),
             custom_routines: Vec::new(),
+            routine_fill: false,
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
             typing_grace_secs: 10,

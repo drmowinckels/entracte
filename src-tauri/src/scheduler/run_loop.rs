@@ -233,6 +233,8 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                             0.0
                         },
                         routine_steps: Vec::new(),
+                        routine_pacing: None,
+                        routine_max_step_secs: None,
                     },
                     s.monitor_placement,
                     super::settings::is_windowed_mode(BreakKind::Sleep, &s),
@@ -583,6 +585,7 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
     );
     let (duration_secs, enforceable, manual_finish, hints) =
         super::commands::breaks::fire_fields(kind, s);
+    let resolved = super::routines::resolve_routine(kind, s);
     BreakEvent {
         kind,
         duration_secs,
@@ -597,7 +600,9 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
         } else {
             0.0
         },
-        routine_steps: super::routines::resolve_routine_steps(kind, s),
+        routine_steps: resolved.steps,
+        routine_pacing: resolved.pacing,
+        routine_max_step_secs: resolved.max_step_secs,
     }
 }
 

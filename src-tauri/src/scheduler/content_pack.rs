@@ -154,6 +154,14 @@ pub fn validate_pack(pack: &ContentPack) -> Result<(), String> {
                 ));
             }
         }
+        if let Some(max) = r.max_step_secs {
+            if max == 0 || max > MAX_STEP_SECONDS {
+                return Err(format!(
+                    "routine '{}' max_step_secs must be 1..={MAX_STEP_SECONDS}",
+                    r.id
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -315,6 +323,8 @@ mod tests {
                 text: "Look away".to_string(),
                 seconds: 5,
             }],
+            pacing: None,
+            max_step_secs: None,
         }
     }
 
