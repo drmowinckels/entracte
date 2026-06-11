@@ -1230,6 +1230,11 @@ mod tests {
         s2.break_health_enabled = true;
         let e2 = sleep_break_event(&s2, 0.75);
         assert_eq!(e2.health_intensity, 0.75);
+        // Cover the false branch: health disabled → intensity zeroed.
+        let mut s3 = Settings::default();
+        s3.break_health_enabled = false;
+        let e3 = sleep_break_event(&s3, 0.75);
+        assert_eq!(e3.health_intensity, 0.0);
     }
 
     #[test]
