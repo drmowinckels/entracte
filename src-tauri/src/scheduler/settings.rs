@@ -550,7 +550,7 @@ pub struct Settings {
     /// Guided-routine mode for micro / long breaks: `""` (off, fall back to
     /// hint rotation), a routine id (always that routine), or `"random"` (the
     /// engine picks one per break from the filtered pool). See
-    /// [`super::routines::resolve_routine_steps`].
+    /// [`super::routines::resolve_routine`].
     #[serde(default)]
     pub micro_routine: String,
     #[serde(default)]

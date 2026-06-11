@@ -492,8 +492,8 @@ mod tests {
     #[test]
     fn resolve_returns_empty_when_no_routine_selected() {
         let s = Settings::default();
-        assert!(resolve_routine_steps(BreakKind::Micro, &s).is_empty());
-        assert!(resolve_routine_steps(BreakKind::Long, &s).is_empty());
+        assert!(resolve_routine(BreakKind::Micro, &s).steps.is_empty());
+        assert!(resolve_routine(BreakKind::Long, &s).steps.is_empty());
     }
 
     #[test]
@@ -501,7 +501,7 @@ mod tests {
     fn resolve_returns_pinned_routine_steps() {
         let mut s = Settings::default();
         s.micro_routine = "micro-eye-reset".to_string();
-        let micro = resolve_routine_steps(BreakKind::Micro, &s);
+        let micro = resolve_routine(BreakKind::Micro, &s).steps;
         let expected = starter_routines()
             .into_iter()
             .find(|r| r.id == "micro-eye-reset")
@@ -516,7 +516,7 @@ mod tests {
         let mut s = Settings::default();
         s.micro_routine = "random".to_string();
         s.micro_routine_categories = vec![RoutineCategory::Eyes];
-        let steps = resolve_routine_steps(BreakKind::Micro, &s);
+        let steps = resolve_routine(BreakKind::Micro, &s).steps;
         // Only the eye-reset routine matches, so random must return its steps.
         let expected = starter_routines()
             .into_iter()
@@ -533,7 +533,7 @@ mod tests {
         s.long_routine = "random".to_string();
         // No long Eyes routine exists.
         s.long_routine_categories = vec![RoutineCategory::Eyes];
-        assert!(resolve_routine_steps(BreakKind::Long, &s).is_empty());
+        assert!(resolve_routine(BreakKind::Long, &s).steps.is_empty());
     }
 
     #[test]
@@ -541,7 +541,7 @@ mod tests {
     fn resolve_falls_back_to_empty_for_unknown_id() {
         let mut s = Settings::default();
         s.micro_routine = "does-not-exist".to_string();
-        assert!(resolve_routine_steps(BreakKind::Micro, &s).is_empty());
+        assert!(resolve_routine(BreakKind::Micro, &s).steps.is_empty());
     }
 
     #[test]
@@ -550,7 +550,7 @@ mod tests {
         let mut s = Settings::default();
         s.micro_routine = "random".to_string();
         s.long_routine = "long-desk-yoga".to_string();
-        assert!(resolve_routine_steps(BreakKind::Sleep, &s).is_empty());
+        assert!(resolve_routine(BreakKind::Sleep, &s).steps.is_empty());
     }
 
     #[test]
@@ -605,7 +605,7 @@ mod tests {
             max_step_secs: None,
         }];
         s.micro_routine = "custom-breathe".to_string();
-        let steps = resolve_routine_steps(BreakKind::Micro, &s);
+        let steps = resolve_routine(BreakKind::Micro, &s).steps;
         assert_eq!(steps, vec![step("In", 4), step("Out", 4)]);
     }
 
@@ -751,12 +751,4 @@ mod tests {
         assert_eq!(resolved.pacing, None);
     }
 
-    #[test]
-    fn resolve_routine_steps_is_consistent_with_resolve_routine() {
-        let mut s = Settings::default();
-        s.micro_routine = "micro-eye-reset".to_string();
-        let steps = resolve_routine_steps(BreakKind::Micro, &s);
-        let resolved = resolve_routine(BreakKind::Micro, &s);
-        assert_eq!(steps, resolved.steps);
-    }
 }
