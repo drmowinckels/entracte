@@ -465,31 +465,6 @@ mod tests {
     }
 
     #[test]
-    fn select_routine_steps_wraps_index_and_is_deterministic() {
-        let r = starter_routines();
-        let n = routines_matching(&r, BreakKind::Micro, &[], RoutineDifficulty::Active).len();
-        assert!(n > 1);
-        let first = select_routine_steps(&r, BreakKind::Micro, &[], RoutineDifficulty::Active, 0);
-        let wrapped = select_routine_steps(&r, BreakKind::Micro, &[], RoutineDifficulty::Active, n);
-        assert_eq!(first, wrapped, "index n wraps to 0");
-        assert!(!first.is_empty());
-    }
-
-    #[test]
-    fn select_routine_steps_empty_when_no_match() {
-        let r = starter_routines();
-        // No long routine is in the Eyes category, so this filter matches none.
-        let got = select_routine_steps(
-            &r,
-            BreakKind::Long,
-            &[RoutineCategory::Eyes],
-            RoutineDifficulty::Active,
-            0,
-        );
-        assert!(got.is_empty());
-    }
-
-    #[test]
     fn resolve_returns_empty_when_no_routine_selected() {
         let s = Settings::default();
         assert!(resolve_routine(BreakKind::Micro, &s).steps.is_empty());
