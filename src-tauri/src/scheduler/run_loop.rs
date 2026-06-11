@@ -215,25 +215,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         if !matches!(bedtime_decision, BedtimeAction::NotInWindow) {
             if matches!(bedtime_decision, BedtimeAction::Fire) {
                 let intensity = sched.stats.lock().await.intensity();
-                super::overlay::fire_break(
-                    &app,
-                    &sched.current_break,
-                    sleep_break_event(&s, intensity),
-                    s.monitor_placement,
-                    super::settings::is_windowed_mode(BreakKind::Sleep, &s),
-                    super::settings::windowed_fraction_for(BreakKind::Sleep, &s),
-                );
-                hooks::run_hooks(
-                    &s,
-                    HookEvent::BreakStart,
-                    HookContext::with_kind_duration(BreakKind::Sleep, s.bedtime_duration_secs),
-                );
-                super::exports::deliver_on_event(&sched, HookEvent::BreakStart);
-                sched.logger.log(EventPayload::BreakStart {
-                    kind: BreakKind::Sleep,
-                    duration_secs: s.bedtime_duration_secs,
-                    enforceable: true,
-                });
+                deliver_sleep_break(&app, &sched, &s, intensity);
                 let mut t = sched.timers.lock().await;
                 t.last_sleep = Some(Instant::now());
                 t.last_micro = Instant::now();
@@ -551,6 +533,37 @@ async fn deliver_scheduled_break<R: Runtime>(
         enforceable,
     });
     delivery
+}
+
+/// Surface a Sleep (bedtime) break: fire the overlay, run the start hook, and
+/// log the event. Pure sync — timer bookkeeping stays with the caller in
+/// `run_loop`. Sleep breaks are always overlay; they never go through the
+/// delivery-routing logic used by [`deliver_scheduled_break`].
+fn deliver_sleep_break<R: Runtime>(
+    app: &AppHandle<R>,
+    sched: &Scheduler,
+    s: &Settings,
+    intensity: f32,
+) {
+    super::overlay::fire_break(
+        app,
+        &sched.current_break,
+        sleep_break_event(s, intensity),
+        s.monitor_placement,
+        super::settings::is_windowed_mode(BreakKind::Sleep, s),
+        super::settings::windowed_fraction_for(BreakKind::Sleep, s),
+    );
+    hooks::run_hooks(
+        s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(BreakKind::Sleep, s.bedtime_duration_secs),
+    );
+    super::exports::deliver_on_event(sched, HookEvent::BreakStart);
+    sched.logger.log(EventPayload::BreakStart {
+        kind: BreakKind::Sleep,
+        duration_secs: s.bedtime_duration_secs,
+        enforceable: true,
+    });
 }
 
 /// Build the `BreakEvent` for the bedtime (Sleep) path. Sleep breaks never
@@ -1098,6 +1111,30 @@ mod tests {
         assert_eq!(delivery, BreakDelivery::Notification);
         // Notification delivery must not stash an overlay break.
         assert!(sched.current_break.lock().unwrap().is_none());
+    }
+
+    // Drives `deliver_sleep_break` end to end. Sleep breaks always go through
+    // the overlay path; with MockRuntime there are no monitors so `fire_break`
+    // sets current_break and returns without opening any windows. Gated off
+    // Windows for the same mock-rig reason as the glue test above.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn deliver_sleep_break_sets_current_break() {
+        use crate::test_support::test_scheduler;
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let s = Settings::default();
+        let (_dir, sched) = test_scheduler(s.clone());
+
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        deliver_sleep_break(app.handle(), &sched, &s, 0.0);
+
+        assert!(sched.current_break.lock().unwrap().is_some());
     }
 
     // Drives `fire_scheduled_break` end to end: the notification delivery
