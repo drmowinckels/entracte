@@ -15,6 +15,7 @@
 //! plugins parse and validate here but cannot yet be installed — they need
 //! the wasm runtime (a later slice).
 
+pub(crate) mod asset;
 mod detect;
 mod eval;
 mod install;
@@ -35,6 +36,8 @@ pub use registry::{InstalledPlugin, PluginRegistry, PluginSummary};
 // raw parse/validate/verify entry points) by the wasm-runtime slice. Marked
 // allow(unused_imports) so the public API can live in one place ahead of all
 // its consumers.
+#[allow(unused_imports)]
+pub use asset::{validate_asset, ImageFormat, ManifestAsset, MAX_ASSETS};
 #[allow(unused_imports)]
 pub use manifest::{
     parse_manifest, validate_manifest, Capability, DetectConfig, ExportConfig, ExportFormat,

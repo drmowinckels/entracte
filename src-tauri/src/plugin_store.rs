@@ -63,6 +63,34 @@ pub fn delete_module(registry_path: &Path, id: &str) {
     }
 }
 
+/// Sidecar filename for one of plugin `plugin_id`'s image assets. Both
+/// `plugin_id` (reverse-DNS) and `asset_id` (`[a-z0-9._-]`) are validated at
+/// install, so the result is a single safe filename component — no separators,
+/// no traversal. Recorded in the registry so uninstall can remove exactly it.
+pub fn asset_file_name(plugin_id: &str, asset_id: &str, ext: &str) -> String {
+    format!("{plugin_id}.{asset_id}.{ext}")
+}
+
+/// Absolute path for an asset sidecar named `file_name`, beside the modules.
+pub fn asset_path(registry_path: &Path, file_name: &str) -> PathBuf {
+    modules_dir(registry_path).join(file_name)
+}
+
+/// Atomically persist an image asset with owner-only permissions.
+pub fn save_asset(registry_path: &Path, file_name: &str, bytes: &[u8]) -> io::Result<()> {
+    write_user_only(&asset_path(registry_path, file_name), bytes)
+}
+
+/// Remove an asset sidecar. Missing is fine (idempotent uninstall).
+pub fn delete_asset(registry_path: &Path, file_name: &str) {
+    let path = asset_path(registry_path, file_name);
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != io::ErrorKind::NotFound {
+            error!("plugin_store: failed to remove {}: {e}", path.display());
+        }
+    }
+}
+
 /// Load the registry, defaulting to empty on a missing or malformed file.
 pub fn load(path: &Path) -> PluginRegistry {
     match read_capped(path, MAX_REGISTRY_BYTES) {

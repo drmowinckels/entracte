@@ -107,6 +107,32 @@ describe("Plugins", () => {
     expect(await screen.findByText(/Installed "Stretch pack"/)).toBeTruthy();
   });
 
+  it("mentions images in the install message when the pack ships them", async () => {
+    openDialog.mockResolvedValue("/tmp/yoga.json");
+    const reload = vi.fn(async () => {});
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_plugins") return Promise.resolve([]);
+      if (cmd === "install_plugin") {
+        return Promise.resolve({
+          id: "com.example.yoga",
+          name: "Desk yoga",
+          kind: "content",
+          hints_added: 0,
+          routines_added: 5,
+          images_added: 3,
+          images_bytes: 12345,
+        });
+      }
+      return Promise.resolve();
+    });
+
+    render(<Plugins reload={reload} />);
+    await screen.findByText("No plugins installed.");
+    fireEvent.click(screen.getByRole("button", { name: /install plugin/i }));
+
+    expect(await screen.findByText(/5 routines with 3 images\./)).toBeTruthy();
+  });
+
   it("reports a detector install without idea/routine counts", async () => {
     openDialog.mockResolvedValue("/tmp/detector.json");
     invoke.mockImplementation((cmd: string) => {

@@ -123,6 +123,15 @@
   margin: 0 0 1.5rem;
 }
 
+.overlay-routine-image {
+  display: block;
+  max-width: min(420px, 60vw);
+  max-height: 40vh;
+  margin: 0 auto 0.9rem;
+  object-fit: contain;
+  border-radius: 0.5rem;
+}
+
 .overlay-routine .overlay-routine-step {
   margin: 0 0 0.4rem;
 }

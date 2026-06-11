@@ -40,6 +40,17 @@ pub fn signing_payload(manifest: &Manifest, module_sha256: Option<[u8; 32]>) -> 
     // The module bytes are bound by their hash (appended below), not by the
     // base64 blob in the JSON — so exclude it from the canonical payload.
     obj.remove("module_base64");
+    // Image assets are bound the same way, but by the `sha256` each declares
+    // (which stays in the canonical manifest): strip only the heavy blob so a
+    // megabyte of base64 never goes through the signer, while the hash — and
+    // thus the bytes, since the installer verifies they match — stays signed.
+    if let Some(assets) = obj.get_mut("assets").and_then(|a| a.as_array_mut()) {
+        for asset in assets {
+            if let Some(o) = asset.as_object_mut() {
+                o.remove("data_base64");
+            }
+        }
+    }
     let mut bytes = serde_json::to_vec(&value).expect("json value is always serialisable");
     if let Some(hash) = module_sha256 {
         bytes.extend_from_slice(&hash);
@@ -113,6 +124,7 @@ mod tests {
             detect: None,
             export: None,
             content: None,
+            assets: Vec::new(),
             signature: Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),
@@ -265,5 +277,51 @@ mod tests {
         assert!(verify_signature(&m, None).is_ok());
         // A content plugin verified as if it had a module must fail.
         assert!(verify_signature(&m, Some(sha256(b"x"))).is_err());
+    }
+
+    fn content_with_asset() -> Manifest {
+        use crate::plugins::asset::ManifestAsset;
+        let mut m = unsigned_detector();
+        m.kind = PluginKind::Content;
+        m.module = Some("module.wasm".to_string());
+        m.abi_version = None;
+        m.imports = vec![];
+        let bytes = b"\x89PNG\r\n\x1a\n fake image bytes";
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let hash: [u8; 32] = hasher.finalize().into();
+        m.assets = vec![ManifestAsset {
+            id: "twist".to_string(),
+            sha256: hash.iter().map(|b| format!("{b:02x}")).collect(),
+            data_base64: BASE64_STANDARD.encode(bytes),
+        }];
+        m
+    }
+
+    #[test]
+    fn asset_blob_is_excluded_from_the_signed_payload() {
+        // The heavy base64 must not reach the signer: swapping only the blob
+        // (keeping the declared sha256) leaves the payload — and signature —
+        // unchanged. Integrity of the bytes is enforced separately by
+        // validate_asset, not by the signature.
+        let mut m = content_with_asset();
+        let before = signing_payload(&m, None);
+        m.assets[0].data_base64 = BASE64_STANDARD.encode(b"totally different bytes");
+        let after = signing_payload(&m, None);
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn asset_hash_is_inside_the_signed_payload() {
+        // The declared sha256 stays signed: changing it after signing breaks
+        // verification (so an attacker can't redirect an asset to other bytes).
+        let key = keypair(11);
+        let mut m = content_with_asset();
+        sign(&mut m, &key, None);
+        assert!(verify_signature(&m, None).is_ok());
+        m.assets[0].sha256 = "00".repeat(32);
+        assert!(verify_signature(&m, None)
+            .unwrap_err()
+            .contains("does not match"));
     }
 }

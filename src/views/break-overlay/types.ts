@@ -8,6 +8,10 @@ export type ClockFormat = "12h" | "24h";
 export type RoutineStep = {
   text: string;
   seconds: number;
+  // Absolute path to an image shown with this step (resolved at install from a
+  // plugin's bundled asset). Absent for the common text-only step; the overlay
+  // turns it into an `asset:` URL via convertFileSrc.
+  asset?: string;
 };
 
 /** How a routine's step durations relate to the break length.

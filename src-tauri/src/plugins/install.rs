@@ -188,6 +188,7 @@ mod tests {
             detect: None,
             export: None,
             content: Some(pack()),
+            assets: Vec::new(),
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),
@@ -231,6 +232,7 @@ mod tests {
                 on: vec![crate::hooks::HookEvent::BreakEnd],
             }),
             content: None,
+            assets: Vec::new(),
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),
@@ -357,6 +359,7 @@ mod tests {
             }),
             export: None,
             content: None,
+            assets: Vec::new(),
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),
@@ -407,6 +410,7 @@ mod tests {
             }),
             export: None,
             content: None,
+            assets: Vec::new(),
             signature: super::super::manifest::Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),

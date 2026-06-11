@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   announceBreak,
   breakDescription,
@@ -132,6 +132,14 @@ export default function BreakOverlay() {
       : undefined,
   );
   const routineText = routine ? routineSteps[routine.index].text : "";
+  // A plugin-supplied image for the current step, if any. The backend sends an
+  // absolute path; convertFileSrc turns it into an `asset:` URL the webview can
+  // load. A broken/missing file simply hides (see onError) — never blocks the
+  // break.
+  const routineAsset = routine ? routineSteps[routine.index].asset : undefined;
+  const routineImageSrc = routineAsset
+    ? convertFileSrc(routineAsset)
+    : undefined;
   const intensity = clamp01(active.health_intensity);
   const dismissable = !active.enforceable && active.skip_available;
   const showPostpone = active.postpone_available && !finished;
@@ -250,6 +258,21 @@ export default function BreakOverlay() {
         </div>
         {routine ? (
           <div className="overlay-routine">
+            {routineImageSrc && (
+              <img
+                className="overlay-routine-image"
+                src={routineImageSrc}
+                alt=""
+                // The step text below already conveys the instruction to
+                // assistive tech; the image is decorative reinforcement.
+                aria-hidden="true"
+                // A missing or unreadable sidecar must never break the
+                // routine — drop the element and keep the text-only step.
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            )}
             <p
               className="overlay-hint overlay-routine-step"
               role="note"

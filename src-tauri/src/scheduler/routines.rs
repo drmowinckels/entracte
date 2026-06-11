@@ -90,6 +90,7 @@ fn step(text: &str, seconds: u64) -> RoutineStep {
     RoutineStep {
         text: text.to_string(),
         seconds,
+        asset: None,
     }
 }
 

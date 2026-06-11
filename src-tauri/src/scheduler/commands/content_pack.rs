@@ -125,6 +125,7 @@ mod tests {
                 steps: vec![RoutineStep {
                     text: "Look away".to_string(),
                     seconds: 5,
+                    asset: None,
                 }],
                 pacing: None,
                 max_step_secs: None,

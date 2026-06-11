@@ -203,6 +203,10 @@ pub struct AddedContent {
     pub sleep: Vec<String>,
     #[serde(default)]
     pub routine_ids: Vec<String>,
+    /// Sidecar filenames of image assets written for this plugin, so uninstall
+    /// can delete exactly them. Empty for packs/plugins with no images.
+    #[serde(default)]
+    pub asset_files: Vec<String>,
 }
 
 /// Merge a validated pack into `settings`, recording exactly what was added.
@@ -243,6 +247,9 @@ pub fn merge_pack_tracked(
             }
             ids
         },
+        // Set by the plugin-install path after extracting sidecars; the
+        // portable content-pack import path carries no images.
+        asset_files: Vec::new(),
     };
     let summary = MergeSummary {
         hints_added: added.micro_physical.len()
@@ -302,7 +309,21 @@ pub fn export_pack(name: &str, settings: &Settings) -> ContentPack {
             long_social: settings.long_social_hints.clone(),
             sleep: settings.sleep_hints.clone(),
         },
-        routines: settings.custom_routines.clone(),
+        routines: settings
+            .custom_routines
+            .iter()
+            .map(|r| {
+                // Drop per-step image references: in settings these are
+                // absolute paths to a plugin's installed sidecars, which would
+                // be dead links on another machine. Portable packs carry no
+                // images (those ship in a signed plugin manifest instead).
+                let mut r = r.clone();
+                for st in &mut r.steps {
+                    st.asset = None;
+                }
+                r
+            })
+            .collect(),
     }
 }
 
@@ -322,6 +343,7 @@ mod tests {
             steps: vec![RoutineStep {
                 text: "Look away".to_string(),
                 seconds: 5,
+                asset: None,
             }],
             pacing: None,
             max_step_secs: None,
@@ -449,6 +471,20 @@ mod tests {
         assert_eq!(summary.routines_added, 1);
         assert_eq!(s.custom_routines.len(), 2);
         assert!(s.custom_routines.iter().any(|r| r.id == "brand-new"));
+    }
+
+    #[test]
+    fn export_strips_per_step_image_paths() {
+        // A custom routine whose step carries an installed plugin's absolute
+        // asset path must export with that path dropped — portable packs carry
+        // no images, and the path would be a dead link elsewhere.
+        let mut src = Settings::default();
+        let mut rt = sample_routine("rt-img");
+        rt.steps[0].asset = Some("/home/u/.config/entracte/plugin-modules/x.png".to_string());
+        src.custom_routines = vec![rt];
+
+        let pack = export_pack("No images", &src);
+        assert_eq!(pack.routines[0].steps[0].asset, None);
     }
 
     #[test]

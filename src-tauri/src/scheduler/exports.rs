@@ -231,6 +231,7 @@ mod tests {
                 on: vec![HookEvent::BreakEnd],
             }),
             content: None,
+            assets: Vec::new(),
             signature: Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),

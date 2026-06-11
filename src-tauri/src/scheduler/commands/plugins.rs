@@ -71,6 +71,12 @@ pub struct InstallOutcome {
     pub kind: PluginKind,
     pub hints_added: usize,
     pub routines_added: usize,
+    /// Image assets written to disk (zero for non-content plugins).
+    #[serde(default)]
+    pub images_added: usize,
+    /// Total decoded bytes of those images.
+    #[serde(default)]
+    pub images_bytes: u64,
 }
 
 /// A validated plugin awaiting consent + apply. Holds enough to show the
@@ -134,7 +140,7 @@ pub async fn install_plugin<R: Runtime>(
     }
 
     match prepared {
-        Prepared::Content(manifest) => Ok(apply_install(scheduler.inner(), &manifest).await),
+        Prepared::Content(manifest) => apply_install(scheduler.inner(), &manifest).await,
         Prepared::Detector(prepared) => apply_detector_install(scheduler.inner(), &prepared).await,
         Prepared::Export(manifest) => Ok(apply_export_install(scheduler.inner(), &manifest).await),
     }
@@ -145,17 +151,51 @@ pub async fn install_plugin<R: Runtime>(
 /// unit-testable without a `WebviewWindow`/dialog. Mirrors the content-pack
 /// `apply_pack` write sequence (merge into a clone, rebuild the derived
 /// caches, store, upsert the active profile, persist).
-async fn apply_install(scheduler: &Scheduler, manifest: &Manifest) -> InstallOutcome {
+async fn apply_install(
+    scheduler: &Scheduler,
+    manifest: &Manifest,
+) -> Result<InstallOutcome, String> {
     let pack = manifest
         .content
         .as_ref()
         .expect("content plugin always carries a pack (validated)");
-    let (merged, summary, added) = {
+
+    // Extract image assets to disk first (so a write failure aborts before any
+    // settings change), mapping each pack-local id to its stored absolute path.
+    let mut asset_paths: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let mut asset_files: Vec<String> = Vec::new();
+    let mut images_bytes: u64 = 0;
+    for asset in &manifest.assets {
+        let (bytes, format) = crate::plugins::validate_asset(asset)?;
+        let file_name = crate::plugin_store::asset_file_name(&manifest.id, &asset.id, format.ext());
+        crate::plugin_store::save_asset(&scheduler.plugins_path, &file_name, &bytes)
+            .map_err(|e| format!("failed to save plugin image '{}': {e}", asset.id))?;
+        let path = crate::plugin_store::asset_path(&scheduler.plugins_path, &file_name);
+        asset_paths.insert(asset.id.as_str(), path.to_string_lossy().into_owned());
+        asset_files.push(file_name);
+        images_bytes += bytes.len() as u64;
+    }
+    let images_added = manifest.assets.len();
+
+    // Rewrite each step's pack-local asset id to the stored absolute path, so
+    // the merged routine resolves to a real file at break time with no further
+    // lookup. Steps referencing nothing (the common case) are untouched.
+    let mut pack = pack.clone();
+    for r in &mut pack.routines {
+        for st in &mut r.steps {
+            if let Some(id) = st.asset.take() {
+                st.asset = asset_paths.get(id.as_str()).cloned();
+            }
+        }
+    }
+
+    let (merged, summary, mut added) = {
         let mut next = scheduler.settings.lock().await.clone();
-        let (summary, added) = merge_pack_tracked(pack, &mut next);
+        let (summary, added) = merge_pack_tracked(&pack, &mut next);
         next.rebuild_derived();
         (next, summary, added)
     };
+    added.asset_files = asset_files;
     *scheduler.settings.lock().await = merged.clone();
     {
         let active = scheduler.active_profile_name.lock().await.clone();
@@ -177,13 +217,15 @@ async fn apply_install(scheduler: &Scheduler, manifest: &Manifest) -> InstallOut
     }
     persist_plugins(scheduler).await;
 
-    InstallOutcome {
+    Ok(InstallOutcome {
         id: manifest.id.clone(),
         name: manifest.name.clone(),
         kind: PluginKind::Content,
         hints_added: summary.hints_added,
         routines_added: summary.routines_added,
-    }
+        images_added,
+        images_bytes,
+    })
 }
 
 /// Persist a validated detector's module to disk and register it (granted
@@ -209,6 +251,8 @@ async fn apply_detector_install(
         kind: PluginKind::Detector,
         hints_added: 0,
         routines_added: 0,
+        images_added: 0,
+        images_bytes: 0,
     })
 }
 
@@ -227,6 +271,8 @@ async fn apply_export_install(scheduler: &Scheduler, manifest: &Manifest) -> Ins
         kind: PluginKind::Export,
         hints_added: 0,
         routines_added: 0,
+        images_added: 0,
+        images_bytes: 0,
     }
 }
 
@@ -255,6 +301,11 @@ async fn uninstall_by_id(scheduler: &Scheduler, id: &str) -> Result<MergeSummary
     // A detector's module lives on disk; drop it too.
     if record.kind == PluginKind::Detector {
         crate::plugin_store::delete_module(&scheduler.plugins_path, id);
+    }
+    // A content plugin's image sidecars likewise; remove exactly the files it
+    // wrote (idempotent — missing files are ignored).
+    for file_name in &record.added.asset_files {
+        crate::plugin_store::delete_asset(&scheduler.plugins_path, file_name);
     }
     // Content removal is a no-op for a detector (its `added` is empty).
     let outcome = apply_uninstall(scheduler, &record.added).await;
@@ -377,6 +428,20 @@ fn format_install_summary(manifest: &Manifest) -> String {
             s.push_str(&format!(
                 "Adds up to {hints} idea(s) and {routines} routine(s) (duplicates are skipped).\n"
             ));
+            if !manifest.assets.is_empty() {
+                // Approximate decoded size from the base64 length (¾) — good
+                // enough for a dialog, and avoids decoding every blob here.
+                let bytes: usize = manifest
+                    .assets
+                    .iter()
+                    .map(|a| a.data_base64.len() / 4 * 3)
+                    .sum();
+                s.push_str(&format!(
+                    "Ships {} image(s) ({:.1} MB).\n",
+                    manifest.assets.len(),
+                    bytes as f64 / (1024.0 * 1024.0)
+                ));
+            }
         }
         PluginKind::Detector => {
             s.push_str("This plugin runs sandboxed code and is granted ONLY these permissions:\n");
@@ -475,11 +540,13 @@ mod tests {
                     steps: vec![RoutineStep {
                         text: "Look away".to_string(),
                         seconds: 5,
+                        asset: None,
                     }],
                     pacing: None,
                     max_step_secs: None,
                 }],
             }),
+            assets: Vec::new(),
             signature: Signature {
                 alg: "ed25519".to_string(),
                 public_key: "QUJDREVGR0hJSktMTU5PUA==".to_string(),
@@ -507,6 +574,7 @@ mod tests {
             }),
             export: None,
             content: None,
+            assets: Vec::new(),
             signature: Signature {
                 alg: "ed25519".to_string(),
                 public_key: "QUJDREVGR0hJSktMTU5PUA==".to_string(),
@@ -537,6 +605,7 @@ mod tests {
                 on: vec![crate::hooks::HookEvent::BreakEnd],
             }),
             content: None,
+            assets: Vec::new(),
             signature: Signature {
                 alg: "ed25519".to_string(),
                 public_key: "QUJDREVGR0hJSktMTU5PUA==".to_string(),
@@ -641,13 +710,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn format_install_summary_reports_images_for_a_content_plugin() {
+        let with = format_install_summary(&content_manifest_with_image("com.example.yoga"));
+        assert!(
+            with.contains("1 image(s)"),
+            "summary mentions the image: {with}"
+        );
+        // A content plugin with no images says nothing about them.
+        let without = format_install_summary(&content_manifest("com.example.plain"));
+        assert!(!without.contains("image(s)"));
+    }
+
     #[tokio::test]
     async fn install_then_uninstall_round_trips_settings_and_registry() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
         let before = sched.settings.lock().await.micro_physical_hints.clone();
 
         let manifest = content_manifest("com.example.stretch");
-        let outcome = apply_install(&sched, &manifest).await;
+        let outcome = apply_install(&sched, &manifest).await.unwrap();
         assert_eq!(outcome.hints_added, 1);
         assert_eq!(outcome.routines_added, 1);
 
@@ -689,13 +770,70 @@ mod tests {
     #[tokio::test]
     async fn uninstall_by_id_removes_tracked_content_and_record() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
-        apply_install(&sched, &content_manifest("com.example.stretch")).await;
+        apply_install(&sched, &content_manifest("com.example.stretch"))
+            .await
+            .unwrap();
         let removed = uninstall_by_id(&sched, "com.example.stretch")
             .await
             .unwrap();
         assert_eq!(removed.hints_added, 1);
         assert_eq!(removed.routines_added, 1);
         assert!(!sched.plugins.lock().await.contains("com.example.stretch"));
+    }
+
+    /// A content manifest carrying one PNG asset that its single routine step
+    /// references by id.
+    fn content_manifest_with_image(id: &str) -> Manifest {
+        use base64::prelude::{Engine, BASE64_STANDARD};
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&12u32.to_be_bytes());
+        bytes.extend_from_slice(&12u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let hash = crate::plugins::sha256(&bytes);
+        let mut m = content_manifest(id);
+        m.assets = vec![crate::plugins::ManifestAsset {
+            id: "twist".to_string(),
+            sha256: hash.iter().map(|b| format!("{b:02x}")).collect(),
+            data_base64: BASE64_STANDARD.encode(&bytes),
+        }];
+        m.content.as_mut().unwrap().routines[0].steps[0].asset = Some("twist".to_string());
+        m
+    }
+
+    #[tokio::test]
+    async fn install_writes_image_sidecar_and_rewrites_step_to_its_path() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let outcome = apply_install(&sched, &content_manifest_with_image("com.example.yoga"))
+            .await
+            .unwrap();
+        assert_eq!(outcome.images_added, 1);
+        assert!(outcome.images_bytes > 0);
+
+        // The merged routine's step now points at a real on-disk sidecar.
+        let settings = sched.settings.lock().await;
+        let rt = settings
+            .custom_routines
+            .iter()
+            .find(|r| r.id == "plugin-rt")
+            .expect("routine merged");
+        let path = rt.steps[0].asset.clone().expect("step asset rewritten");
+        assert!(path.ends_with("com.example.yoga.twist.png"));
+        assert!(std::path::Path::new(&path).exists(), "sidecar written");
+    }
+
+    #[tokio::test]
+    async fn uninstall_removes_image_sidecars() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        apply_install(&sched, &content_manifest_with_image("com.example.yoga"))
+            .await
+            .unwrap();
+        let file =
+            crate::plugin_store::asset_path(&sched.plugins_path, "com.example.yoga.twist.png");
+        assert!(file.exists());
+        uninstall_by_id(&sched, "com.example.yoga").await.unwrap();
+        assert!(!file.exists(), "sidecar deleted on uninstall");
     }
 
     #[test]
@@ -728,7 +866,9 @@ mod tests {
     async fn apply_install_pushes_active_profile_when_absent() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
         *sched.active_profile_name.lock().await = "Ghost".to_string();
-        apply_install(&sched, &content_manifest("com.example.stretch")).await;
+        apply_install(&sched, &content_manifest("com.example.stretch"))
+            .await
+            .unwrap();
         let profiles = sched.profiles.lock().await;
         let ghost = profiles
             .iter()
@@ -744,7 +884,9 @@ mod tests {
     #[tokio::test]
     async fn apply_install_writes_into_the_active_profile() {
         let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
-        apply_install(&sched, &content_manifest("com.example.stretch")).await;
+        apply_install(&sched, &content_manifest("com.example.stretch"))
+            .await
+            .unwrap();
         let active = sched.active_profile_name.lock().await.clone();
         let profiles = sched.profiles.lock().await;
         let p = profiles.iter().find(|p| p.name == active).unwrap();
@@ -961,6 +1103,7 @@ mod mock_app_tests {
                 },
                 routines: vec![],
             }),
+            assets: Vec::new(),
             signature: Signature {
                 alg: "ed25519".to_string(),
                 public_key: String::new(),
