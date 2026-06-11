@@ -700,6 +700,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn resolve_routine_returns_none_pacing_for_starter_routine() {
         let mut s = Settings::default();
         s.micro_routine = "micro-eye-reset".to_string();
@@ -718,6 +719,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn resolve_routine_empty_for_sleep() {
         let mut s = Settings::default();
         s.micro_routine = "random".to_string();
