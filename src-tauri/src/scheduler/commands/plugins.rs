@@ -160,20 +160,32 @@ async fn apply_install(
         .as_ref()
         .expect("content plugin always carries a pack (validated)");
 
-    // Extract image assets to disk first (so a write failure aborts before any
-    // settings change), mapping each pack-local id to its stored absolute path.
+    // Decode + re-validate every asset BEFORE writing any, so a validation
+    // error can't leave half the sidecars on disk; map each pack-local id to
+    // its stored absolute path.
     let mut asset_paths: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-    let mut asset_files: Vec<String> = Vec::new();
+    let mut prepared: Vec<(String, Vec<u8>)> = Vec::new();
     let mut images_bytes: u64 = 0;
     for asset in &manifest.assets {
         let (bytes, format) = crate::plugins::validate_asset(asset)?;
         let file_name = crate::plugin_store::asset_file_name(&manifest.id, &asset.id, format.ext());
-        crate::plugin_store::save_asset(&scheduler.plugins_path, &file_name, &bytes)
-            .map_err(|e| format!("failed to save plugin image '{}': {e}", asset.id))?;
         let path = crate::plugin_store::asset_path(&scheduler.plugins_path, &file_name);
         asset_paths.insert(asset.id.as_str(), path.to_string_lossy().into_owned());
-        asset_files.push(file_name);
         images_bytes += bytes.len() as u64;
+        prepared.push((file_name, bytes));
+    }
+    // Now write the sidecars. On any I/O failure, roll back the ones already
+    // written so a partial install never leaves untracked files behind (the
+    // registry record — and thus uninstall — only exists once we finish).
+    let mut asset_files: Vec<String> = Vec::new();
+    for (file_name, bytes) in &prepared {
+        if let Err(e) = crate::plugin_store::save_asset(&scheduler.plugins_path, file_name, bytes) {
+            for written in &asset_files {
+                crate::plugin_store::delete_asset(&scheduler.plugins_path, written);
+            }
+            return Err(format!("failed to save plugin image: {e}"));
+        }
+        asset_files.push(file_name.clone());
     }
     let images_added = manifest.assets.len();
 
@@ -781,9 +793,8 @@ mod tests {
         assert!(!sched.plugins.lock().await.contains("com.example.stretch"));
     }
 
-    /// A content manifest carrying one PNG asset that its single routine step
-    /// references by id.
-    fn content_manifest_with_image(id: &str) -> Manifest {
+    /// A valid 12×12 PNG `ManifestAsset` with the given id.
+    fn png_manifest_asset(asset_id: &str) -> crate::plugins::ManifestAsset {
         use base64::prelude::{Engine, BASE64_STANDARD};
         let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
         bytes.extend_from_slice(&[0, 0, 0, 13]);
@@ -792,12 +803,18 @@ mod tests {
         bytes.extend_from_slice(&12u32.to_be_bytes());
         bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
         let hash = crate::plugins::sha256(&bytes);
-        let mut m = content_manifest(id);
-        m.assets = vec![crate::plugins::ManifestAsset {
-            id: "twist".to_string(),
+        crate::plugins::ManifestAsset {
+            id: asset_id.to_string(),
             sha256: hash.iter().map(|b| format!("{b:02x}")).collect(),
             data_base64: BASE64_STANDARD.encode(&bytes),
-        }];
+        }
+    }
+
+    /// A content manifest carrying one PNG asset that its single routine step
+    /// references by id.
+    fn content_manifest_with_image(id: &str) -> Manifest {
+        let mut m = content_manifest(id);
+        m.assets = vec![png_manifest_asset("twist")];
         m.content.as_mut().unwrap().routines[0].steps[0].asset = Some("twist".to_string());
         m
     }
@@ -834,6 +851,37 @@ mod tests {
         assert!(file.exists());
         uninstall_by_id(&sched, "com.example.yoga").await.unwrap();
         assert!(!file.exists(), "sidecar deleted on uninstall");
+    }
+
+    #[tokio::test]
+    async fn install_rolls_back_written_sidecars_when_a_later_write_fails() {
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let mut m = content_manifest_with_image("com.example.yoga");
+        // A second asset whose write will fail.
+        m.assets.push(png_manifest_asset("block"));
+
+        // Force the second write to fail by planting a directory where its
+        // sidecar file would go (a file write over a directory errors).
+        let first =
+            crate::plugin_store::asset_path(&sched.plugins_path, "com.example.yoga.twist.png");
+        let blocked =
+            crate::plugin_store::asset_path(&sched.plugins_path, "com.example.yoga.block.png");
+        std::fs::create_dir_all(blocked.parent().unwrap()).unwrap();
+        std::fs::create_dir(&blocked).unwrap();
+
+        let res = apply_install(&sched, &m).await;
+        assert!(
+            res.is_err(),
+            "install fails when a sidecar can't be written"
+        );
+        assert!(
+            !first.exists(),
+            "the already-written sidecar is rolled back, leaving no untracked file"
+        );
+        assert!(
+            !sched.plugins.lock().await.contains("com.example.yoga"),
+            "no registry record on a failed install"
+        );
     }
 
     #[test]

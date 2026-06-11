@@ -265,8 +265,20 @@ pub fn merge_pack_tracked(
 /// Merge a validated pack into `settings`, returning only the summary counts.
 /// Thin wrapper over [`merge_pack_tracked`] for the content-pack import path,
 /// which has no uninstall and so doesn't need the [`AddedContent`] record.
+///
+/// Strips any per-step `asset` first: a portable pack is unsigned and carries
+/// no image bytes, so an `asset` value could only be an arbitrary local path a
+/// malicious pack smuggled in — only the signed-plugin installer is allowed to
+/// populate `asset`, and it does so with a backend-controlled sidecar path.
+/// Mirror of the stripping [`export_pack`] does on the way out.
 pub fn merge_pack(pack: &ContentPack, settings: &mut Settings) -> MergeSummary {
-    merge_pack_tracked(pack, settings).0
+    let mut pack = pack.clone();
+    for r in &mut pack.routines {
+        for st in &mut r.steps {
+            st.asset = None;
+        }
+    }
+    merge_pack_tracked(&pack, settings).0
 }
 
 /// Remove exactly the content recorded in `added` from `settings` (the
@@ -471,6 +483,24 @@ mod tests {
         assert_eq!(summary.routines_added, 1);
         assert_eq!(s.custom_routines.len(), 2);
         assert!(s.custom_routines.iter().any(|r| r.id == "brand-new"));
+    }
+
+    #[test]
+    fn merge_pack_strips_per_step_image_paths_from_an_imported_pack() {
+        // An unsigned imported pack must never inject an asset path the overlay
+        // would load — only the signed-plugin installer populates `asset`.
+        let mut rt = sample_routine("rt-img");
+        rt.steps[0].asset = Some("/etc/passwd-ish/evil.png".to_string());
+        let pack = ContentPack {
+            version: CONTENT_PACK_VERSION,
+            name: "Imported".to_string(),
+            hints: PackHints::default(),
+            routines: vec![rt],
+        };
+        let mut s = Settings::default();
+        merge_pack(&pack, &mut s);
+        let merged = s.custom_routines.iter().find(|r| r.id == "rt-img").unwrap();
+        assert_eq!(merged.steps[0].asset, None);
     }
 
     #[test]
