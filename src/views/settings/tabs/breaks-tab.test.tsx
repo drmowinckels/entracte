@@ -133,7 +133,9 @@ describe("BreaksTab guided routines", () => {
   it("toggling routine_fill calls update with the new value", () => {
     const update = vi.fn();
     renderTab(false, update);
-    fireEvent.click(checkboxForLabel("Spread routine steps across the whole break"));
+    fireEvent.click(
+      checkboxForLabel("Spread routine steps across the whole break"),
+    );
     expect(update).toHaveBeenCalledWith("routine_fill", true);
   });
 });

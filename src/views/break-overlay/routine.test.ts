@@ -94,9 +94,9 @@ describe("routineProgress — unrecognised pacing", () => {
   it("falls back to hold for an unrecognised pacing value", () => {
     // TypeScript prevents this at compile time, but the runtime branch
     // must be covered to satisfy patch-coverage requirements.
-    expect(
-      routineProgress(STEPS, 3, { pacing: "stretch" as "loop" }),
-    ).toEqual(routineProgress(STEPS, 3));
+    expect(routineProgress(STEPS, 3, { pacing: "stretch" as "loop" })).toEqual(
+      routineProgress(STEPS, 3),
+    );
   });
 });
 

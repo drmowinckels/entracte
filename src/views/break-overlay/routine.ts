@@ -120,7 +120,10 @@ function loopProgress(
     running += d;
     return running;
   });
-  const index = Math.max(0, sums.findIndex((s) => posInCycle < s));
+  const index = Math.max(
+    0,
+    sums.findIndex((s) => posInCycle < s),
+  );
   return {
     index,
     stepRemaining: sums[index]! - posInCycle,
