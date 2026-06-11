@@ -14,7 +14,7 @@
 //!   (`*_routine_categories`) and a maximum difficulty
 //!   (`*_routine_max_difficulty`).
 //!
-//! The selection core ([`routines_matching`] + [`select_routine_steps`]) is
+//! The selection core ([`routines_matching`] + [`resolve_routine`]) is
 //! pure and deterministic — the only impurity is [`random_index`], which
 //! chooses *which* of the matching routines to run.
 
