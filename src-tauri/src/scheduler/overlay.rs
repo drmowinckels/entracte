@@ -279,6 +279,12 @@ fn select_overlay_monitors<R: Runtime>(
     app: &AppHandle<R>,
     placement: MonitorPlacement,
 ) -> Vec<tauri::Monitor> {
+    // In unit tests the mock runtime's available_monitors() is unimplemented
+    // and panics; return empty so fire_break can be called in tests without
+    // opening windows.
+    #[cfg(test)]
+    let all: Vec<tauri::Monitor> = Vec::new();
+    #[cfg(not(test))]
     let all = app.available_monitors().unwrap_or_default();
     if all.is_empty() {
         return Vec::new();
