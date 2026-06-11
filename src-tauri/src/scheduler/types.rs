@@ -36,6 +36,27 @@ pub struct RoutineStep {
     pub seconds: u64,
 }
 
+/// How a routine's step durations relate to the break length. Sent in
+/// [`BreakEvent`] as the routine's own declared pacing (if any); the
+/// frontend falls back to the `routine_fill` global setting when this is
+/// absent.
+///
+/// - `hold` — authored `seconds` are absolute; hold the last step once
+///   the routine finishes, truncate if it overruns. This is the legacy
+///   behaviour and the default when no pacing is declared.
+/// - `fill` — authored `seconds` are relative weights; scale them so
+///   steps exactly fill the break duration.
+/// - `loop` — authored `seconds` are absolute; restart from step 0 when
+///   the routine is shorter than the break (used by repeating routines
+///   such as breathing cycles).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RoutinePacing {
+    Hold,
+    Fill,
+    Loop,
+}
+
 /// Payload emitted to the renderer when a break starts.
 ///
 /// Captures everything the overlay needs to render itself without
@@ -46,6 +67,12 @@ pub struct RoutineStep {
 /// `routine_steps` is the resolved guided-routine sequence for this break
 /// (empty when the user has not selected a routine for this kind, in which
 /// case the overlay falls back to plain hint rotation).
+/// `routine_pacing` carries the routine's own declared [`RoutinePacing`]
+/// when set; the renderer falls back to the global `routine_fill` setting
+/// when this is `None`.
+/// `routine_max_step_secs` caps individual step durations when
+/// `routine_pacing` is `fill` and scaling would exceed this limit (the
+/// overlay falls back to `loop` behaviour for the remainder in that case).
 #[derive(Debug, Clone, Serialize)]
 pub struct BreakEvent {
     pub kind: BreakKind,
@@ -58,6 +85,8 @@ pub struct BreakEvent {
     pub hint_rotate_seconds: u64,
     pub health_intensity: f32,
     pub routine_steps: Vec<RoutineStep>,
+    pub routine_pacing: Option<RoutinePacing>,
+    pub routine_max_step_secs: Option<u64>,
 }
 
 /// The most recently skipped or postponed break, or `None` if none yet

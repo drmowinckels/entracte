@@ -10,6 +10,10 @@ export type RoutineStep = {
   seconds: number;
 };
 
+/** How a routine's step durations relate to the break length.
+ *  Mirrors `RoutinePacing` in `src-tauri/src/scheduler/types.rs`. */
+export type RoutinePacing = "hold" | "fill" | "loop";
+
 export type BreakEvent = {
   kind: BreakKind;
   duration_secs: number;
@@ -25,6 +29,11 @@ export type BreakEvent = {
   // fixtures and older payloads without it still type-check, and the schema
   // defaults it to `[]`.
   routine_steps?: RoutineStep[];
+  // The routine's own declared pacing, if any. `undefined` means the
+  // overlay falls back to the global `routine_fill` setting.
+  routine_pacing?: RoutinePacing;
+  // Per-step duration cap for fill-mode routines; absent when unused.
+  routine_max_step_secs?: number;
 };
 
 export type OverlaySettings = {
@@ -42,6 +51,10 @@ export type OverlaySettings = {
   pause_countdown_if_typing: boolean;
   strict_mode: boolean;
   custom_css: string;
+  /** Default pacing for routines that don't declare their own `pacing`.
+   *  `true` → fill mode (scale steps to fill the break);
+   *  `false` (default) → hold mode (authored durations, hold last step). */
+  routine_fill: boolean;
 };
 
 export type PostponeState = {
@@ -65,6 +78,7 @@ export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
   pause_countdown_if_typing: true,
   strict_mode: false,
   custom_css: "",
+  routine_fill: false,
 };
 
 export const TYPING_PAUSE_THRESHOLD_SECS = 2;

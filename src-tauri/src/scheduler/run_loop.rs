@@ -215,40 +215,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         if !matches!(bedtime_decision, BedtimeAction::NotInWindow) {
             if matches!(bedtime_decision, BedtimeAction::Fire) {
                 let intensity = sched.stats.lock().await.intensity();
-                super::overlay::fire_break(
-                    &app,
-                    &sched.current_break,
-                    BreakEvent {
-                        kind: BreakKind::Sleep,
-                        duration_secs: s.bedtime_duration_secs,
-                        enforceable: true,
-                        manual_finish: false,
-                        postpone_available: false,
-                        skip_available: false,
-                        hints: s.sleep_hints.clone(),
-                        hint_rotate_seconds: s.hint_rotate_seconds,
-                        health_intensity: if s.break_health_enabled {
-                            intensity
-                        } else {
-                            0.0
-                        },
-                        routine_steps: Vec::new(),
-                    },
-                    s.monitor_placement,
-                    super::settings::is_windowed_mode(BreakKind::Sleep, &s),
-                    super::settings::windowed_fraction_for(BreakKind::Sleep, &s),
-                );
-                hooks::run_hooks(
-                    &s,
-                    HookEvent::BreakStart,
-                    HookContext::with_kind_duration(BreakKind::Sleep, s.bedtime_duration_secs),
-                );
-                super::exports::deliver_on_event(&sched, HookEvent::BreakStart);
-                sched.logger.log(EventPayload::BreakStart {
-                    kind: BreakKind::Sleep,
-                    duration_secs: s.bedtime_duration_secs,
-                    enforceable: true,
-                });
+                deliver_sleep_break(&app, &sched, &s, intensity);
                 let mut t = sched.timers.lock().await;
                 t.last_sleep = Some(Instant::now());
                 t.last_micro = Instant::now();
@@ -568,6 +535,60 @@ async fn deliver_scheduled_break<R: Runtime>(
     delivery
 }
 
+/// Surface a Sleep (bedtime) break: fire the overlay, run the start hook, and
+/// log the event. Timer bookkeeping stays with the caller in `run_loop`.
+/// Sleep breaks are always overlay; they never go through the delivery-routing
+/// logic used by [`deliver_scheduled_break`].
+fn deliver_sleep_break<R: Runtime>(
+    app: &AppHandle<R>,
+    sched: &Scheduler,
+    s: &Settings,
+    intensity: f32,
+) {
+    super::overlay::fire_break(
+        app,
+        &sched.current_break,
+        sleep_break_event(s, intensity),
+        s.monitor_placement,
+        super::settings::is_windowed_mode(BreakKind::Sleep, s),
+        super::settings::windowed_fraction_for(BreakKind::Sleep, s),
+    );
+    hooks::run_hooks(
+        s,
+        HookEvent::BreakStart,
+        HookContext::with_kind_duration(BreakKind::Sleep, s.bedtime_duration_secs),
+    );
+    super::exports::deliver_on_event(sched, HookEvent::BreakStart);
+    sched.logger.log(EventPayload::BreakStart {
+        kind: BreakKind::Sleep,
+        duration_secs: s.bedtime_duration_secs,
+        enforceable: true,
+    });
+}
+
+/// Build the `BreakEvent` for the bedtime (Sleep) path. Sleep breaks never
+/// carry a guided routine, so `routine_*` fields are always empty/None.
+fn sleep_break_event(s: &Settings, intensity: f32) -> BreakEvent {
+    BreakEvent {
+        kind: BreakKind::Sleep,
+        duration_secs: s.bedtime_duration_secs,
+        enforceable: true,
+        manual_finish: false,
+        postpone_available: false,
+        skip_available: false,
+        hints: s.sleep_hints.clone(),
+        hint_rotate_seconds: s.hint_rotate_seconds,
+        health_intensity: if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
+        routine_steps: Vec::new(),
+        routine_pacing: None,
+        routine_max_step_secs: None,
+    }
+}
+
 /// Resolve the per-kind `BreakEvent` content for a scheduled micro/long
 /// break. Pure (no I/O) so the field resolution — which fields each kind
 /// draws, the strict-mode postpone lock, the break-health intensity gate
@@ -583,6 +604,7 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
     );
     let (duration_secs, enforceable, manual_finish, hints) =
         super::commands::breaks::fire_fields(kind, s);
+    let resolved = super::routines::resolve_routine(kind, s);
     BreakEvent {
         kind,
         duration_secs,
@@ -597,7 +619,9 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
         } else {
             0.0
         },
-        routine_steps: super::routines::resolve_routine_steps(kind, s),
+        routine_steps: resolved.steps,
+        routine_pacing: resolved.pacing,
+        routine_max_step_secs: resolved.max_step_secs,
     }
 }
 
@@ -1089,6 +1113,30 @@ mod tests {
         assert!(sched.current_break.lock().unwrap().is_none());
     }
 
+    // Drives `deliver_sleep_break` end to end. `select_overlay_monitors`
+    // returns empty under `#[cfg(test)]` so `fire_break` stashes
+    // `current_break` and returns without enumerating real monitors. Gated off
+    // Windows for the same mock-rig reason as the other MockRuntime tests.
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn deliver_sleep_break_sets_current_break() {
+        use crate::test_support::test_scheduler;
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::Manager;
+
+        let s = Settings::default();
+        let (_dir, sched) = test_scheduler(s.clone());
+
+        let app = mock_builder()
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        app.manage(sched.clone());
+
+        deliver_sleep_break(app.handle(), &sched, &s, 0.0);
+
+        assert!(sched.current_break.lock().unwrap().is_some());
+    }
+
     // Drives `fire_scheduled_break` end to end: the notification delivery
     // plus the post-fire timer bookkeeping it applies under the lock.
     // Gated off Windows for the same mock-rig reason as the glue test above.
@@ -1166,6 +1214,27 @@ mod tests {
         // the invariant is enforced with a panic and asserted here.
         let s = Settings::default();
         let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn sleep_break_event_has_empty_routine_fields() {
+        let s = Settings::default();
+        let e = sleep_break_event(&s, 0.0);
+        assert!(e.routine_steps.is_empty());
+        assert_eq!(e.routine_pacing, None);
+        assert_eq!(e.routine_max_step_secs, None);
+        assert_eq!(e.kind, BreakKind::Sleep);
+        // Cover the break_health_enabled true branch.
+        let mut s2 = Settings::default();
+        s2.break_health_enabled = true;
+        let e2 = sleep_break_event(&s2, 0.75);
+        assert_eq!(e2.health_intensity, 0.75);
+        // Cover the false branch: health disabled → intensity zeroed.
+        let mut s3 = Settings::default();
+        s3.break_health_enabled = false;
+        let e3 = sleep_break_event(&s3, 0.75);
+        assert_eq!(e3.health_intensity, 0.0);
     }
 
     #[test]

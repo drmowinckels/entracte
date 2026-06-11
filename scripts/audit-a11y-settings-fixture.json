@@ -91,5 +91,6 @@
   "tray_countdown_target": "next",
   "micro_break_mode": "overlay",
   "long_break_mode": "overlay",
+  "routine_fill": false,
   "custom_css": ""
 }

@@ -148,6 +148,7 @@ export const schedulerSettingsSchema = z.object({
   tray_countdown_target: z.enum(["next", "short", "long"]),
   micro_break_mode: z.enum(["overlay", "windowed", "notification"]),
   long_break_mode: z.enum(["overlay", "windowed", "notification"]),
+  routine_fill: z.boolean(),
   custom_css: z.string(),
 }) satisfies z.ZodType<SchedulerSettings>;
 

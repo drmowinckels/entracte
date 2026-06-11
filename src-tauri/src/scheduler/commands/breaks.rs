@@ -160,6 +160,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
     let (_, enforceable, manual_finish, hints) = fire_fields(kind, &s);
     let intensity = scheduler.stats.lock().await.intensity();
     let delivery = delivery_for(kind, &s);
+    let resolved = super::super::routines::resolve_routine(kind, &s);
     deliver_break(
         app,
         &scheduler.current_break,
@@ -177,7 +178,9 @@ pub async fn trigger_break_from_cli<R: Runtime>(
             } else {
                 0.0
             },
-            routine_steps: super::super::routines::resolve_routine_steps(kind, &s),
+            routine_steps: resolved.steps,
+            routine_pacing: resolved.pacing,
+            routine_max_step_secs: resolved.max_step_secs,
         },
         delivery,
         s.monitor_placement,
@@ -540,6 +543,7 @@ fn resume_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEve
         ),
         BreakKind::Sleep => (s.bedtime_duration_secs, true, false, s.sleep_hints.clone()),
     };
+    let resolved = super::super::routines::resolve_routine(kind, s);
     BreakEvent {
         kind,
         duration_secs,
@@ -554,7 +558,9 @@ fn resume_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEve
         } else {
             0.0
         },
-        routine_steps: super::super::routines::resolve_routine_steps(kind, s),
+        routine_steps: resolved.steps,
+        routine_pacing: resolved.pacing,
+        routine_max_step_secs: resolved.max_step_secs,
     }
 }
 

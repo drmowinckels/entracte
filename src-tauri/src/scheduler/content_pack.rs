@@ -154,6 +154,14 @@ pub fn validate_pack(pack: &ContentPack) -> Result<(), String> {
                 ));
             }
         }
+        if let Some(max) = r.max_step_secs {
+            if max == 0 || max > MAX_STEP_SECONDS {
+                return Err(format!(
+                    "routine '{}' max_step_secs must be 1..={MAX_STEP_SECONDS}",
+                    r.id
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -315,6 +323,8 @@ mod tests {
                 text: "Look away".to_string(),
                 seconds: 5,
             }],
+            pacing: None,
+            max_step_secs: None,
         }
     }
 
@@ -371,6 +381,25 @@ mod tests {
         assert!(validate_pack(&pack_with(vec![zero], PackHints::default()))
             .unwrap_err()
             .contains("outside"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_max_step_secs() {
+        let mut zero = sample_routine("a");
+        zero.max_step_secs = Some(0);
+        assert!(validate_pack(&pack_with(vec![zero], PackHints::default()))
+            .unwrap_err()
+            .contains("max_step_secs"));
+
+        let mut over = sample_routine("b");
+        over.max_step_secs = Some(MAX_STEP_SECONDS + 1);
+        assert!(validate_pack(&pack_with(vec![over], PackHints::default()))
+            .unwrap_err()
+            .contains("max_step_secs"));
+
+        let mut valid = sample_routine("c");
+        valid.max_step_secs = Some(60);
+        assert!(validate_pack(&pack_with(vec![valid], PackHints::default())).is_ok());
     }
 
     #[test]

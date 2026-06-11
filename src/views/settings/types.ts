@@ -77,6 +77,8 @@ export type Routine = {
   category: RoutineCategory;
   difficulty: RoutineDifficulty;
   steps: RoutineStep[];
+  pacing?: "hold" | "fill" | "loop";
+  max_step_secs?: number;
 };
 
 // Result of importing a content pack — mirrors Rust `MergeSummary`.
@@ -171,6 +173,7 @@ export type SchedulerSettings = {
   micro_routine_max_difficulty: RoutineDifficulty;
   long_routine_max_difficulty: RoutineDifficulty;
   custom_routines: Routine[];
+  routine_fill: boolean;
   hint_rotate_seconds: number;
   delay_break_if_typing: boolean;
   typing_grace_secs: number;
