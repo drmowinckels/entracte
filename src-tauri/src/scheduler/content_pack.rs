@@ -384,6 +384,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_invalid_max_step_secs() {
+        let mut zero = sample_routine("a");
+        zero.max_step_secs = Some(0);
+        assert!(validate_pack(&pack_with(vec![zero], PackHints::default()))
+            .unwrap_err()
+            .contains("max_step_secs"));
+
+        let mut over = sample_routine("b");
+        over.max_step_secs = Some(MAX_STEP_SECONDS + 1);
+        assert!(validate_pack(&pack_with(vec![over], PackHints::default()))
+            .unwrap_err()
+            .contains("max_step_secs"));
+
+        let mut valid = sample_routine("c");
+        valid.max_step_secs = Some(60);
+        assert!(validate_pack(&pack_with(vec![valid], PackHints::default())).is_ok());
+    }
+
+    #[test]
     fn validate_accepts_a_well_formed_pack() {
         let hints = PackHints {
             micro_physical: vec!["Stretch".to_string()],

@@ -218,24 +218,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
                 super::overlay::fire_break(
                     &app,
                     &sched.current_break,
-                    BreakEvent {
-                        kind: BreakKind::Sleep,
-                        duration_secs: s.bedtime_duration_secs,
-                        enforceable: true,
-                        manual_finish: false,
-                        postpone_available: false,
-                        skip_available: false,
-                        hints: s.sleep_hints.clone(),
-                        hint_rotate_seconds: s.hint_rotate_seconds,
-                        health_intensity: if s.break_health_enabled {
-                            intensity
-                        } else {
-                            0.0
-                        },
-                        routine_steps: Vec::new(),
-                        routine_pacing: None,
-                        routine_max_step_secs: None,
-                    },
+                    sleep_break_event(&s, intensity),
                     s.monitor_placement,
                     super::settings::is_windowed_mode(BreakKind::Sleep, &s),
                     super::settings::windowed_fraction_for(BreakKind::Sleep, &s),
@@ -568,6 +551,29 @@ async fn deliver_scheduled_break<R: Runtime>(
         enforceable,
     });
     delivery
+}
+
+/// Build the `BreakEvent` for the bedtime (Sleep) path. Sleep breaks never
+/// carry a guided routine, so `routine_*` fields are always empty/None.
+fn sleep_break_event(s: &Settings, intensity: f32) -> BreakEvent {
+    BreakEvent {
+        kind: BreakKind::Sleep,
+        duration_secs: s.bedtime_duration_secs,
+        enforceable: true,
+        manual_finish: false,
+        postpone_available: false,
+        skip_available: false,
+        hints: s.sleep_hints.clone(),
+        hint_rotate_seconds: s.hint_rotate_seconds,
+        health_intensity: if s.break_health_enabled {
+            intensity
+        } else {
+            0.0
+        },
+        routine_steps: Vec::new(),
+        routine_pacing: None,
+        routine_max_step_secs: None,
+    }
 }
 
 /// Resolve the per-kind `BreakEvent` content for a scheduled micro/long
@@ -1171,6 +1177,16 @@ mod tests {
         // the invariant is enforced with a panic and asserted here.
         let s = Settings::default();
         let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0);
+    }
+
+    #[test]
+    fn sleep_break_event_has_empty_routine_fields() {
+        let s = Settings::default();
+        let e = sleep_break_event(&s, 0.0);
+        assert!(e.routine_steps.is_empty());
+        assert_eq!(e.routine_pacing, None);
+        assert_eq!(e.routine_max_step_secs, None);
+        assert_eq!(e.kind, BreakKind::Sleep);
     }
 
     #[test]
