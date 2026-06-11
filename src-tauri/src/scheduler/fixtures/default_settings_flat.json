@@ -154,6 +154,7 @@
   "micro_routine_max_difficulty": "active",
   "long_routine_max_difficulty": "active",
   "custom_routines": [],
+  "routine_fill": false,
   "hint_rotate_seconds": 0,
   "delay_break_if_typing": true,
   "typing_grace_secs": 10,
