@@ -476,6 +476,8 @@ mod tests {
                         text: "Look away".to_string(),
                         seconds: 5,
                     }],
+                    pacing: None,
+                    max_step_secs: None,
                 }],
             }),
             signature: Signature {

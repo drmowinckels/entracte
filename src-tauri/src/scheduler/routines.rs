@@ -255,24 +255,6 @@ pub fn routines_matching<'a>(
         .collect()
 }
 
-/// Steps of the routine the engine picks for one break: filter to the
-/// matching pool, then take `index` (wrapped). Empty when nothing matches.
-/// Pure and deterministic — the caller supplies `index` (random at runtime,
-/// fixed in tests) so the whole selection is reproducible.
-pub fn select_routine_steps(
-    routines: &[Routine],
-    kind: BreakKind,
-    categories: &[RoutineCategory],
-    max_difficulty: RoutineDifficulty,
-    index: usize,
-) -> Vec<RoutineStep> {
-    let matching = routines_matching(routines, kind, categories, max_difficulty);
-    if matching.is_empty() {
-        return Vec::new();
-    }
-    matching[index % matching.len()].steps.clone()
-}
-
 /// A random index in `[0, n)`, or `0` when `n` is `0` or entropy is
 /// unavailable. The lone impurity in the routine engine; kept tiny so the
 /// pure selection core stays fully testable. Uniform enough for picking a
@@ -352,12 +334,6 @@ pub fn resolve_routine(kind: BreakKind, s: &Settings) -> ResolvedRoutine {
             max_step_secs: r.max_step_secs,
         },
     }
-}
-
-/// Thin wrapper that returns only the steps. Callers that need pacing
-/// metadata (break-event construction) should use [`resolve_routine`].
-pub fn resolve_routine_steps(kind: BreakKind, s: &Settings) -> Vec<RoutineStep> {
-    resolve_routine(kind, s).steps
 }
 
 /// Every routine available to a profile: the bundled starters plus any the

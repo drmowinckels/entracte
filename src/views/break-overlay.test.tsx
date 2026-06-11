@@ -499,4 +499,29 @@ describe("BreakOverlay guided routines", () => {
       currentBreak = null;
     }
   });
+
+  it("uses fill pacing from routine_fill setting when break has no pacing", async () => {
+    // Exercises the `routine_fill → effectivePacing = "fill"` branch in
+    // break-overlay.tsx when the break event carries no `routine_pacing`.
+    currentSettings = { ...DEFAULT_OVERLAY_SETTINGS, routine_fill: true };
+    currentBreak = null;
+    const { getByText } = render(<BreakOverlay />);
+    await waitFor(() => expect(listeners.has("break:start")).toBe(true));
+    await act(async () => {
+      listeners.get("break:start")?.({
+        payload: {
+          ...sampleBreak,
+          duration_secs: 30,
+          routine_steps: [
+            { text: "Fill step A", seconds: 5 },
+            { text: "Fill step B", seconds: 10 },
+          ],
+          // No routine_pacing — effectivePacing must come from routine_fill.
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(getByText("Fill step A")).toBeTruthy();
+    });
+  });
 });

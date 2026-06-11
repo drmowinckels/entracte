@@ -113,14 +113,17 @@ function loopProgress(
     return { index: 0, stepRemaining: 0, total };
   }
   const posInCycle = clamped % routineLen;
-  let consumed = 0;
-  for (let index = 0; index < total; index += 1) {
-    const d = durations[index];
-    if (posInCycle < consumed + d) {
-      return { index, stepRemaining: consumed + d - posInCycle, total };
-    }
-    consumed += d;
-  }
-  // Rounding edge: posInCycle == routineLen (shouldn't happen with % but safe).
-  return { index: total - 1, stepRemaining: 0, total };
+  // Build prefix sums and find the step that owns posInCycle.
+  // posInCycle is always in [0, routineLen) so findIndex always returns >= 0.
+  let running = 0;
+  const sums = durations.map((d) => {
+    running += d;
+    return running;
+  });
+  const index = Math.max(0, sums.findIndex((s) => posInCycle < s));
+  return {
+    index,
+    stepRemaining: sums[index]! - posInCycle,
+    total,
+  };
 }
