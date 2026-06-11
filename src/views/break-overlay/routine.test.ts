@@ -172,6 +172,22 @@ describe("routineProgress — fill pacing", () => {
       total: 3,
     });
   });
+
+  it("never drops a low-weight step to zero (1s floor)", () => {
+    // weights [1, 99] sum=100; fill to 50s → naive floor would give step A
+    // 0s and skip it entirely. The 1s minimum keeps it visible.
+    const lopsided: RoutineStep[] = [
+      { text: "A", seconds: 1 },
+      { text: "B", seconds: 99 },
+    ];
+    expect(
+      routineProgress(lopsided, 0, { pacing: "fill", fillToSecs: 50 }),
+    ).toEqual({ index: 0, stepRemaining: 1, total: 2 });
+    // After A's 1s the routine advances to B rather than having skipped A.
+    expect(
+      routineProgress(lopsided, 1, { pacing: "fill", fillToSecs: 50 })?.index,
+    ).toBe(1);
+  });
 });
 
 // ── Zero-sum fallback ────────────────────────────────────────────────────

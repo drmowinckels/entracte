@@ -10,8 +10,7 @@ export type RoutineProgress = {
 };
 
 /** Options that control how step durations relate to the break length.
- *  When omitted the function behaves byte-identically to the original
- *  (hold mode, back-compat). */
+ *  When omitted the function behaves as hold mode (back-compat). */
 export type RoutineProgressOpts = {
   /** Break duration in seconds. Required for `fill` and `loop` pacing;
    *  ignored for `hold`. */
@@ -36,8 +35,12 @@ export type RoutineProgressOpts = {
 // rounding.
 //
 // When `opts` is provided:
-// - `fill`: authored `seconds` are relative weights, scaled to fill
-//   `fillToSecs` exactly. If `maxStepSecs` is set and any scaled step
+// - `fill`: authored `seconds` are relative weights, scaled toward
+//   `fillToSecs`. Each step is guaranteed at least 1s so a low-weight step
+//   never floors to zero and silently vanishes; because of that floor and
+//   integer division the scaled durations may not sum to `fillToSecs`
+//   exactly (the last step holds for any shortfall, or is truncated by the
+//   break end on overshoot). If `maxStepSecs` is set and any scaled step
 //   would exceed it, the function falls back to `loop` mode.
 // - `loop`: steps play at their authored durations and restart from step 0
 //   when the routine ends, looping indefinitely.
@@ -50,40 +53,36 @@ export function routineProgress(
   if (steps.length === 0) return null;
   const total = steps.length;
   const clamped = Math.max(0, Math.floor(elapsed));
-
-  // Fast path: no opts or explicit hold → original behaviour, no allocation.
-  if (!opts || opts.pacing === undefined || opts.pacing === "hold") {
-    return holdProgress(
-      steps.map((s) => Math.max(0, Math.floor(s.seconds))),
-      clamped,
-      total,
-    );
-  }
-
-  const { pacing, fillToSecs, maxStepSecs } = opts;
   const baseDurations = steps.map((s) => Math.max(0, Math.floor(s.seconds)));
 
-  if (pacing === "fill" && fillToSecs !== undefined && fillToSecs > 0) {
-    const sumWeights = baseDurations.reduce((a, b) => a + b, 0);
-    if (sumWeights === 0) {
-      // Zero-sum fallback: nothing to scale — hold on last step.
-      return holdProgress(baseDurations, clamped, total);
-    }
-    const scaled = baseDurations.map((w) =>
-      Math.floor((fillToSecs * w) / sumWeights),
-    );
-    // max_step_secs -> loop fallback: any over-scaled step triggers loop.
-    if (maxStepSecs !== undefined && scaled.some((d) => d > maxStepSecs)) {
-      return loopProgress(baseDurations, clamped, total);
-    }
-    return holdProgress(scaled, clamped, total);
-  }
-
-  if (pacing === "loop") {
+  // `loop` plays authored durations on repeat; everything else (hold, fill,
+  // omitted/unrecognised opts) holds the last step. `fill` only changes which
+  // durations are held — scaled weights instead of authored seconds — and
+  // degrades to loop when a scaled step blows past `maxStepSecs`.
+  if (opts?.pacing === "loop") {
     return loopProgress(baseDurations, clamped, total);
   }
 
-  // Unrecognised pacing variant: fall back to hold.
+  if (
+    opts?.pacing === "fill" &&
+    opts.fillToSecs !== undefined &&
+    opts.fillToSecs > 0
+  ) {
+    const { fillToSecs, maxStepSecs } = opts;
+    const sumWeights = baseDurations.reduce((a, b) => a + b, 0);
+    if (sumWeights > 0) {
+      // Floor with a 1s minimum so a low-weight step never scales to zero and
+      // disappears; the engine truncates any overshoot at the break end.
+      const scaled = baseDurations.map((w) =>
+        Math.max(1, Math.floor((fillToSecs * w) / sumWeights)),
+      );
+      return maxStepSecs !== undefined && scaled.some((d) => d > maxStepSecs)
+        ? loopProgress(baseDurations, clamped, total)
+        : holdProgress(scaled, clamped, total);
+    }
+    // Zero-sum weights: nothing to scale — fall through to holding authored.
+  }
+
   return holdProgress(baseDurations, clamped, total);
 }
 
@@ -112,21 +111,16 @@ function loopProgress(
   if (routineLen === 0) {
     return { index: 0, stepRemaining: 0, total };
   }
+  // Map the wrapped position onto the owning step with the same linear walk
+  // `holdProgress` uses. posInCycle is always in [0, routineLen), so a step
+  // always claims it before the loop ends.
   const posInCycle = clamped % routineLen;
-  // Build prefix sums and find the step that owns posInCycle.
-  // posInCycle is always in [0, routineLen) so findIndex always returns >= 0.
-  let running = 0;
-  const sums = durations.map((d) => {
-    running += d;
-    return running;
-  });
-  const index = Math.max(
-    0,
-    sums.findIndex((s) => posInCycle < s),
-  );
-  return {
-    index,
-    stepRemaining: sums[index]! - posInCycle,
-    total,
-  };
+  let consumed = 0;
+  for (let index = 0; index < total; index += 1) {
+    consumed += durations[index];
+    if (posInCycle < consumed) {
+      return { index, stepRemaining: consumed - posInCycle, total };
+    }
+  }
+  return { index: total - 1, stepRemaining: 0, total };
 }
