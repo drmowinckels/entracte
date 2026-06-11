@@ -1180,6 +1180,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn sleep_break_event_has_empty_routine_fields() {
         let s = Settings::default();
         let e = sleep_break_event(&s, 0.0);
@@ -1187,6 +1188,11 @@ mod tests {
         assert_eq!(e.routine_pacing, None);
         assert_eq!(e.routine_max_step_secs, None);
         assert_eq!(e.kind, BreakKind::Sleep);
+        // Cover the break_health_enabled true branch.
+        let mut s2 = Settings::default();
+        s2.break_health_enabled = true;
+        let e2 = sleep_break_event(&s2, 0.75);
+        assert_eq!(e2.health_intensity, 0.75);
     }
 
     #[test]
