@@ -750,5 +750,4 @@ mod tests {
         assert!(resolved.steps.is_empty());
         assert_eq!(resolved.pacing, None);
     }
-
 }
