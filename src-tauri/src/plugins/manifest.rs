@@ -214,8 +214,10 @@ pub struct Manifest {
     /// Inline images a content plugin's routine steps may reference, each
     /// bound by its `sha256`. Excluded from the signing payload by blob
     /// (`data_base64`); the hash stays in the canonical manifest. Only content
-    /// plugins may carry assets. See [`super::asset`].
-    #[serde(default)]
+    /// plugins may carry assets. Omitted entirely when empty so a plugin that
+    /// ships none signs over a manifest with no `assets` key at all. See
+    /// [`super::asset`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<ManifestAsset>,
     pub signature: Signature,
 }
@@ -914,6 +916,23 @@ mod tests {
     fn validate_accepts_content_with_a_referenced_asset() {
         let mut m = content_manifest_referencing("twist");
         m.assets = vec![png_asset("twist")];
+        assert!(validate_manifest(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_a_mix_of_referencing_and_plain_steps() {
+        use crate::scheduler::RoutineStep;
+        // Declare an asset, but add a second step that references nothing — so
+        // the reference check sees both the Some and None step-asset arms.
+        let mut m = content_manifest_referencing("twist");
+        m.assets = vec![png_asset("twist")];
+        m.content.as_mut().unwrap().routines[0]
+            .steps
+            .push(RoutineStep {
+                text: "rest".to_string(),
+                seconds: 5,
+                asset: None,
+            });
         assert!(validate_manifest(&m).is_ok());
     }
 

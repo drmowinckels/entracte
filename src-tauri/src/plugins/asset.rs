@@ -379,6 +379,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_an_empty_asset() {
+        let a = ManifestAsset {
+            id: "a.png".to_string(),
+            sha256: hex_lower(&sha256(b"")),
+            data_base64: String::new(),
+        };
+        assert!(validate_asset(&a).unwrap_err().contains("is empty"));
+    }
+
+    #[test]
     fn rejects_invalid_base64() {
         let a = ManifestAsset {
             id: "a.png".to_string(),

@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::routines::{starter_routines, Routine};
 use super::settings::Settings;
+use super::types::RoutineStep;
 
 /// Schema version this build reads and writes. Bumped only on a
 /// breaking-change to the bundle shape.
@@ -275,10 +276,29 @@ pub fn merge_pack(pack: &ContentPack, settings: &mut Settings) -> MergeSummary {
     let mut pack = pack.clone();
     for r in &mut pack.routines {
         for st in &mut r.steps {
-            st.asset = None;
+            sanitize_imported_step(st);
         }
     }
     merge_pack_tracked(&pack, settings).0
+}
+
+/// Clear any field of a step arriving from an UNSIGNED imported pack that only
+/// the signed-plugin installer is allowed to populate.
+///
+/// The exhaustive destructure (no `..`) is the gate, not decoration: adding a
+/// field to [`RoutineStep`] will fail to compile here until someone explicitly
+/// decides whether an untrusted imported pack may carry it. That turns "did we
+/// remember to harden the import path too?" from a review checklist into a
+/// build error.
+fn sanitize_imported_step(step: &mut RoutineStep) {
+    let RoutineStep {
+        text: _,
+        seconds: _,
+        asset,
+    } = step;
+    // Images ship only in a signed plugin (with a backend-controlled sidecar
+    // path); an imported pack must never inject one.
+    *asset = None;
 }
 
 /// Remove exactly the content recorded in `added` from `settings` (the

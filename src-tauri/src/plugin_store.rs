@@ -201,6 +201,28 @@ mod tests {
     }
 
     #[test]
+    fn save_load_and_delete_an_asset_round_trips() {
+        let (_d, path) = temp_path();
+        let name = asset_file_name("com.x.yoga", "twist", "png");
+        save_asset(&path, &name, b"\x89PNG fake").unwrap();
+        assert!(asset_path(&path, &name).exists());
+        delete_asset(&path, &name);
+        assert!(!asset_path(&path, &name).exists());
+        delete_asset(&path, &name); // missing now: idempotent, no panic
+    }
+
+    #[test]
+    fn delete_asset_logs_and_continues_when_the_path_is_not_removable() {
+        // A directory where the sidecar would be: `remove_file` fails with a
+        // non-NotFound error, which is logged rather than panicking.
+        let (_d, path) = temp_path();
+        let name = asset_file_name("com.x.yoga", "twist", "png");
+        std::fs::create_dir_all(asset_path(&path, &name)).unwrap();
+        delete_asset(&path, &name); // must not panic
+        assert!(asset_path(&path, &name).exists(), "the directory remains");
+    }
+
+    #[test]
     fn save_then_load_round_trips() {
         let (_d, path) = temp_path();
         let reg = sample();

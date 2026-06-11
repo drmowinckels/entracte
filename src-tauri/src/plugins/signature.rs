@@ -45,10 +45,8 @@ pub fn signing_payload(manifest: &Manifest, module_sha256: Option<[u8; 32]>) -> 
     // megabyte of base64 never goes through the signer, while the hash — and
     // thus the bytes, since the installer verifies they match — stays signed.
     if let Some(assets) = obj.get_mut("assets").and_then(|a| a.as_array_mut()) {
-        for asset in assets {
-            if let Some(o) = asset.as_object_mut() {
-                o.remove("data_base64");
-            }
+        for asset in assets.iter_mut().filter_map(|a| a.as_object_mut()) {
+            asset.remove("data_base64");
         }
     }
     let mut bytes = serde_json::to_vec(&value).expect("json value is always serialisable");
