@@ -47,6 +47,7 @@ export const overlaySettingsSchema = z.object({
 const routineStepSchema = z.object({
   text: z.string(),
   seconds: z.number(),
+  asset: z.string().optional(),
 }) satisfies z.ZodType<RoutineStep>;
 
 export const breakEventSchema = z.object({

@@ -49,12 +49,17 @@ export function Plugins({
       setBusy(true);
       const outcome = await invoke<InstallOutcome>("install_plugin", { path });
       await Promise.all([refresh(), reload()]);
+      const images = outcome.images_added ?? 0;
       const message =
         outcome.kind === "content"
           ? `Installed "${outcome.name}" — added ${outcome.hints_added} idea${
               outcome.hints_added === 1 ? "" : "s"
             } and ${outcome.routines_added} routine${
               outcome.routines_added === 1 ? "" : "s"
+            }${
+              images > 0
+                ? ` with ${images} image${images === 1 ? "" : "s"}`
+                : ""
             }.`
           : `Installed "${outcome.name}".`;
       setStatus({ kind: "ok", message });

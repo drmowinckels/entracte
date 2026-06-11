@@ -103,11 +103,11 @@ A routine's `kind` is `micro` or `long`; its `category` is `eyes`, `mobility`, `
 A routine can optionally declare a `pacing` field to control how its step durations relate to the break length.
 When absent, the user's global **Spread routine steps across the whole break** toggle in Settings → Breaks decides.
 
-| `pacing` value | Step `seconds` meaning | Behaviour |
-| -------------- | ---------------------- | --------- |
-| `"hold"` (default) | Absolute seconds | Steps play at their authored duration. Once the routine finishes the last step is held until the break ends; if the routine is longer than the break it is truncated. |
-| `"fill"` | Relative weights | Step durations are scaled proportionally so the whole sequence exactly fills the break. A 5-second step and a 10-second step in a 30-second break become 10 s and 20 s respectively. |
-| `"loop"` | Absolute seconds | Steps play at their authored durations and restart from step 0 when the sequence finishes, looping until the break ends. Suited to repeating cycles like breathing patterns. |
+| `pacing` value     | Step `seconds` meaning | Behaviour                                                                                                                                                                            |
+| ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `"hold"` (default) | Absolute seconds       | Steps play at their authored duration. Once the routine finishes the last step is held until the break ends; if the routine is longer than the break it is truncated.                |
+| `"fill"`           | Relative weights       | Step durations are scaled proportionally so the whole sequence exactly fills the break. A 5-second step and a 10-second step in a 30-second break become 10 s and 20 s respectively. |
+| `"loop"`           | Absolute seconds       | Steps play at their authored durations and restart from step 0 when the sequence finishes, looping until the break ends. Suited to repeating cycles like breathing patterns.         |
 
 The optional `max_step_secs` field (a positive integer, maximum `3600`) only applies to `"fill"` pacing.
 If scaling would push any step past this cap, the routine automatically falls back to `"loop"` mode — preserving the authored tempo instead of producing an uncomfortably long hold.
@@ -128,6 +128,53 @@ If scaling would push any step past this cap, the routine automatically falls ba
   ]
 }
 ```
+
+### Step images
+
+A routine step can show an image — a sketch of the stretch, a posture diagram — alongside its text.
+The image travels inline in the manifest, like a detector's module, so the plugin is still one file.
+
+Declare your images in a top-level `assets` array (a sibling of `content`, not inside it), then point a step at one with its `asset` field — the value is the asset's `id`:
+
+```json
+{
+  "kind": "content",
+  "content": {
+    "version": 1,
+    "name": "Desk yoga",
+    "routines": [
+      {
+        "id": "seated-twist",
+        "label": "Seated twist",
+        "kind": "long",
+        "category": "desk_yoga",
+        "difficulty": "gentle",
+        "steps": [
+          {
+            "text": "Sit tall and twist gently to the right",
+            "seconds": 20,
+            "asset": "twist"
+          }
+        ]
+      }
+    ]
+  },
+  "assets": [
+    {
+      "id": "twist",
+      "sha256": "<hex sha-256 of the decoded image>",
+      "data_base64": "<the image bytes, base64>"
+    }
+  ],
+  "signature": { "…": "…" }
+}
+```
+
+Each asset has an `id` (`[a-z0-9._-]`, the value a step's `asset` references), the lowercase-hex `sha256` of the decoded image, and the image itself as standard-alphabet base64 in `data_base64`.
+The format is sniffed from the bytes and must be **PNG, GIF, or WebP**; an image is capped at **512 KiB** decoded and **4,000,000 pixels** (width × height), and a pack carries at most **64** of them.
+Every `asset` a step names must match a declared asset `id`, or the manifest is rejected.
+
+The overlay shows the image above the step text in a fixed box; a step with no `asset` is unaffected, and a content plugin's images are removed from disk again when you uninstall it.
 
 Merging is additive and idempotent.
 An idea that already exists word-for-word is skipped, and a routine whose `id` collides with one already installed is skipped too, so installing your pack can never clobber what a user typed themselves.
@@ -257,8 +304,9 @@ None of it blocks Entracte, and a server that hangs or tries to bounce you elsew
 Every plugin is signed with [Ed25519](https://ed25519.cr.yp.to/), and an unsigned or tampered file will not install.
 This is the fiddliest part of authoring, because the signature is computed over an exact canonical form, so it is worth being precise.
 
-The signed bytes are the manifest serialised to JSON _with the `signature` and `module_base64` fields removed_, in compact form with object keys sorted at every level, as UTF-8 — and then, for a detector, the raw 32 bytes of the module's SHA-256 appended.
+The signed bytes are the manifest serialised to JSON _with the `signature` and `module_base64` fields removed (and each asset's `data_base64` removed too)_, in compact form with object keys sorted at every level, as UTF-8 — and then, for a detector, the raw 32 bytes of the module's SHA-256 appended.
 Removing `module_base64` and appending the hash is what binds the module to the signature without putting a megabyte of base64 through the signer.
+Image assets are bound the same way, but more simply: only the heavy `data_base64` blob is stripped — each asset's `sha256` stays in the signed manifest, so it is already covered, and the installer separately checks the bytes hash to it.
 Removing `signature` is what lets you compute the thing you are about to put _into_ `signature`.
 
 Here is a reference signer in Python using [PyNaCl](https://pynacl.readthedocs.io/).
@@ -338,6 +386,10 @@ They are generous for anything hand-authored and exist so a malformed or hostile
 | -------------------------------- | ------------------------ |
 | Manifest file size               | 8 MiB                    |
 | Embedded module size             | 16 MiB                   |
+| Image assets per pack            | 64                       |
+| Image asset size (decoded)       | 512 KiB                  |
+| Image asset dimensions           | 4,000,000 px (w × h)     |
+| Image asset formats              | PNG, GIF, WebP           |
 | Any string                       | 1000 characters          |
 | Plugin `id`                      | 128 characters           |
 | Capability imports               | 16                       |

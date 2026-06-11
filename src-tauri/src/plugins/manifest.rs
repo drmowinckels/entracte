@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::asset::{validate_asset, ManifestAsset, MAX_ASSETS};
 use crate::scheduler::content_pack::{validate_pack, ContentPack};
 
 /// Manifest schema version this build reads and writes. Bumped only on a
@@ -210,6 +211,14 @@ pub struct Manifest {
     pub export: Option<ExportConfig>,
     #[serde(default)]
     pub content: Option<ContentPack>,
+    /// Inline images a content plugin's routine steps may reference, each
+    /// bound by its `sha256`. Excluded from the signing payload by blob
+    /// (`data_base64`); the hash stays in the canonical manifest. Only content
+    /// plugins may carry assets. Omitted entirely when empty so a plugin that
+    /// ships none signs over a manifest with no `assets` key at all. See
+    /// [`super::asset`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<ManifestAsset>,
     pub signature: Signature,
 }
 
@@ -364,6 +373,43 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
         }
     }
 
+    validate_assets(m)?;
+
+    Ok(())
+}
+
+/// Validate a manifest's image assets and the routine references to them.
+/// Only content plugins may carry assets; each must be a sound, in-cap image
+/// (see [`validate_asset`]) with a unique id, and every routine `step.asset`
+/// must resolve to one of them. First-error-wins, like the rest of the file.
+fn validate_assets(m: &Manifest) -> Result<(), String> {
+    if !m.assets.is_empty() && m.kind != PluginKind::Content {
+        return Err(format!("a {:?} plugin must not carry image assets", m.kind).to_lowercase());
+    }
+    if m.assets.len() > MAX_ASSETS {
+        return Err(format!("plugin carries more than {MAX_ASSETS} assets"));
+    }
+    let mut ids = std::collections::HashSet::new();
+    for asset in &m.assets {
+        validate_asset(asset)?;
+        if !ids.insert(asset.id.as_str()) {
+            return Err(format!("duplicate asset id '{}'", asset.id));
+        }
+    }
+    if let Some(pack) = &m.content {
+        for r in &pack.routines {
+            for st in &r.steps {
+                if let Some(asset_id) = &st.asset {
+                    if !ids.contains(asset_id.as_str()) {
+                        return Err(format!(
+                            "routine '{}' references unknown asset '{}'",
+                            r.id, asset_id
+                        ));
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -414,6 +460,7 @@ mod tests {
             detect: None,
             export: None,
             content: None,
+            assets: Vec::new(),
             signature: sig(),
         }
     }
@@ -434,6 +481,7 @@ mod tests {
             detect: None,
             export: None,
             content: Some(sample_pack()),
+            assets: Vec::new(),
             signature: sig(),
         }
     }
@@ -472,6 +520,7 @@ mod tests {
                 on: vec![crate::hooks::HookEvent::BreakEnd],
             }),
             content: None,
+            assets: Vec::new(),
             signature: sig(),
         }
     }
@@ -821,5 +870,105 @@ mod tests {
         assert!(validate_manifest(&m)
             .unwrap_err()
             .contains("must not declare an abi_version"));
+    }
+
+    fn png_asset(id: &str) -> ManifestAsset {
+        use base64::prelude::{Engine, BASE64_STANDARD};
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&10u32.to_be_bytes());
+        bytes.extend_from_slice(&10u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let hash = crate::plugins::sha256(&bytes);
+        ManifestAsset {
+            id: id.to_string(),
+            sha256: hash.iter().map(|b| format!("{b:02x}")).collect(),
+            data_base64: BASE64_STANDARD.encode(&bytes),
+        }
+    }
+
+    /// A content manifest whose one routine's one step references `asset_id`.
+    fn content_manifest_referencing(asset_id: &str) -> Manifest {
+        use crate::scheduler::{
+            Routine, RoutineCategory, RoutineDifficulty, RoutineKind, RoutineStep,
+        };
+        let mut m = content_manifest();
+        let pack = m.content.as_mut().unwrap();
+        pack.routines.push(Routine {
+            id: "r1".to_string(),
+            label: "R".to_string(),
+            kind: RoutineKind::Micro,
+            category: RoutineCategory::Mobility,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![RoutineStep {
+                text: "stretch".to_string(),
+                seconds: 5,
+                asset: Some(asset_id.to_string()),
+            }],
+            pacing: None,
+            max_step_secs: None,
+        });
+        m
+    }
+
+    #[test]
+    fn validate_accepts_content_with_a_referenced_asset() {
+        let mut m = content_manifest_referencing("twist");
+        m.assets = vec![png_asset("twist")];
+        assert!(validate_manifest(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_a_mix_of_referencing_and_plain_steps() {
+        use crate::scheduler::RoutineStep;
+        // Declare an asset, but add a second step that references nothing — so
+        // the reference check sees both the Some and None step-asset arms.
+        let mut m = content_manifest_referencing("twist");
+        m.assets = vec![png_asset("twist")];
+        m.content.as_mut().unwrap().routines[0]
+            .steps
+            .push(RoutineStep {
+                text: "rest".to_string(),
+                seconds: 5,
+                asset: None,
+            });
+        assert!(validate_manifest(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_assets_on_a_non_content_plugin() {
+        let mut m = detector_manifest();
+        m.assets = vec![png_asset("twist")];
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("must not carry image assets"));
+    }
+
+    #[test]
+    fn validate_rejects_an_unresolved_asset_reference() {
+        let mut m = content_manifest_referencing("missing");
+        m.assets = vec![png_asset("twist")];
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("references unknown asset"));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_asset_ids() {
+        let mut m = content_manifest();
+        m.assets = vec![png_asset("twist"), png_asset("twist")];
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("duplicate asset id"));
+    }
+
+    #[test]
+    fn validate_rejects_too_many_assets() {
+        let mut m = content_manifest();
+        m.assets = (0..=MAX_ASSETS)
+            .map(|i| png_asset(&format!("a{i}")))
+            .collect();
+        assert!(validate_manifest(&m).unwrap_err().contains("more than"));
     }
 }

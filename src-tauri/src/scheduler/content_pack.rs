@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::routines::{starter_routines, Routine};
 use super::settings::Settings;
+use super::types::RoutineStep;
 
 /// Schema version this build reads and writes. Bumped only on a
 /// breaking-change to the bundle shape.
@@ -203,6 +204,10 @@ pub struct AddedContent {
     pub sleep: Vec<String>,
     #[serde(default)]
     pub routine_ids: Vec<String>,
+    /// Sidecar filenames of image assets written for this plugin, so uninstall
+    /// can delete exactly them. Empty for packs/plugins with no images.
+    #[serde(default)]
+    pub asset_files: Vec<String>,
 }
 
 /// Merge a validated pack into `settings`, recording exactly what was added.
@@ -243,6 +248,9 @@ pub fn merge_pack_tracked(
             }
             ids
         },
+        // Set by the plugin-install path after extracting sidecars; the
+        // portable content-pack import path carries no images.
+        asset_files: Vec::new(),
     };
     let summary = MergeSummary {
         hints_added: added.micro_physical.len()
@@ -258,8 +266,39 @@ pub fn merge_pack_tracked(
 /// Merge a validated pack into `settings`, returning only the summary counts.
 /// Thin wrapper over [`merge_pack_tracked`] for the content-pack import path,
 /// which has no uninstall and so doesn't need the [`AddedContent`] record.
+///
+/// Strips any per-step `asset` first: a portable pack is unsigned and carries
+/// no image bytes, so an `asset` value could only be an arbitrary local path a
+/// malicious pack smuggled in — only the signed-plugin installer is allowed to
+/// populate `asset`, and it does so with a backend-controlled sidecar path.
+/// Mirror of the stripping [`export_pack`] does on the way out.
 pub fn merge_pack(pack: &ContentPack, settings: &mut Settings) -> MergeSummary {
-    merge_pack_tracked(pack, settings).0
+    let mut pack = pack.clone();
+    for r in &mut pack.routines {
+        for st in &mut r.steps {
+            sanitize_imported_step(st);
+        }
+    }
+    merge_pack_tracked(&pack, settings).0
+}
+
+/// Clear any field of a step arriving from an UNSIGNED imported pack that only
+/// the signed-plugin installer is allowed to populate.
+///
+/// The exhaustive destructure (no `..`) is the gate, not decoration: adding a
+/// field to [`RoutineStep`] will fail to compile here until someone explicitly
+/// decides whether an untrusted imported pack may carry it. That turns "did we
+/// remember to harden the import path too?" from a review checklist into a
+/// build error.
+fn sanitize_imported_step(step: &mut RoutineStep) {
+    let RoutineStep {
+        text: _,
+        seconds: _,
+        asset,
+    } = step;
+    // Images ship only in a signed plugin (with a backend-controlled sidecar
+    // path); an imported pack must never inject one.
+    *asset = None;
 }
 
 /// Remove exactly the content recorded in `added` from `settings` (the
@@ -302,7 +341,21 @@ pub fn export_pack(name: &str, settings: &Settings) -> ContentPack {
             long_social: settings.long_social_hints.clone(),
             sleep: settings.sleep_hints.clone(),
         },
-        routines: settings.custom_routines.clone(),
+        routines: settings
+            .custom_routines
+            .iter()
+            .map(|r| {
+                // Drop per-step image references: in settings these are
+                // absolute paths to a plugin's installed sidecars, which would
+                // be dead links on another machine. Portable packs carry no
+                // images (those ship in a signed plugin manifest instead).
+                let mut r = r.clone();
+                for st in &mut r.steps {
+                    st.asset = None;
+                }
+                r
+            })
+            .collect(),
     }
 }
 
@@ -322,6 +375,7 @@ mod tests {
             steps: vec![RoutineStep {
                 text: "Look away".to_string(),
                 seconds: 5,
+                asset: None,
             }],
             pacing: None,
             max_step_secs: None,
@@ -449,6 +503,38 @@ mod tests {
         assert_eq!(summary.routines_added, 1);
         assert_eq!(s.custom_routines.len(), 2);
         assert!(s.custom_routines.iter().any(|r| r.id == "brand-new"));
+    }
+
+    #[test]
+    fn merge_pack_strips_per_step_image_paths_from_an_imported_pack() {
+        // An unsigned imported pack must never inject an asset path the overlay
+        // would load — only the signed-plugin installer populates `asset`.
+        let mut rt = sample_routine("rt-img");
+        rt.steps[0].asset = Some("/etc/passwd-ish/evil.png".to_string());
+        let pack = ContentPack {
+            version: CONTENT_PACK_VERSION,
+            name: "Imported".to_string(),
+            hints: PackHints::default(),
+            routines: vec![rt],
+        };
+        let mut s = Settings::default();
+        merge_pack(&pack, &mut s);
+        let merged = s.custom_routines.iter().find(|r| r.id == "rt-img").unwrap();
+        assert_eq!(merged.steps[0].asset, None);
+    }
+
+    #[test]
+    fn export_strips_per_step_image_paths() {
+        // A custom routine whose step carries an installed plugin's absolute
+        // asset path must export with that path dropped — portable packs carry
+        // no images, and the path would be a dead link elsewhere.
+        let mut src = Settings::default();
+        let mut rt = sample_routine("rt-img");
+        rt.steps[0].asset = Some("/home/u/.config/entracte/plugin-modules/x.png".to_string());
+        src.custom_routines = vec![rt];
+
+        let pack = export_pack("No images", &src);
+        assert_eq!(pack.routines[0].steps[0].asset, None);
     }
 
     #[test]

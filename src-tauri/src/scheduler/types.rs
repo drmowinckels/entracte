@@ -34,6 +34,13 @@ pub enum BreakDelivery {
 pub struct RoutineStep {
     pub text: String,
     pub seconds: u64,
+    /// Optional image shown alongside the instruction. In a plugin manifest
+    /// this is the pack-local asset id; on install it is rewritten to the
+    /// stored sidecar's absolute path, which is what reaches the overlay (the
+    /// frontend turns it into an `asset:` URL). `None` for the common
+    /// text-only step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
 }
 
 /// How a routine's step durations relate to the break length. Sent in

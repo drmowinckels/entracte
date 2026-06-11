@@ -65,6 +65,10 @@ pub use tray_countdown::{format_countdown, TrayCountdownSnapshot};
 #[allow(unused_imports)]
 pub use types::SuppressReason;
 pub use types::{BreakKind, LastBreakInfo};
+// Re-exported for out-of-scheduler consumers (e.g. plugin manifest tests
+// constructing routines); the crate otherwise names it via `super::types`.
+#[allow(unused_imports)]
+pub use types::RoutineStep;
 
 use timers::BreakTimers;
 

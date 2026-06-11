@@ -33,6 +33,7 @@ const invokeMock = vi.fn(async (cmd: string, _args?: unknown) => {
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
+  convertFileSrc: (path: string) => `asset://localhost/${path}`,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -441,6 +442,33 @@ describe("BreakOverlay guided routines", () => {
     expect(
       container.querySelector(".overlay-routine-progress")?.textContent,
     ).toContain("Step 1 of 2");
+  });
+
+  it("renders the current step's image via convertFileSrc when present", async () => {
+    const { container } = await startBreak(false, {
+      duration_secs: 30,
+      routine_steps: [
+        { text: "Seated twist", seconds: 10, asset: "/plugins/twist.png" },
+      ],
+    });
+    const img = container.querySelector<HTMLImageElement>(
+      ".overlay-routine-image",
+    );
+    expect(img).toBeTruthy();
+    expect(img?.getAttribute("src")).toBe(
+      "asset://localhost//plugins/twist.png",
+    );
+
+    // A broken/missing sidecar must hide the image, never break the routine.
+    fireEvent.error(img!);
+    expect(img!.style.display).toBe("none");
+  });
+
+  it("renders no image when the step has no asset", async () => {
+    const { container } = await startBreak(false, {
+      routine_steps: [{ text: "Reach overhead", seconds: 20 }],
+    });
+    expect(container.querySelector(".overlay-routine-image")).toBeNull();
   });
 
   it("labels the routine step with its position for screen readers", async () => {

@@ -63,6 +63,34 @@ pub fn delete_module(registry_path: &Path, id: &str) {
     }
 }
 
+/// Sidecar filename for one of plugin `plugin_id`'s image assets. Both
+/// `plugin_id` (reverse-DNS) and `asset_id` (`[a-z0-9._-]`) are validated at
+/// install, so the result is a single safe filename component — no separators,
+/// no traversal. Recorded in the registry so uninstall can remove exactly it.
+pub fn asset_file_name(plugin_id: &str, asset_id: &str, ext: &str) -> String {
+    format!("{plugin_id}.{asset_id}.{ext}")
+}
+
+/// Absolute path for an asset sidecar named `file_name`, beside the modules.
+pub fn asset_path(registry_path: &Path, file_name: &str) -> PathBuf {
+    modules_dir(registry_path).join(file_name)
+}
+
+/// Atomically persist an image asset with owner-only permissions.
+pub fn save_asset(registry_path: &Path, file_name: &str, bytes: &[u8]) -> io::Result<()> {
+    write_user_only(&asset_path(registry_path, file_name), bytes)
+}
+
+/// Remove an asset sidecar. Missing is fine (idempotent uninstall).
+pub fn delete_asset(registry_path: &Path, file_name: &str) {
+    let path = asset_path(registry_path, file_name);
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != io::ErrorKind::NotFound {
+            error!("plugin_store: failed to remove {}: {e}", path.display());
+        }
+    }
+}
+
 /// Load the registry, defaulting to empty on a missing or malformed file.
 pub fn load(path: &Path) -> PluginRegistry {
     match read_capped(path, MAX_REGISTRY_BYTES) {
@@ -170,6 +198,28 @@ mod tests {
         std::fs::create_dir_all(&mp).unwrap();
         delete_module(&path, "com.x.detector"); // must not panic
         assert!(mp.exists(), "the directory is left in place");
+    }
+
+    #[test]
+    fn save_load_and_delete_an_asset_round_trips() {
+        let (_d, path) = temp_path();
+        let name = asset_file_name("com.x.yoga", "twist", "png");
+        save_asset(&path, &name, b"\x89PNG fake").unwrap();
+        assert!(asset_path(&path, &name).exists());
+        delete_asset(&path, &name);
+        assert!(!asset_path(&path, &name).exists());
+        delete_asset(&path, &name); // missing now: idempotent, no panic
+    }
+
+    #[test]
+    fn delete_asset_logs_and_continues_when_the_path_is_not_removable() {
+        // A directory where the sidecar would be: `remove_file` fails with a
+        // non-NotFound error, which is logged rather than panicking.
+        let (_d, path) = temp_path();
+        let name = asset_file_name("com.x.yoga", "twist", "png");
+        std::fs::create_dir_all(asset_path(&path, &name)).unwrap();
+        delete_asset(&path, &name); // must not panic
+        assert!(asset_path(&path, &name).exists(), "the directory remains");
     }
 
     #[test]
