@@ -98,6 +98,20 @@
     stroke 1s linear;
 }
 
+.overlay-breath-circle {
+  fill: var(--ring-stroke, currentColor);
+  opacity: 0.16;
+  transform: scale(var(--breath-scale, 1));
+  transform-origin: 140px 140px;
+  transition: transform 1s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-breath-circle {
+    transition: none;
+  }
+}
+
 .overlay-timer {
   position: absolute;
   inset: 0;

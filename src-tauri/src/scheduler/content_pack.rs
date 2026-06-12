@@ -134,8 +134,8 @@ pub fn validate_pack(pack: &ContentPack) -> Result<(), String> {
             return Err(format!("routine '{}' is missing a label", r.id));
         }
         check_string(&r.label, "a routine label")?;
-        if r.steps.is_empty() {
-            return Err(format!("routine '{}' has no steps", r.id));
+        if r.steps.is_empty() && r.breath.is_none() {
+            return Err(format!("routine '{}' has no steps or breath", r.id));
         }
         if r.steps.len() > MAX_STEPS_PER_ROUTINE {
             return Err(format!(
@@ -161,6 +161,28 @@ pub fn validate_pack(pack: &ContentPack) -> Result<(), String> {
                     "routine '{}' max_step_secs must be 1..={MAX_STEP_SECONDS}",
                     r.id
                 ));
+            }
+        }
+        if let Some(b) = &r.breath {
+            // A cycle needs a real in- and out-breath; holds are optional.
+            if b.inhale == 0 || b.exhale == 0 {
+                return Err(format!(
+                    "routine '{}' breath needs a non-zero inhale and exhale",
+                    r.id
+                ));
+            }
+            for phase in [b.inhale, b.hold, b.exhale, b.hold_out] {
+                if phase > MAX_STEP_SECONDS {
+                    return Err(format!(
+                        "routine '{}' breath phase exceeds {MAX_STEP_SECONDS}s",
+                        r.id
+                    ));
+                }
+            }
+            if let Some(c) = b.cycles {
+                if c == 0 {
+                    return Err(format!("routine '{}' breath cycles must be >= 1", r.id));
+                }
             }
         }
     }
@@ -363,7 +385,18 @@ pub fn export_pack(name: &str, settings: &Settings) -> ContentPack {
 mod tests {
     use super::*;
     use crate::scheduler::routines::{RoutineCategory, RoutineDifficulty, RoutineKind};
-    use crate::scheduler::types::RoutineStep;
+    use crate::scheduler::types::{BreathPattern, RoutineStep};
+
+    fn breath(inhale: u64, exhale: u64) -> BreathPattern {
+        BreathPattern {
+            inhale,
+            hold: 0,
+            exhale,
+            hold_out: 0,
+            cycles: None,
+            then: None,
+        }
+    }
 
     fn sample_routine(id: &str) -> Routine {
         Routine {
@@ -379,6 +412,7 @@ mod tests {
             }],
             pacing: None,
             max_step_secs: None,
+            breath: None,
         }
     }
 
@@ -454,6 +488,45 @@ mod tests {
         let mut valid = sample_routine("c");
         valid.max_step_secs = Some(60);
         assert!(validate_pack(&pack_with(vec![valid], PackHints::default())).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_a_breathing_routine_without_steps() {
+        let mut r = sample_routine("breathe");
+        r.steps = vec![]; // a breath routine carries no step text
+        let mut b = breath(4, 4);
+        b.cycles = Some(6); // a non-zero cap is accepted
+        r.breath = Some(b);
+        assert!(validate_pack(&pack_with(vec![r], PackHints::default())).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_breath_with_zero_inhale_or_exhale() {
+        let mut r = sample_routine("a");
+        r.breath = Some(breath(0, 4));
+        assert!(validate_pack(&pack_with(vec![r], PackHints::default()))
+            .unwrap_err()
+            .contains("non-zero inhale and exhale"));
+    }
+
+    #[test]
+    fn validate_rejects_an_overlong_breath_phase() {
+        let mut r = sample_routine("a");
+        r.breath = Some(breath(4, MAX_STEP_SECONDS + 1));
+        assert!(validate_pack(&pack_with(vec![r], PackHints::default()))
+            .unwrap_err()
+            .contains("breath phase exceeds"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_breath_cycles() {
+        let mut r = sample_routine("a");
+        let mut b = breath(4, 4);
+        b.cycles = Some(0);
+        r.breath = Some(b);
+        assert!(validate_pack(&pack_with(vec![r], PackHints::default()))
+            .unwrap_err()
+            .contains("cycles must be >= 1"));
     }
 
     #[test]

@@ -129,6 +129,7 @@ mod tests {
                 }],
                 pacing: None,
                 max_step_secs: None,
+                breath: None,
             }],
         }
     }

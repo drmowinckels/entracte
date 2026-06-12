@@ -1,0 +1,80 @@
+import type { BreathPattern } from "./types";
+
+export type BreathPhase = "inhale" | "hold" | "exhale" | "hold_out" | "rest";
+
+export type BreathProgress = {
+  phase: BreathPhase;
+  // Whole seconds left in the current phase.
+  phaseRemaining: number;
+  // Ring fullness: 0 = fully exhaled (smallest), 1 = fully inhaled (largest).
+  fullness: number;
+};
+
+const PHASE_LABEL: Record<BreathPhase, string> = {
+  inhale: "Breathe in",
+  hold: "Hold",
+  exhale: "Breathe out",
+  hold_out: "Hold",
+  rest: "Rest",
+};
+
+export function breathPhaseLabel(phase: BreathPhase): string {
+  return PHASE_LABEL[phase];
+}
+
+// Map a fullness (0..1) to the ring's `--breath-scale`. Reduced-motion users
+// get a fixed mid scale (no pulse — the phase labels carry the rhythm);
+// everyone else pulses between 0.55 (exhaled) and 1.0 (inhaled).
+export function breathScale(fullness: number, reducedMotion: boolean): number {
+  return reducedMotion ? 0.85 : 0.55 + 0.45 * fullness;
+}
+
+// Map elapsed break time onto a breathing pattern, the same way `routineProgress`
+// maps it onto steps: derived purely from the break countdown (no separate
+// timer, so it pauses with the countdown). Phase seconds are absolute — the
+// pattern is never scaled to the break, only repeated. `cycles` optionally
+// caps the guided portion, after which `then` (default `loop`) decides whether
+// to keep cycling or settle into a held `rest`. Returns null only for a
+// degenerate all-zero pattern.
+export function breathProgress(
+  b: BreathPattern,
+  elapsed: number,
+): BreathProgress | null {
+  const inhale = Math.max(0, Math.floor(b.inhale));
+  const hold = Math.max(0, Math.floor(b.hold ?? 0));
+  const exhale = Math.max(0, Math.floor(b.exhale));
+  const holdOut = Math.max(0, Math.floor(b.hold_out ?? 0));
+  const cycle = inhale + hold + exhale + holdOut;
+  if (cycle <= 0) return null;
+
+  const e = Math.max(0, Math.floor(elapsed));
+  if (b.cycles != null && b.cycles > 0 && e >= b.cycles * cycle) {
+    if (b.then !== "loop") {
+      return { phase: "rest", phaseRemaining: 0, fullness: 0 };
+    }
+    // then === "loop": keep cycling past the cap.
+  }
+
+  let pos = e % cycle;
+  if (pos < inhale) {
+    return {
+      phase: "inhale",
+      phaseRemaining: inhale - pos,
+      fullness: inhale ? pos / inhale : 1,
+    };
+  }
+  pos -= inhale;
+  if (pos < hold) {
+    return { phase: "hold", phaseRemaining: hold - pos, fullness: 1 };
+  }
+  pos -= hold;
+  if (pos < exhale) {
+    return {
+      phase: "exhale",
+      phaseRemaining: exhale - pos,
+      fullness: exhale ? 1 - pos / exhale : 0,
+    };
+  }
+  pos -= exhale;
+  return { phase: "hold_out", phaseRemaining: holdOut - pos, fullness: 0 };
+}

@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::settings::Settings;
-use super::types::{BreakKind, RoutinePacing, RoutineStep};
+use super::types::{BreakKind, BreathPattern, RoutinePacing, RoutineStep};
 
 /// Which break kind a routine is offered for. Sleep has no routines.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -84,6 +84,10 @@ pub struct Routine {
     pub pacing: Option<RoutinePacing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_step_secs: Option<u64>,
+    /// A guided breathing pattern animated on the ring. When present, the
+    /// overlay shows breath phase labels instead of (often empty) step text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breath: Option<BreathPattern>,
 }
 
 fn step(text: &str, seconds: u64) -> RoutineStep {
@@ -111,6 +115,7 @@ fn routine(
         steps,
         pacing: None,
         max_step_secs: None,
+        breath: None,
     }
 }
 
@@ -281,6 +286,8 @@ pub struct ResolvedRoutine {
     pub pacing: Option<RoutinePacing>,
     /// Per-step duration cap for fill-mode routines. See [`RoutinePacing::Fill`].
     pub max_step_secs: Option<u64>,
+    /// The routine's breathing pattern, if any.
+    pub breath: Option<BreathPattern>,
 }
 
 impl ResolvedRoutine {
@@ -289,6 +296,7 @@ impl ResolvedRoutine {
             steps: Vec::new(),
             pacing: None,
             max_step_secs: None,
+            breath: None,
         }
     }
 }
@@ -333,6 +341,7 @@ pub fn resolve_routine(kind: BreakKind, s: &Settings) -> ResolvedRoutine {
             steps: r.steps,
             pacing: r.pacing,
             max_step_secs: r.max_step_secs,
+            breath: r.breath,
         },
     }
 }
@@ -547,6 +556,7 @@ mod tests {
             steps: vec![step("Reach up", 10)],
             pacing: None,
             max_step_secs: None,
+            breath: None,
         };
         // A custom routine reusing a starter id must not shadow the built-in.
         let collide = Routine {
@@ -579,6 +589,7 @@ mod tests {
             steps: vec![step("In", 4), step("Out", 4)],
             pacing: None,
             max_step_secs: None,
+            breath: None,
         }];
         s.micro_routine = "custom-breathe".to_string();
         let steps = resolve_routine(BreakKind::Micro, &s).steps;
@@ -631,6 +642,7 @@ mod tests {
             steps: vec![step("Breathe in", 4), step("Breathe out", 4)],
             pacing: Some(RoutinePacing::Fill),
             max_step_secs: Some(30),
+            breath: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: Routine = serde_json::from_str(&json).unwrap();
@@ -649,6 +661,7 @@ mod tests {
             steps: vec![step("Look away", 5)],
             pacing: None,
             max_step_secs: None,
+            breath: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         // skip_serializing_if = "Option::is_none" keeps the JSON compact.
@@ -692,12 +705,42 @@ mod tests {
             steps: vec![step("In", 4), step("Out", 4)],
             pacing: Some(RoutinePacing::Fill),
             max_step_secs: Some(20),
+            breath: None,
         }];
         s.micro_routine = "fill-breathe".to_string();
         let resolved = resolve_routine(BreakKind::Micro, &s);
         assert_eq!(resolved.steps, vec![step("In", 4), step("Out", 4)]);
         assert_eq!(resolved.pacing, Some(RoutinePacing::Fill));
         assert_eq!(resolved.max_step_secs, Some(20));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn resolve_routine_returns_breath_from_pinned_routine() {
+        let pattern = BreathPattern {
+            inhale: 4,
+            hold: 7,
+            exhale: 8,
+            hold_out: 0,
+            cycles: None,
+            then: None,
+        };
+        let mut s = Settings::default();
+        s.custom_routines = vec![Routine {
+            id: "478".to_string(),
+            label: "4-7-8".to_string(),
+            kind: RoutineKind::Micro,
+            category: RoutineCategory::Breathing,
+            difficulty: RoutineDifficulty::Gentle,
+            steps: vec![],
+            pacing: None,
+            max_step_secs: None,
+            breath: Some(pattern),
+        }];
+        s.micro_routine = "478".to_string();
+        let resolved = resolve_routine(BreakKind::Micro, &s);
+        assert_eq!(resolved.breath, Some(pattern));
+        assert!(resolved.steps.is_empty());
     }
 
     #[test]

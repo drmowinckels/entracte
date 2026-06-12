@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { BreakSound } from "../../lib/break-sound";
 import type {
   BreakEvent,
+  BreathPattern,
   OverlaySettings,
   PostponeState,
   RoutineStep,
@@ -50,6 +51,15 @@ const routineStepSchema = z.object({
   asset: z.string().optional(),
 }) satisfies z.ZodType<RoutineStep>;
 
+const breathSchema = z.object({
+  inhale: z.number(),
+  hold: z.number().optional(),
+  exhale: z.number(),
+  hold_out: z.number().optional(),
+  cycles: z.number().optional(),
+  then: z.enum(["loop", "rest"]).optional(),
+}) satisfies z.ZodType<BreathPattern>;
+
 export const breakEventSchema = z.object({
   kind: z.enum(["micro", "long", "sleep"]),
   duration_secs: z.number(),
@@ -67,6 +77,7 @@ export const breakEventSchema = z.object({
   // falls back to the global `routine_fill` setting.
   routine_pacing: z.enum(["hold", "fill", "loop"]).optional(),
   routine_max_step_secs: z.number().optional(),
+  routine_breath: breathSchema.optional(),
 }) satisfies z.ZodType<BreakEvent>;
 
 export const postponeStateSchema = z.object({

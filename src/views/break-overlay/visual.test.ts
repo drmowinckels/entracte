@@ -6,6 +6,7 @@ import {
   progressColor,
   rgbFor,
   systemPrefersContrast,
+  systemPrefersReducedMotion,
   systemPrefersReducedTransparency,
 } from "./visual";
 
@@ -119,5 +120,16 @@ describe("systemPrefersContrast / systemPrefersReducedTransparency", () => {
   it("isolates the two queries (one matching doesn't trigger the other)", () => {
     mockMatchMedia({ "(prefers-contrast: more)": true });
     expect(systemPrefersReducedTransparency()).toBe(false);
+  });
+
+  it("reports prefers-reduced-motion and defends against throws", () => {
+    mockMatchMedia({ "(prefers-reduced-motion: reduce)": true });
+    expect(systemPrefersReducedMotion()).toBe(true);
+    mockMatchMedia({ "(prefers-reduced-motion: reduce)": false });
+    expect(systemPrefersReducedMotion()).toBe(false);
+    window.matchMedia = vi.fn(() => {
+      throw new Error("not implemented");
+    }) as unknown as typeof window.matchMedia;
+    expect(systemPrefersReducedMotion()).toBe(false);
   });
 });
