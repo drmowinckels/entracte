@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { breathProgress, breathPhaseLabel, breathScale } from "./breath";
+import {
+  breathProgress,
+  breathPhaseLabel,
+  breathScale,
+  breathLabel,
+  breathAriaLabel,
+} from "./breath";
 import type { BreathPattern } from "./types";
 
 const BOX: BreathPattern = { inhale: 4, hold: 4, exhale: 4, hold_out: 4 };
@@ -87,6 +93,19 @@ describe("breathScale", () => {
   it("is a fixed mid scale under reduced motion", () => {
     expect(breathScale(0, true)).toBe(0.85);
     expect(breathScale(1, true)).toBe(0.85);
+  });
+});
+
+describe("breathLabel / breathAriaLabel", () => {
+  it("appends the seconds while a phase counts down", () => {
+    const p = { phase: "inhale", phaseRemaining: 4, fullness: 0 } as const;
+    expect(breathLabel(p)).toBe("Breathe in · 4s");
+    expect(breathAriaLabel(p)).toBe("Breathe in, 4 seconds");
+  });
+  it("shows just the label for a held phase (rest)", () => {
+    const p = { phase: "rest", phaseRemaining: 0, fullness: 0 } as const;
+    expect(breathLabel(p)).toBe("Rest");
+    expect(breathAriaLabel(p)).toBe("Rest");
   });
 });
 

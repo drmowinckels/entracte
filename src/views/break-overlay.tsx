@@ -21,7 +21,11 @@ import { useMilestoneAnnouncer } from "./break-overlay/hooks/use-milestone-annou
 import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
 import { derivePostpone } from "./break-overlay/postpone";
 import { routineProgress } from "./break-overlay/routine";
-import { breathPhaseLabel, breathProgress } from "./break-overlay/breath";
+import {
+  breathAriaLabel,
+  breathLabel,
+  breathProgress,
+} from "./break-overlay/breath";
 import {
   ENFORCEABLE_LONG_BREAK_HINT,
   shouldShowEnforceableHint,
@@ -282,16 +286,9 @@ export default function BreakOverlay() {
               aria-atomic="true"
               // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
               tabIndex={0}
-              aria-label={`${breathPhaseLabel(breathProg.phase)}${
-                breathProg.phaseRemaining > 0
-                  ? `, ${breathProg.phaseRemaining} seconds`
-                  : ""
-              }`}
+              aria-label={breathAriaLabel(breathProg)}
             >
-              {breathPhaseLabel(breathProg.phase)}
-              {breathProg.phaseRemaining > 0
-                ? ` · ${breathProg.phaseRemaining}s`
-                : ""}
+              {breathLabel(breathProg)}
             </p>
           </div>
         ) : routine ? (

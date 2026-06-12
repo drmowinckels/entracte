@@ -492,12 +492,19 @@ mod tests {
 
     #[test]
     fn validate_accepts_a_breathing_routine_without_steps() {
+        // The common breath (no cycle cap) ...
         let mut r = sample_routine("breathe");
         r.steps = vec![]; // a breath routine carries no step text
-        let mut b = breath(4, 4);
-        b.cycles = Some(6); // a non-zero cap is accepted
-        r.breath = Some(b);
+        r.breath = Some(breath(4, 4));
         assert!(validate_pack(&pack_with(vec![r], PackHints::default())).is_ok());
+
+        // ... and one with a non-zero cycle cap.
+        let mut capped = sample_routine("breathe-capped");
+        capped.steps = vec![];
+        let mut b = breath(4, 4);
+        b.cycles = Some(6);
+        capped.breath = Some(b);
+        assert!(validate_pack(&pack_with(vec![capped], PackHints::default())).is_ok());
     }
 
     #[test]

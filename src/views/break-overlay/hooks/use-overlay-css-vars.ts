@@ -76,14 +76,13 @@ export function useOverlayCssVars(
     const el = rootRef.current;
     if (!el || !active) return;
     const breath = active.routine_breath;
-    if (!breath) {
-      el.style.setProperty("--breath-scale", "1");
-      return;
-    }
-    const prog = breathProgress(breath, active.duration_secs - remaining);
-    const fullness = prog ? prog.fullness : 0;
-    const scale = breathScale(fullness, systemPrefersReducedMotion());
-    el.style.setProperty("--breath-scale", scale.toFixed(3));
+    const prog = breath
+      ? breathProgress(breath, active.duration_secs - remaining)
+      : null;
+    const value = prog
+      ? breathScale(prog.fullness, systemPrefersReducedMotion()).toFixed(3)
+      : "1";
+    el.style.setProperty("--breath-scale", value);
   }, [active, remaining]);
 
   return { rootRef, ringBarRef };

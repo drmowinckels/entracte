@@ -56,11 +56,13 @@ export function breathProgress(
   }
 
   let pos = e % cycle;
+  // Inside each `pos < X` guard, X > pos >= 0, so X >= 1 — the divisions are
+  // always safe (no zero-guard branch needed).
   if (pos < inhale) {
     return {
       phase: "inhale",
       phaseRemaining: inhale - pos,
-      fullness: inhale ? pos / inhale : 1,
+      fullness: pos / inhale,
     };
   }
   pos -= inhale;
@@ -72,9 +74,24 @@ export function breathProgress(
     return {
       phase: "exhale",
       phaseRemaining: exhale - pos,
-      fullness: exhale ? 1 - pos / exhale : 0,
+      fullness: 1 - pos / exhale,
     };
   }
   pos -= exhale;
   return { phase: "hold_out", phaseRemaining: holdOut - pos, fullness: 0 };
+}
+
+// Display string for the current phase: the label, plus the seconds left when
+// the phase is still counting down (the held `rest` shows just the label).
+export function breathLabel(prog: BreathProgress): string {
+  const base = breathPhaseLabel(prog.phase);
+  return prog.phaseRemaining > 0 ? `${base} · ${prog.phaseRemaining}s` : base;
+}
+
+// Accessible-name variant, spelling out "seconds" for screen readers.
+export function breathAriaLabel(prog: BreathProgress): string {
+  const base = breathPhaseLabel(prog.phase);
+  return prog.phaseRemaining > 0
+    ? `${base}, ${prog.phaseRemaining} seconds`
+    : base;
 }
