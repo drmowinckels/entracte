@@ -77,6 +77,9 @@ pub struct InstallOutcome {
     /// Total decoded bytes of those images.
     #[serde(default)]
     pub images_bytes: u64,
+    /// Sound-cue assets written to disk (zero for non-content plugins).
+    #[serde(default)]
+    pub sounds_added: usize,
 }
 
 /// A validated plugin awaiting consent + apply. Holds enough to show the
@@ -166,12 +169,19 @@ async fn apply_install(
     let mut asset_paths: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     let mut prepared: Vec<(String, Vec<u8>)> = Vec::new();
     let mut images_bytes: u64 = 0;
+    let mut images_added = 0usize;
+    let mut sounds_added = 0usize;
     for asset in &manifest.assets {
-        let (bytes, format) = crate::plugins::validate_asset(asset)?;
-        let file_name = crate::plugin_store::asset_file_name(&manifest.id, &asset.id, format.ext());
+        let (bytes, kind) = crate::plugins::validate_asset(asset)?;
+        let file_name = crate::plugin_store::asset_file_name(&manifest.id, &asset.id, kind.ext());
         let path = crate::plugin_store::asset_path(&scheduler.plugins_path, &file_name);
         asset_paths.insert(asset.id.as_str(), path.to_string_lossy().into_owned());
         images_bytes += bytes.len() as u64;
+        if kind.is_audio() {
+            sounds_added += 1;
+        } else {
+            images_added += 1;
+        }
         prepared.push((file_name, bytes));
     }
     // Now write the sidecars. On any I/O failure, roll back the ones already
@@ -183,21 +193,30 @@ async fn apply_install(
             for written in &asset_files {
                 crate::plugin_store::delete_asset(&scheduler.plugins_path, written);
             }
-            return Err(format!("failed to save plugin image: {e}"));
+            return Err(format!("failed to save plugin asset: {e}"));
         }
         asset_files.push(file_name.clone());
     }
-    let images_added = manifest.assets.len();
 
     // Rewrite each step's pack-local asset id to the stored absolute path, so
     // the merged routine resolves to a real file at break time with no further
     // lookup. Steps referencing nothing (the common case) are untouched.
+    let rewrite = |slot: &mut Option<String>| {
+        if let Some(id) = slot.take() {
+            *slot = asset_paths.get(id.as_str()).cloned();
+        }
+    };
     let mut pack = pack.clone();
     for r in &mut pack.routines {
         for st in &mut r.steps {
-            if let Some(id) = st.asset.take() {
-                st.asset = asset_paths.get(id.as_str()).cloned();
-            }
+            rewrite(&mut st.asset);
+            rewrite(&mut st.sound);
+        }
+        if let Some(sounds) = r.breath.as_mut().and_then(|b| b.sounds.as_mut()) {
+            rewrite(&mut sounds.inhale);
+            rewrite(&mut sounds.hold);
+            rewrite(&mut sounds.exhale);
+            rewrite(&mut sounds.hold_out);
         }
     }
 
@@ -237,6 +256,7 @@ async fn apply_install(
         routines_added: summary.routines_added,
         images_added,
         images_bytes,
+        sounds_added,
     })
 }
 
@@ -265,6 +285,7 @@ async fn apply_detector_install(
         routines_added: 0,
         images_added: 0,
         images_bytes: 0,
+        sounds_added: 0,
     })
 }
 
@@ -285,6 +306,7 @@ async fn apply_export_install(scheduler: &Scheduler, manifest: &Manifest) -> Ins
         routines_added: 0,
         images_added: 0,
         images_bytes: 0,
+        sounds_added: 0,
     }
 }
 
@@ -449,7 +471,7 @@ fn format_install_summary(manifest: &Manifest) -> String {
                     .map(|a| a.data_base64.len() / 4 * 3)
                     .sum();
                 s.push_str(&format!(
-                    "Ships {} image(s) ({:.1} MB).\n",
+                    "Ships {} media file(s) — images and/or sounds ({:.1} MB).\n",
                     manifest.assets.len(),
                     bytes as f64 / (1024.0 * 1024.0)
                 ));
@@ -553,6 +575,7 @@ mod tests {
                         text: "Look away".to_string(),
                         seconds: 5,
                         asset: None,
+                        sound: None,
                     }],
                     pacing: None,
                     max_step_secs: None,
@@ -724,15 +747,15 @@ mod tests {
     }
 
     #[test]
-    fn format_install_summary_reports_images_for_a_content_plugin() {
+    fn format_install_summary_reports_media_for_a_content_plugin() {
         let with = format_install_summary(&content_manifest_with_image("com.example.yoga"));
         assert!(
-            with.contains("1 image(s)"),
-            "summary mentions the image: {with}"
+            with.contains("1 media file(s)"),
+            "summary mentions the media: {with}"
         );
-        // A content plugin with no images says nothing about them.
+        // A content plugin with no media says nothing about it.
         let without = format_install_summary(&content_manifest("com.example.plain"));
-        assert!(!without.contains("image(s)"));
+        assert!(!without.contains("media file(s)"));
     }
 
     #[tokio::test]
@@ -818,6 +841,65 @@ mod tests {
         m.assets = vec![png_manifest_asset("twist")];
         m.content.as_mut().unwrap().routines[0].steps[0].asset = Some("twist".to_string());
         m
+    }
+
+    fn ogg_manifest_asset(asset_id: &str) -> crate::plugins::ManifestAsset {
+        use base64::prelude::{Engine, BASE64_STANDARD};
+        let mut bytes = b"OggS".to_vec();
+        bytes.extend_from_slice(&[0u8; 32]);
+        let hash = crate::plugins::sha256(&bytes);
+        crate::plugins::ManifestAsset {
+            id: asset_id.to_string(),
+            sha256: hash.iter().map(|b| format!("{b:02x}")).collect(),
+            data_base64: BASE64_STANDARD.encode(&bytes),
+        }
+    }
+
+    #[tokio::test]
+    async fn install_rewrites_step_and_breath_sounds_and_counts_them() {
+        use crate::scheduler::{BreathPattern, BreathSounds};
+        let (_dir, sched) = test_scheduler(crate::scheduler::Settings::default());
+        let mut m = content_manifest("com.example.yoga");
+        m.assets = vec![ogg_manifest_asset("chime")];
+        let r = &mut m.content.as_mut().unwrap().routines[0];
+        r.steps[0].sound = Some("chime".to_string());
+        r.breath = Some(BreathPattern {
+            inhale: 4,
+            hold: 0,
+            exhale: 4,
+            hold_out: 0,
+            cycles: None,
+            then: None,
+            sounds: Some(BreathSounds {
+                inhale: Some("chime".to_string()),
+                ..Default::default()
+            }),
+        });
+
+        let outcome = apply_install(&sched, &m).await.unwrap();
+        assert_eq!(outcome.sounds_added, 1);
+        assert_eq!(outcome.images_added, 0);
+
+        let settings = sched.settings.lock().await;
+        let rt = settings
+            .custom_routines
+            .iter()
+            .find(|r| r.id == "plugin-rt")
+            .expect("routine merged");
+        let step_path = rt.steps[0].sound.clone().expect("step sound rewritten");
+        assert!(step_path.ends_with("com.example.yoga.chime.ogg"));
+        assert!(std::path::Path::new(&step_path).exists(), "sidecar written");
+        // The breath inhale cue is rewritten to the same stored sidecar path.
+        let breath_path = rt
+            .breath
+            .as_ref()
+            .unwrap()
+            .sounds
+            .as_ref()
+            .unwrap()
+            .inhale
+            .clone();
+        assert_eq!(breath_path, Some(step_path));
     }
 
     #[tokio::test]

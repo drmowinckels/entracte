@@ -37,7 +37,7 @@ pub use registry::{InstalledPlugin, PluginRegistry, PluginSummary};
 // allow(unused_imports) so the public API can live in one place ahead of all
 // its consumers.
 #[allow(unused_imports)]
-pub use asset::{validate_asset, ImageFormat, ManifestAsset, MAX_ASSETS};
+pub use asset::{validate_asset, AssetKind, AudioFormat, ImageFormat, ManifestAsset, MAX_ASSETS};
 #[allow(unused_imports)]
 pub use manifest::{
     parse_manifest, validate_manifest, Capability, DetectConfig, ExportConfig, ExportFormat,

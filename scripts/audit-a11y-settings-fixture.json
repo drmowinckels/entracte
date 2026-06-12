@@ -92,5 +92,6 @@
   "micro_break_mode": "overlay",
   "long_break_mode": "overlay",
   "routine_fill": false,
+  "allow_plugin_sounds": true,
   "custom_css": ""
 }

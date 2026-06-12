@@ -578,6 +578,11 @@ pub struct Settings {
     /// A routine's own `pacing` field always takes precedence.
     #[serde(default)]
     pub routine_fill: bool,
+    /// Whether a routine's plugin-supplied sound cues may play (default
+    /// `true`). The user's master kill switch for plugin audio; cues always
+    /// route through `sound_volume` regardless.
+    #[serde(default = "default_true")]
+    pub allow_plugin_sounds: bool,
     pub hint_rotate_seconds: u64,
     pub delay_break_if_typing: bool,
     pub typing_grace_secs: u64,
@@ -697,6 +702,7 @@ impl Default for Settings {
             long_routine_max_difficulty: default_routine_max_difficulty(),
             custom_routines: Vec::new(),
             routine_fill: false,
+            allow_plugin_sounds: true,
             hint_rotate_seconds: 0,
             delay_break_if_typing: true,
             typing_grace_secs: 10,

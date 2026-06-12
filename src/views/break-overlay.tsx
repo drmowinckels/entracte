@@ -24,8 +24,10 @@ import { routineProgress } from "./break-overlay/routine";
 import {
   breathAriaLabel,
   breathLabel,
+  breathPhaseCue,
   breathProgress,
 } from "./break-overlay/breath";
+import { useRoutineCues } from "./break-overlay/hooks/use-routine-cues";
 import {
   ENFORCEABLE_LONG_BREAK_HINT,
   shouldShowEnforceableHint,
@@ -110,25 +112,21 @@ export default function BreakOverlay() {
     finished,
   );
 
-  if (!active) return null;
-
-  const minutes = Math.floor(remaining / 60);
-  const seconds = remaining % 60;
-  const label = labelFor(active.kind);
-  const hintText = active.hints[hintIndex] ?? "";
-  // A selected guided routine steps through its own text on the break's
-  // own countdown and takes the place of the rotating hint. With none
-  // selected (empty steps) the overlay falls back to the hint above.
-  const routineSteps = active.routine_steps ?? [];
+  // Routine + breath progress are computed before the early return so the cue
+  // hook below runs unconditionally (rules of hooks). They reduce to
+  // null/empty when there is no active break.
+  const routineSteps = active?.routine_steps ?? [];
+  const elapsed = active ? active.duration_secs - remaining : 0;
   // Effective pacing: the routine's own declared pacing takes precedence;
   // fall back to the global `routine_fill` toggle when absent.
-  const effectivePacing =
-    active.routine_pacing ??
-    (appearance.routine_fill ? ("fill" as const) : undefined);
+  const effectivePacing = active
+    ? (active.routine_pacing ??
+      (appearance.routine_fill ? ("fill" as const) : undefined))
+    : undefined;
   const routine = routineProgress(
     routineSteps,
-    active.duration_secs - remaining,
-    effectivePacing !== undefined
+    elapsed,
+    effectivePacing !== undefined && active
       ? {
           fillToSecs: active.duration_secs,
           pacing: effectivePacing,
@@ -136,6 +134,29 @@ export default function BreakOverlay() {
         }
       : undefined,
   );
+  // A breathing routine replaces step text with phase labels and pulses the
+  // ring (driven by --breath-scale in use-overlay-css-vars). Takes precedence
+  // over step rendering when present.
+  const breath = active?.routine_breath ?? null;
+  const breathProg = breath ? breathProgress(breath, elapsed) : null;
+
+  // Plugin sound cues at step / breath-phase boundaries, gated by the user's
+  // allow-plugin-sounds switch and routed through the master volume.
+  useRoutineCues(
+    Boolean(active) && appearance.allow_plugin_sounds,
+    appearance.sound_volume,
+    routine?.index ?? null,
+    routine ? (routineSteps[routine.index].sound ?? null) : null,
+    breathProg?.phase ?? null,
+    breathProg ? breathPhaseCue(breath?.sounds, breathProg.phase) : null,
+  );
+
+  if (!active) return null;
+
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const label = labelFor(active.kind);
+  const hintText = active.hints[hintIndex] ?? "";
   const routineText = routine ? routineSteps[routine.index].text : "";
   // A plugin-supplied image for the current step, if any. The backend sends an
   // absolute path; convertFileSrc turns it into an `asset:` URL the webview can
@@ -145,13 +166,6 @@ export default function BreakOverlay() {
   const routineImageSrc = routineAsset
     ? convertFileSrc(routineAsset)
     : undefined;
-  // A breathing routine replaces step text with phase labels and pulses the
-  // ring (driven by --breath-scale in use-overlay-css-vars). Takes precedence
-  // over step rendering when present.
-  const breath = active.routine_breath ?? null;
-  const breathProg = breath
-    ? breathProgress(breath, active.duration_secs - remaining)
-    : null;
   const intensity = clamp01(active.health_intensity);
   const dismissable = !active.enforceable && active.skip_available;
   const showPostpone = active.postpone_available && !finished;

@@ -66,7 +66,12 @@ export type RoutineCategory = "eyes" | "mobility" | "breathing" | "desk_yoga";
 
 export type RoutineDifficulty = "gentle" | "moderate" | "active";
 
-export type RoutineStep = { text: string; seconds: number; asset?: string };
+export type RoutineStep = {
+  text: string;
+  seconds: number;
+  asset?: string;
+  sound?: string;
+};
 
 // Mirrors the Rust `Routine` in `src-tauri/src/scheduler/routines.rs`. Stored
 // in settings as `custom_routines` (imported from content packs, #155).
@@ -176,6 +181,7 @@ export type SchedulerSettings = {
   long_routine_max_difficulty: RoutineDifficulty;
   custom_routines: Routine[];
   routine_fill: boolean;
+  allow_plugin_sounds: boolean;
   hint_rotate_seconds: number;
   delay_break_if_typing: boolean;
   typing_grace_secs: number;

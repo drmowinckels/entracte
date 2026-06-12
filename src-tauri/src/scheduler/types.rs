@@ -41,6 +41,11 @@ pub struct RoutineStep {
     /// text-only step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
+    /// Optional sound cue played when this step begins (e.g. a chime signalling
+    /// the next exercise). Like `asset`, a pack-local audio asset id rewritten
+    /// to the stored sidecar path on install. `None` for a silent step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<String>,
 }
 
 /// How a routine's step durations relate to the break length. Sent in
@@ -74,12 +79,27 @@ pub enum BreathThen {
     Rest,
 }
 
+/// Per-phase sound cues for a breathing pattern, so a user can follow the
+/// rhythm with their eyes closed. Each is an audio asset id (rewritten to the
+/// stored sidecar path on install); any phase may be silent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BreathSounds {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inhale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exhale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_out: Option<String>,
+}
+
 /// A guided breathing pattern, animated on the countdown ring. Phase durations
 /// are **absolute seconds** — tempo is never scaled to the break length; the
 /// cycle simply repeats. `cycles` optionally caps the guided portion, after
 /// which `then` decides whether to loop or rest. A routine carrying a `breath`
 /// takes the place of step text on the overlay.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BreathPattern {
     /// Seconds breathing in (ring expands).
     pub inhale: u64,
@@ -97,6 +117,9 @@ pub struct BreathPattern {
     /// What to do after `cycles`. `None` is treated as `loop`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub then: Option<BreathThen>,
+    /// Optional per-phase sound cues. `None` for a silent pattern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sounds: Option<BreathSounds>,
 }
 
 /// Payload emitted to the renderer when a break starts.

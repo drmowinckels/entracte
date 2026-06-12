@@ -317,10 +317,12 @@ fn sanitize_imported_step(step: &mut RoutineStep) {
         text: _,
         seconds: _,
         asset,
+        sound,
     } = step;
-    // Images ship only in a signed plugin (with a backend-controlled sidecar
-    // path); an imported pack must never inject one.
+    // Images and sound cues ship only in a signed plugin (with backend-
+    // controlled sidecar paths); an imported pack must never inject one.
     *asset = None;
+    *sound = None;
 }
 
 /// Remove exactly the content recorded in `added` from `settings` (the
@@ -395,6 +397,7 @@ mod tests {
             hold_out: 0,
             cycles: None,
             then: None,
+            sounds: None,
         }
     }
 
@@ -409,6 +412,7 @@ mod tests {
                 text: "Look away".to_string(),
                 seconds: 5,
                 asset: None,
+                sound: None,
             }],
             pacing: None,
             max_step_secs: None,
@@ -591,6 +595,7 @@ mod tests {
         // would load — only the signed-plugin installer populates `asset`.
         let mut rt = sample_routine("rt-img");
         rt.steps[0].asset = Some("/etc/passwd-ish/evil.png".to_string());
+        rt.steps[0].sound = Some("/etc/evil.ogg".to_string());
         let pack = ContentPack {
             version: CONTENT_PACK_VERSION,
             name: "Imported".to_string(),
@@ -601,6 +606,7 @@ mod tests {
         merge_pack(&pack, &mut s);
         let merged = s.custom_routines.iter().find(|r| r.id == "rt-img").unwrap();
         assert_eq!(merged.steps[0].asset, None);
+        assert_eq!(merged.steps[0].sound, None);
     }
 
     #[test]

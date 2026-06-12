@@ -12,6 +12,9 @@ export type RoutineStep = {
   // plugin's bundled asset). Absent for the common text-only step; the overlay
   // turns it into an `asset:` URL via convertFileSrc.
   asset?: string;
+  // Absolute path to a sound cue played when this step begins (resolved at
+  // install from a plugin's audio asset). Absent for a silent step.
+  sound?: string;
 };
 
 /** How a routine's step durations relate to the break length.
@@ -19,6 +22,14 @@ export type RoutineStep = {
 export type RoutinePacing = "hold" | "fill" | "loop";
 
 export type BreathThen = "loop" | "rest";
+
+// Per-phase sound cues (absolute sidecar paths). Any phase may be silent.
+export type BreathSounds = {
+  inhale?: string;
+  hold?: string;
+  exhale?: string;
+  hold_out?: string;
+};
 
 // Mirrors the Rust `BreathPattern`. Phase durations are absolute seconds.
 export type BreathPattern = {
@@ -28,6 +39,7 @@ export type BreathPattern = {
   hold_out?: number;
   cycles?: number;
   then?: BreathThen;
+  sounds?: BreathSounds;
 };
 
 export type BreakEvent = {
@@ -74,6 +86,9 @@ export type OverlaySettings = {
    *  `true` → fill mode (scale steps to fill the break);
    *  `false` (default) → hold mode (authored durations, hold last step). */
   routine_fill: boolean;
+  // Master switch for plugin-supplied routine sound cues (default true). Cues
+  // still route through `sound_volume`; this is the kill switch.
+  allow_plugin_sounds: boolean;
 };
 
 export type PostponeState = {
@@ -98,6 +113,7 @@ export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
   strict_mode: false,
   custom_css: "",
   routine_fill: false,
+  allow_plugin_sounds: true,
 };
 
 export const TYPING_PAUSE_THRESHOLD_SECS = 2;

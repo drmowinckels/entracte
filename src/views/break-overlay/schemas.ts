@@ -3,6 +3,7 @@ import type { BreakSound } from "../../lib/break-sound";
 import type {
   BreakEvent,
   BreathPattern,
+  BreathSounds,
   OverlaySettings,
   PostponeState,
   RoutineStep,
@@ -43,13 +44,22 @@ export const overlaySettingsSchema = z.object({
   strict_mode: z.boolean(),
   custom_css: z.string(),
   routine_fill: z.boolean(),
+  allow_plugin_sounds: z.boolean(),
 }) satisfies z.ZodType<OverlaySettings>;
 
 const routineStepSchema = z.object({
   text: z.string(),
   seconds: z.number(),
   asset: z.string().optional(),
+  sound: z.string().optional(),
 }) satisfies z.ZodType<RoutineStep>;
+
+const breathSoundsSchema = z.object({
+  inhale: z.string().optional(),
+  hold: z.string().optional(),
+  exhale: z.string().optional(),
+  hold_out: z.string().optional(),
+}) satisfies z.ZodType<BreathSounds>;
 
 const breathSchema = z.object({
   inhale: z.number(),
@@ -58,6 +68,7 @@ const breathSchema = z.object({
   hold_out: z.number().optional(),
   cycles: z.number().optional(),
   then: z.enum(["loop", "rest"]).optional(),
+  sounds: breathSoundsSchema.optional(),
 }) satisfies z.ZodType<BreathPattern>;
 
 export const breakEventSchema = z.object({

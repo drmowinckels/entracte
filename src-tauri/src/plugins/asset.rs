@@ -30,6 +30,9 @@ pub const MAX_ASSET_BYTES: usize = 512 * 1024;
 /// compressed file can claim enormous dimensions, so we reject on the declared
 /// header size before anything decodes it.
 pub const MAX_IMAGE_PIXELS: u64 = 4_000_000;
+/// Tighter byte cap for audio cues. A cue is a short sound, not a track; the
+/// size bounds the playback length without parsing every container's duration.
+pub const MAX_SOUND_BYTES: usize = 256 * 1024;
 const MAX_ASSET_ID_LEN: usize = 128;
 
 /// One inline image declared in a manifest. `data_base64` is excluded from the
@@ -69,6 +72,48 @@ impl ImageFormat {
     }
 }
 
+/// The audio formats a plugin may ship for break/routine cues. Detected by
+/// container magic bytes; the byte cap bounds their length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFormat {
+    Ogg,
+    Wav,
+    Mp3,
+}
+
+impl AudioFormat {
+    pub fn ext(self) -> &'static str {
+        match self {
+            AudioFormat::Ogg => "ogg",
+            AudioFormat::Wav => "wav",
+            AudioFormat::Mp3 => "mp3",
+        }
+    }
+}
+
+/// What a validated asset turned out to be. Routine images reference an
+/// `Image`; sound cues reference an `Audio`. The kind lets the manifest check
+/// that each reference points at the right sort of asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetKind {
+    Image(ImageFormat),
+    Audio(AudioFormat),
+}
+
+impl AssetKind {
+    /// File extension for the on-disk sidecar.
+    pub fn ext(self) -> &'static str {
+        match self {
+            AssetKind::Image(f) => f.ext(),
+            AssetKind::Audio(f) => f.ext(),
+        }
+    }
+
+    pub fn is_audio(self) -> bool {
+        matches!(self, AssetKind::Audio(_))
+    }
+}
+
 fn u16le(b: &[u8]) -> u64 {
     b[0] as u64 | (b[1] as u64) << 8
 }
@@ -105,6 +150,27 @@ pub fn sniff(bytes: &[u8]) -> Option<(ImageFormat, u64, u64)> {
 
 fn u32be(b: &[u8]) -> u64 {
     (b[0] as u64) << 24 | (b[1] as u64) << 16 | (b[2] as u64) << 8 | b[3] as u64
+}
+
+/// Identify an audio container from its magic bytes. WAV shares the `RIFF`
+/// header with WebP — the `WAVE` form type at 8..12 disambiguates.
+pub fn sniff_audio(bytes: &[u8]) -> Option<AudioFormat> {
+    if bytes.starts_with(b"OggS") {
+        return Some(AudioFormat::Ogg);
+    }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE") {
+        return Some(AudioFormat::Wav);
+    }
+    // MP3: an ID3v2 tag, or a bare MPEG frame sync (11 set bits: FF Ex/Fx).
+    if bytes.starts_with(b"ID3") {
+        return Some(AudioFormat::Mp3);
+    }
+    if let Some(&[b0, b1]) = bytes.get(0..2).and_then(|s| <&[u8; 2]>::try_from(s).ok()) {
+        if b0 == 0xff && (b1 & 0xe0) == 0xe0 {
+            return Some(AudioFormat::Mp3);
+        }
+    }
+    None
 }
 
 /// Dimensions from the three WebP chunk layouts (extended, lossless, lossy).
@@ -152,7 +218,7 @@ fn is_safe_asset_id(id: &str) -> bool {
 /// and sniffed format on success. Checks, first-error-wins: a filename-safe id,
 /// a 64-char lowercase-hex sha256, valid base64, the decoded-byte cap, that the
 /// bytes hash to the declared sha256, an allowed format, and the pixel cap.
-pub fn validate_asset(asset: &ManifestAsset) -> Result<(Vec<u8>, ImageFormat), String> {
+pub fn validate_asset(asset: &ManifestAsset) -> Result<(Vec<u8>, AssetKind), String> {
     if !is_safe_asset_id(&asset.id) {
         return Err(format!(
             "asset id '{}' must be 1..={MAX_ASSET_ID_LEN} chars of [a-z0-9._-]",
@@ -190,19 +256,29 @@ pub fn validate_asset(asset: &ManifestAsset) -> Result<(Vec<u8>, ImageFormat), S
             asset.id
         ));
     }
-    let (format, w, h) = sniff(&bytes).ok_or_else(|| {
-        format!(
-            "asset '{}' is not a supported image (png, gif, webp)",
-            asset.id
-        )
-    })?;
-    if w == 0 || h == 0 || w.saturating_mul(h) > MAX_IMAGE_PIXELS {
-        return Err(format!(
-            "asset '{}' is {w}x{h}, over the {MAX_IMAGE_PIXELS}-pixel cap",
-            asset.id
-        ));
+    if let Some((format, w, h)) = sniff(&bytes) {
+        if w == 0 || h == 0 || w.saturating_mul(h) > MAX_IMAGE_PIXELS {
+            return Err(format!(
+                "asset '{}' is {w}x{h}, over the {MAX_IMAGE_PIXELS}-pixel cap",
+                asset.id
+            ));
+        }
+        return Ok((bytes, AssetKind::Image(format)));
     }
-    Ok((bytes, format))
+    if let Some(format) = sniff_audio(&bytes) {
+        if bytes.len() > MAX_SOUND_BYTES {
+            return Err(format!(
+                "sound '{}' is {} bytes, over the {MAX_SOUND_BYTES}-byte cap",
+                asset.id,
+                bytes.len()
+            ));
+        }
+        return Ok((bytes, AssetKind::Audio(format)));
+    }
+    Err(format!(
+        "asset '{}' is not a supported image (png/gif/webp) or sound (ogg/wav/mp3)",
+        asset.id
+    ))
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -309,6 +385,62 @@ mod tests {
         assert_eq!(ImageFormat::Webp.ext(), "webp");
     }
 
+    fn ogg() -> Vec<u8> {
+        let mut v = b"OggS".to_vec();
+        v.extend_from_slice(&[0u8; 60]);
+        v
+    }
+
+    fn wav() -> Vec<u8> {
+        let mut v = b"RIFF".to_vec();
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        v.extend_from_slice(b"WAVE");
+        v.extend_from_slice(&[0u8; 40]);
+        v
+    }
+
+    #[test]
+    fn sniffs_audio_containers() {
+        assert_eq!(sniff_audio(&ogg()), Some(AudioFormat::Ogg));
+        assert_eq!(sniff_audio(&wav()), Some(AudioFormat::Wav));
+        assert_eq!(
+            sniff_audio(&[0xff, 0xfb, 0x90, 0x00]),
+            Some(AudioFormat::Mp3)
+        );
+        assert_eq!(sniff_audio(b"ID3\x04\x00"), Some(AudioFormat::Mp3));
+        assert_eq!(sniff_audio(b"not audio"), None);
+        // Too short to hold an MPEG frame sync.
+        assert_eq!(sniff_audio(&[0xff]), None);
+        // WebP's RIFF header must not be mistaken for WAV.
+        assert_eq!(sniff_audio(&webp_vp8x(10, 10)), None);
+    }
+
+    #[test]
+    fn validates_an_audio_asset_as_audio() {
+        let (_, kind) = validate_asset(&signed("cue.ogg", &ogg())).unwrap();
+        assert_eq!(kind, AssetKind::Audio(AudioFormat::Ogg));
+        assert!(kind.is_audio());
+        assert_eq!(kind.ext(), "ogg");
+    }
+
+    #[test]
+    fn rejects_an_oversize_sound() {
+        // Valid Ogg header padded past the sound cap (but under the image cap,
+        // so it reaches the audio-specific check).
+        let mut big = b"OggS".to_vec();
+        big.resize(MAX_SOUND_BYTES + 1, 0);
+        assert!(validate_asset(&signed("cue.ogg", &big))
+            .unwrap_err()
+            .contains("over the"));
+    }
+
+    #[test]
+    fn audio_format_extensions() {
+        assert_eq!(AudioFormat::Ogg.ext(), "ogg");
+        assert_eq!(AudioFormat::Wav.ext(), "wav");
+        assert_eq!(AudioFormat::Mp3.ext(), "mp3");
+    }
+
     #[test]
     fn sniff_rejects_unknown_and_truncated() {
         assert_eq!(sniff(b"not an image"), None);
@@ -321,8 +453,8 @@ mod tests {
 
     #[test]
     fn validates_a_well_formed_asset() {
-        let (bytes, fmt) = validate_asset(&signed("twist.png", &png(100, 50))).unwrap();
-        assert_eq!(fmt, ImageFormat::Png);
+        let (bytes, kind) = validate_asset(&signed("twist.png", &png(100, 50))).unwrap();
+        assert_eq!(kind, AssetKind::Image(ImageFormat::Png));
         assert_eq!(sniff(&bytes).unwrap().0, ImageFormat::Png);
     }
 
