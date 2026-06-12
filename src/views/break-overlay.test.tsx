@@ -477,6 +477,20 @@ describe("BreakOverlay guided routines", () => {
     expect(container.querySelector(".overlay-routine-image")).toBeNull();
   });
 
+  it("fires a step sound cue at break start when a step declares one", async () => {
+    const { getByText } = await startBreak(false, {
+      duration_secs: 30,
+      routine_steps: [{ text: "Seated twist", seconds: 10, sound: "/cue.ogg" }],
+    });
+    expect(getByText("Seated twist")).toBeTruthy();
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("play_custom_sound", {
+        path: "/cue.ogg",
+        volume: expect.any(Number),
+      }),
+    );
+  });
+
   it("renders no image when the step has no asset", async () => {
     const { container } = await startBreak(false, {
       routine_steps: [{ text: "Reach overhead", seconds: 20 }],
