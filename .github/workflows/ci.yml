@@ -58,7 +58,7 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run coverage
       - name: Upload frontend coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: drmowinckels/entracte
@@ -107,7 +107,7 @@ jobs:
         run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --lcov --output-path src-tauri/lcov.info
       - name: Upload Rust coverage to Codecov
         if: matrix.platform == 'ubuntu-22.04'
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: drmowinckels/entracte
