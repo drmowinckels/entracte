@@ -181,6 +181,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
             routine_steps: resolved.steps,
             routine_pacing: resolved.pacing,
             routine_max_step_secs: resolved.max_step_secs,
+            routine_breath: resolved.breath,
         },
         delivery,
         s.monitor_placement,
@@ -561,6 +562,7 @@ fn resume_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEve
         routine_steps: resolved.steps,
         routine_pacing: resolved.pacing,
         routine_max_step_secs: resolved.max_step_secs,
+        routine_breath: resolved.breath,
     }
 }
 

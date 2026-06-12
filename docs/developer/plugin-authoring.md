@@ -176,6 +176,32 @@ Every `asset` a step names must match a declared asset `id`, or the manifest is 
 
 The overlay shows the image above the step text in a fixed box; a step with no `asset` is unaffected, and a content plugin's images are removed from disk again when you uninstall it.
 
+### Breathing
+
+A routine can carry a `breath` block instead of (or as well as) steps. The overlay then animates the countdown ring — expanding on the inhale, holding, contracting on the exhale — and shows the phase name ("Breathe in", "Hold", "Breathe out") in place of step text. A breathing routine usually has an empty `steps` array.
+
+```json
+{
+  "id": "478-breath",
+  "label": "4-7-8 breathing",
+  "kind": "long",
+  "category": "breathing",
+  "steps": [],
+  "breath": {
+    "inhale": 4,
+    "hold": 7,
+    "exhale": 8,
+    "hold_out": 0,
+    "cycles": 6,
+    "then": "rest"
+  }
+}
+```
+
+Phase durations (`inhale`, `hold`, `exhale`, `hold_out`) are **absolute seconds** — unlike `fill` pacing, a breath pattern is _never_ scaled to the break length. The tempo is the point. The pattern simply repeats for the whole break, so a 19-second 4-7-8 cycle plays as many times as fits.
+
+`inhale` and `exhale` must be at least 1; `hold` and `hold_out` default to 0; no phase may exceed 3600 seconds. `cycles` optionally caps the guided portion — after that many cycles, `then` decides what happens: `"loop"` (the default) keeps cycling, `"rest"` settles into a held still state for the remainder. Users with reduced-motion enabled get the phase labels without the ring animation.
+
 Merging is additive and idempotent.
 An idea that already exists word-for-word is skipped, and a routine whose `id` collides with one already installed is skipped too, so installing your pack can never clobber what a user typed themselves.
 

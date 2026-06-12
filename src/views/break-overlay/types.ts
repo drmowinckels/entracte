@@ -18,6 +18,18 @@ export type RoutineStep = {
  *  Mirrors `RoutinePacing` in `src-tauri/src/scheduler/types.rs`. */
 export type RoutinePacing = "hold" | "fill" | "loop";
 
+export type BreathThen = "loop" | "rest";
+
+// Mirrors the Rust `BreathPattern`. Phase durations are absolute seconds.
+export type BreathPattern = {
+  inhale: number;
+  hold?: number;
+  exhale: number;
+  hold_out?: number;
+  cycles?: number;
+  then?: BreathThen;
+};
+
 export type BreakEvent = {
   kind: BreakKind;
   duration_secs: number;
@@ -38,6 +50,9 @@ export type BreakEvent = {
   routine_pacing?: RoutinePacing;
   // Per-step duration cap for fill-mode routines; absent when unused.
   routine_max_step_secs?: number;
+  // The resolved routine's breathing pattern, if it carries one. When set,
+  // the overlay animates the ring and shows phase labels instead of steps.
+  routine_breath?: BreathPattern;
 };
 
 export type OverlaySettings = {

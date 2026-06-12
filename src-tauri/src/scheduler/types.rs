@@ -64,6 +64,41 @@ pub enum RoutinePacing {
     Loop,
 }
 
+/// What a breathing routine does once its `cycles` cap is reached.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BreathThen {
+    /// Keep repeating the pattern until the break ends (the default).
+    Loop,
+    /// Stop guiding and hold a settled "rest" state for the remainder.
+    Rest,
+}
+
+/// A guided breathing pattern, animated on the countdown ring. Phase durations
+/// are **absolute seconds** — tempo is never scaled to the break length; the
+/// cycle simply repeats. `cycles` optionally caps the guided portion, after
+/// which `then` decides whether to loop or rest. A routine carrying a `breath`
+/// takes the place of step text on the overlay.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BreathPattern {
+    /// Seconds breathing in (ring expands).
+    pub inhale: u64,
+    /// Seconds holding the breath in (ring full).
+    #[serde(default)]
+    pub hold: u64,
+    /// Seconds breathing out (ring contracts).
+    pub exhale: u64,
+    /// Seconds holding empty (ring settled).
+    #[serde(default)]
+    pub hold_out: u64,
+    /// Stop guiding after this many cycles. `None` loops for the whole break.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycles: Option<u64>,
+    /// What to do after `cycles`. `None` is treated as `loop`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub then: Option<BreathThen>,
+}
+
 /// Payload emitted to the renderer when a break starts.
 ///
 /// Captures everything the overlay needs to render itself without
@@ -94,6 +129,11 @@ pub struct BreakEvent {
     pub routine_steps: Vec<RoutineStep>,
     pub routine_pacing: Option<RoutinePacing>,
     pub routine_max_step_secs: Option<u64>,
+    /// The resolved routine's breathing pattern, if it carries one. The
+    /// overlay animates the ring to it and shows phase labels in place of
+    /// step text. `None` for non-breathing routines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine_breath: Option<BreathPattern>,
 }
 
 /// The most recently skipped or postponed break, or `None` if none yet

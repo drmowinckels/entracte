@@ -586,6 +586,7 @@ fn sleep_break_event(s: &Settings, intensity: f32) -> BreakEvent {
         routine_steps: Vec::new(),
         routine_pacing: None,
         routine_max_step_secs: None,
+        routine_breath: None,
     }
 }
 
@@ -622,6 +623,7 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
         routine_steps: resolved.steps,
         routine_pacing: resolved.pacing,
         routine_max_step_secs: resolved.max_step_secs,
+        routine_breath: resolved.breath,
     }
 }
 

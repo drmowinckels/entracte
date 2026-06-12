@@ -401,6 +401,7 @@ mod tests {
             routine_steps: vec![],
             routine_pacing: None,
             routine_max_step_secs: None,
+            routine_breath: None,
         });
         let (snap, _) = sched.tray_countdown_snapshot().await;
         assert_eq!(snap, TrayCountdownSnapshot::OnBreak);

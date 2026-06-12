@@ -22,6 +22,11 @@ import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
 import { derivePostpone } from "./break-overlay/postpone";
 import { routineProgress } from "./break-overlay/routine";
 import {
+  breathAriaLabel,
+  breathLabel,
+  breathProgress,
+} from "./break-overlay/breath";
+import {
   ENFORCEABLE_LONG_BREAK_HINT,
   shouldShowEnforceableHint,
 } from "./break-overlay/skip-hint";
@@ -140,6 +145,13 @@ export default function BreakOverlay() {
   const routineImageSrc = routineAsset
     ? convertFileSrc(routineAsset)
     : undefined;
+  // A breathing routine replaces step text with phase labels and pulses the
+  // ring (driven by --breath-scale in use-overlay-css-vars). Takes precedence
+  // over step rendering when present.
+  const breath = active.routine_breath ?? null;
+  const breathProg = breath
+    ? breathProgress(breath, active.duration_secs - remaining)
+    : null;
   const intensity = clamp01(active.health_intensity);
   const dismissable = !active.enforceable && active.skip_available;
   const showPostpone = active.postpone_available && !finished;
@@ -247,6 +259,15 @@ export default function BreakOverlay() {
               cy="140"
               r={RING_RADIUS}
             />
+            {breathProg && (
+              <circle
+                className="overlay-breath-circle"
+                cx="140"
+                cy="140"
+                r={RING_RADIUS - 22}
+                aria-hidden="true"
+              />
+            )}
           </svg>
           <p className="overlay-timer" aria-label={timerLabel} aria-live="off">
             {finished
@@ -256,7 +277,21 @@ export default function BreakOverlay() {
                 : `${seconds}s`}
           </p>
         </div>
-        {routine ? (
+        {breathProg ? (
+          <div className="overlay-routine overlay-breath">
+            <p
+              className="overlay-hint overlay-routine-step overlay-breath-phase"
+              role="note"
+              aria-live="polite"
+              aria-atomic="true"
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              aria-label={breathAriaLabel(breathProg)}
+            >
+              {breathLabel(breathProg)}
+            </p>
+          </div>
+        ) : routine ? (
           <div className="overlay-routine">
             {routineImageSrc && (
               <img

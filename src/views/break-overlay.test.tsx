@@ -464,6 +464,19 @@ describe("BreakOverlay guided routines", () => {
     expect(img!.style.display).toBe("none");
   });
 
+  it("renders breath phase labels and the pulse circle for a breathing routine", async () => {
+    const { container, getByText } = await startBreak(false, {
+      duration_secs: 60,
+      routine_steps: [],
+      routine_breath: { inhale: 4, hold: 4, exhale: 4, hold_out: 4 },
+    });
+    // At break start (elapsed 0) the pattern is on its inhale.
+    expect(getByText(/Breathe in/)).toBeTruthy();
+    expect(container.querySelector(".overlay-breath-circle")).toBeTruthy();
+    // No step UI for a pure breathing routine.
+    expect(container.querySelector(".overlay-routine-image")).toBeNull();
+  });
+
   it("renders no image when the step has no asset", async () => {
     const { container } = await startBreak(false, {
       routine_steps: [{ text: "Reach overhead", seconds: 20 }],

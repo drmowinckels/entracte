@@ -32,6 +32,17 @@ export function systemPrefersReducedTransparency(): boolean {
   }
 }
 
+export function systemPrefersReducedMotion(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const RING_RADIUS = 120;
 export const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 

@@ -1,6 +1,13 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
-import { RING_CIRCUMFERENCE, clamp01, progressColor, rgbFor } from "../visual";
+import {
+  RING_CIRCUMFERENCE,
+  clamp01,
+  progressColor,
+  rgbFor,
+  systemPrefersReducedMotion,
+} from "../visual";
+import { breathProgress, breathScale } from "../breath";
 import type { BreakEvent, OverlaySettings } from "../types";
 
 export type OverlayCssVarsRefs = {
@@ -60,6 +67,23 @@ export function useOverlayCssVars(
       highContrast ? "#ffffff" : progressColor(remainingFraction),
     );
   }, [active, remaining, highContrast]);
+
+  // Breathing pulse: drive `--breath-scale` from the routine's breath pattern.
+  // Reduced-motion users get a static circle (the phase labels carry the
+  // rhythm); everyone else gets a ring that expands on inhale, contracts on
+  // exhale. Reuses the per-second countdown tick, so it pauses with the break.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || !active) return;
+    const breath = active.routine_breath;
+    const prog = breath
+      ? breathProgress(breath, active.duration_secs - remaining)
+      : null;
+    const value = prog
+      ? breathScale(prog.fullness, systemPrefersReducedMotion()).toFixed(3)
+      : "1";
+    el.style.setProperty("--breath-scale", value);
+  }, [active, remaining]);
 
   return { rootRef, ringBarRef };
 }
