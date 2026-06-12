@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::asset::{validate_asset, ManifestAsset, MAX_ASSETS};
+use super::asset::{validate_asset, AssetKind, ManifestAsset, MAX_ASSETS};
 use crate::scheduler::content_pack::{validate_pack, ContentPack};
 
 /// Manifest schema version this build reads and writes. Bumped only on a
@@ -378,34 +378,57 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate a manifest's image assets and the routine references to them.
-/// Only content plugins may carry assets; each must be a sound, in-cap image
-/// (see [`validate_asset`]) with a unique id, and every routine `step.asset`
-/// must resolve to one of them. First-error-wins, like the rest of the file.
+/// Validate a manifest's assets and the routine references to them. Only
+/// content plugins may carry assets; each must be a sound, in-cap image or
+/// audio file (see [`validate_asset`]) with a unique id. Every `step.asset`
+/// must resolve to an *image* asset, and every `step.sound` / breath phase cue
+/// to an *audio* asset. First-error-wins, like the rest of the file.
 fn validate_assets(m: &Manifest) -> Result<(), String> {
     if !m.assets.is_empty() && m.kind != PluginKind::Content {
-        return Err(format!("a {:?} plugin must not carry image assets", m.kind).to_lowercase());
+        return Err(format!("a {:?} plugin must not carry assets", m.kind).to_lowercase());
     }
     if m.assets.len() > MAX_ASSETS {
         return Err(format!("plugin carries more than {MAX_ASSETS} assets"));
     }
-    let mut ids = std::collections::HashSet::new();
+    let mut kinds: std::collections::HashMap<&str, AssetKind> = std::collections::HashMap::new();
     for asset in &m.assets {
-        validate_asset(asset)?;
-        if !ids.insert(asset.id.as_str()) {
+        let (_, kind) = validate_asset(asset)?;
+        if kinds.insert(asset.id.as_str(), kind).is_some() {
             return Err(format!("duplicate asset id '{}'", asset.id));
         }
     }
+    let resolve = |id: &str, want_audio: bool, rid: &str| -> Result<(), String> {
+        match kinds.get(id) {
+            None => Err(format!("routine '{rid}' references unknown asset '{id}'")),
+            Some(kind) if kind.is_audio() != want_audio => Err(format!(
+                "routine '{rid}' references '{id}' as {} but it is {}",
+                if want_audio { "a sound" } else { "an image" },
+                if kind.is_audio() { "audio" } else { "an image" }
+            )),
+            Some(_) => Ok(()),
+        }
+    };
     if let Some(pack) = &m.content {
         for r in &pack.routines {
             for st in &r.steps {
-                if let Some(asset_id) = &st.asset {
-                    if !ids.contains(asset_id.as_str()) {
-                        return Err(format!(
-                            "routine '{}' references unknown asset '{}'",
-                            r.id, asset_id
-                        ));
-                    }
+                if let Some(id) = &st.asset {
+                    resolve(id, false, &r.id)?;
+                }
+                if let Some(id) = &st.sound {
+                    resolve(id, true, &r.id)?;
+                }
+            }
+            if let Some(sounds) = r.breath.as_ref().and_then(|b| b.sounds.as_ref()) {
+                for id in [
+                    &sounds.inhale,
+                    &sounds.hold,
+                    &sounds.exhale,
+                    &sounds.hold_out,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    resolve(id, true, &r.id)?;
                 }
             }
         }
@@ -888,6 +911,18 @@ mod tests {
         }
     }
 
+    fn ogg_asset(id: &str) -> ManifestAsset {
+        use base64::prelude::{Engine, BASE64_STANDARD};
+        let mut bytes = b"OggS".to_vec();
+        bytes.extend_from_slice(&[0u8; 32]);
+        let hash = crate::plugins::sha256(&bytes);
+        ManifestAsset {
+            id: id.to_string(),
+            sha256: hash.iter().map(|b| format!("{b:02x}")).collect(),
+            data_base64: BASE64_STANDARD.encode(&bytes),
+        }
+    }
+
     /// A content manifest whose one routine's one step references `asset_id`.
     fn content_manifest_referencing(asset_id: &str) -> Manifest {
         use crate::scheduler::{
@@ -905,6 +940,7 @@ mod tests {
                 text: "stretch".to_string(),
                 seconds: 5,
                 asset: Some(asset_id.to_string()),
+                sound: None,
             }],
             pacing: None,
             max_step_secs: None,
@@ -933,6 +969,7 @@ mod tests {
                 text: "rest".to_string(),
                 seconds: 5,
                 asset: None,
+                sound: None,
             });
         assert!(validate_manifest(&m).is_ok());
     }
@@ -943,7 +980,7 @@ mod tests {
         m.assets = vec![png_asset("twist")];
         assert!(validate_manifest(&m)
             .unwrap_err()
-            .contains("must not carry image assets"));
+            .contains("must not carry assets"));
     }
 
     #[test]
@@ -953,6 +990,63 @@ mod tests {
         assert!(validate_manifest(&m)
             .unwrap_err()
             .contains("references unknown asset"));
+    }
+
+    /// Swap the single routine's step to reference `id` as a sound (clearing
+    /// its image ref), and optionally give the routine a breath inhale cue.
+    fn with_step_sound(asset_id: &str) -> Manifest {
+        let mut m = content_manifest_referencing("ignored");
+        let step = &mut m.content.as_mut().unwrap().routines[0].steps[0];
+        step.asset = None;
+        step.sound = Some(asset_id.to_string());
+        m
+    }
+
+    #[test]
+    fn validate_accepts_a_step_sound_referencing_audio() {
+        let mut m = with_step_sound("chime");
+        m.assets = vec![ogg_asset("chime")];
+        assert!(validate_manifest(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_step_sound_that_points_at_an_image() {
+        let mut m = with_step_sound("pic");
+        m.assets = vec![png_asset("pic")];
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("as a sound but it is an image"));
+    }
+
+    #[test]
+    fn validate_rejects_a_step_image_that_points_at_audio() {
+        let mut m = content_manifest_referencing("chime");
+        m.assets = vec![ogg_asset("chime")];
+        assert!(validate_manifest(&m)
+            .unwrap_err()
+            .contains("as an image but it is audio"));
+    }
+
+    #[test]
+    fn validate_accepts_breath_phase_cues_referencing_audio() {
+        use crate::scheduler::{BreathPattern, BreathSounds};
+        let mut m = content_manifest_referencing("ignored");
+        let r = &mut m.content.as_mut().unwrap().routines[0];
+        r.steps[0].asset = None;
+        r.breath = Some(BreathPattern {
+            inhale: 4,
+            hold: 0,
+            exhale: 4,
+            hold_out: 0,
+            cycles: None,
+            then: None,
+            sounds: Some(BreathSounds {
+                inhale: Some("chime".to_string()),
+                ..Default::default()
+            }),
+        });
+        m.assets = vec![ogg_asset("chime")];
+        assert!(validate_manifest(&m).is_ok());
     }
 
     #[test]

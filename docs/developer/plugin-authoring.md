@@ -202,6 +202,27 @@ Phase durations (`inhale`, `hold`, `exhale`, `hold_out`) are **absolute seconds*
 
 `inhale` and `exhale` must be at least 1; `hold` and `hold_out` default to 0; no phase may exceed 3600 seconds. `cycles` optionally caps the guided portion — after that many cycles, `then` decides what happens: `"loop"` (the default) keeps cycling, `"rest"` settles into a held still state for the remainder. Users with reduced-motion enabled get the phase labels without the ring animation.
 
+### Sounds
+
+A routine can play short sound cues — a tone on the breath in and out so a user can follow with their eyes closed, or a chime between yoga poses. Sounds are **audio assets**: they ride in the same top-level `assets` array as images, just with an audio file in `data_base64` (the format is sniffed from the bytes and must be **OGG, WAV, or MP3**). A sound asset is capped tighter than an image — **256 KiB** — because a cue is a short sound, not a track.
+
+Reference a sound two ways. A routine step's `sound` plays when that step begins:
+
+```json
+{ "text": "Seated twist", "seconds": 30, "sound": "next-pose" }
+```
+
+And a breathing pattern's `sounds` give a cue per phase (any phase may be silent):
+
+```json
+"breath": {
+  "inhale": 4, "exhale": 6,
+  "sounds": { "inhale": "breathe-in", "exhale": "breathe-out" }
+}
+```
+
+A `sound` / `breath.sounds.*` value must name an **audio** asset (and a step's `asset` must name an **image** one) — mixing them is rejected. Cues always play through the user's overall sound volume, and the user can silence all plugin cues with the **Play plugin sound cues** switch in Settings → Breaks. Sounds, like images, are removed from disk when the plugin is uninstalled.
+
 Merging is additive and idempotent.
 An idea that already exists word-for-word is skipped, and a routine whose `id` collides with one already installed is skipped too, so installing your pack can never clobber what a user typed themselves.
 
@@ -408,23 +429,25 @@ Uninstalling from the same panel removes the record, the module, and — for a c
 These are the caps the validator enforces.
 They are generous for anything hand-authored and exist so a malformed or hostile file can't bloat state or stall the app.
 
-| Limit                            | Value                    |
-| -------------------------------- | ------------------------ |
-| Manifest file size               | 8 MiB                    |
-| Embedded module size             | 16 MiB                   |
-| Image assets per pack            | 64                       |
-| Image asset size (decoded)       | 512 KiB                  |
-| Image asset dimensions           | 4,000,000 px (w × h)     |
-| Image asset formats              | PNG, GIF, WebP           |
-| Any string                       | 1000 characters          |
-| Plugin `id`                      | 128 characters           |
-| Capability imports               | 16                       |
-| Capability scope (path / origin) | 512 characters           |
-| Detector memory                  | 64 pages (4 MiB)         |
-| Detector wall-clock per call     | 250 ms                   |
-| Detector fuel                    | 500 million instructions |
-| Export payload                   | 5 MiB                    |
-| Export HTTP timeout              | 10 seconds               |
+| Limit                             | Value                    |
+| --------------------------------- | ------------------------ |
+| Manifest file size                | 8 MiB                    |
+| Embedded module size              | 16 MiB                   |
+| Assets per pack (images + sounds) | 64                       |
+| Image asset size (decoded)        | 512 KiB                  |
+| Image asset dimensions            | 4,000,000 px (w × h)     |
+| Image asset formats               | PNG, GIF, WebP           |
+| Sound asset size (decoded)        | 256 KiB                  |
+| Sound asset formats               | OGG, WAV, MP3            |
+| Any string                        | 1000 characters          |
+| Plugin `id`                       | 128 characters           |
+| Capability imports                | 16                       |
+| Capability scope (path / origin)  | 512 characters           |
+| Detector memory                   | 64 pages (4 MiB)         |
+| Detector wall-clock per call      | 250 ms                   |
+| Detector fuel                     | 500 million instructions |
+| Export payload                    | 5 MiB                    |
+| Export HTTP timeout               | 10 seconds               |
 
 ## What's still rough
 

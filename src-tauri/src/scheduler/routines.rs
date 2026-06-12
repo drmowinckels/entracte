@@ -95,6 +95,7 @@ fn step(text: &str, seconds: u64) -> RoutineStep {
         text: text.to_string(),
         seconds,
         asset: None,
+        sound: None,
     }
 }
 
@@ -724,6 +725,7 @@ mod tests {
             hold_out: 0,
             cycles: None,
             then: None,
+            sounds: None,
         };
         let mut s = Settings::default();
         s.custom_routines = vec![Routine {
@@ -735,7 +737,7 @@ mod tests {
             steps: vec![],
             pacing: None,
             max_step_secs: None,
-            breath: Some(pattern),
+            breath: Some(pattern.clone()),
         }];
         s.micro_routine = "478".to_string();
         let resolved = resolve_routine(BreakKind::Micro, &s);

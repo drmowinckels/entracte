@@ -5,6 +5,7 @@ import {
   breathScale,
   breathLabel,
   breathAriaLabel,
+  breathPhaseCue,
 } from "./breath";
 import type { BreathPattern } from "./types";
 
@@ -106,6 +107,23 @@ describe("breathLabel / breathAriaLabel", () => {
     const p = { phase: "rest", phaseRemaining: 0, fullness: 0 } as const;
     expect(breathLabel(p)).toBe("Rest");
     expect(breathAriaLabel(p)).toBe("Rest");
+  });
+});
+
+describe("breathPhaseCue", () => {
+  const sounds = { inhale: "in.ogg", exhale: "out.ogg" };
+  it("returns the cue for a phase that declares one", () => {
+    expect(breathPhaseCue(sounds, "inhale")).toBe("in.ogg");
+    expect(breathPhaseCue(sounds, "exhale")).toBe("out.ogg");
+  });
+  it("is null for a silent phase, rest, or no sounds", () => {
+    expect(breathPhaseCue(sounds, "hold")).toBeNull();
+    expect(breathPhaseCue(sounds, "hold_out")).toBeNull();
+    expect(breathPhaseCue(sounds, "rest")).toBeNull();
+    expect(breathPhaseCue(undefined, "inhale")).toBeNull();
+    // sounds present but the queried phase absent → null.
+    expect(breathPhaseCue({}, "inhale")).toBeNull();
+    expect(breathPhaseCue({}, "exhale")).toBeNull();
   });
 });
 

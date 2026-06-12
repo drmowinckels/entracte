@@ -138,6 +138,13 @@ describe("BreaksTab guided routines", () => {
     );
     expect(update).toHaveBeenCalledWith("routine_fill", true);
   });
+
+  it("toggling plugin sound cues calls update with the new value", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.click(checkboxForLabel("Play plugin sound cues"));
+    expect(update).toHaveBeenCalledWith("allow_plugin_sounds", true);
+  });
 });
 
 describe("BreaksTab break ideas", () => {

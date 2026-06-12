@@ -68,7 +68,7 @@ pub use types::{BreakKind, LastBreakInfo};
 // Re-exported for out-of-scheduler consumers (e.g. plugin manifest tests
 // constructing routines); the crate otherwise names it via `super::types`.
 #[allow(unused_imports)]
-pub use types::RoutineStep;
+pub use types::{BreathPattern, BreathSounds, RoutineStep};
 
 use timers::BreakTimers;
 

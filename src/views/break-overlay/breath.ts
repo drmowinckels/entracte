@@ -1,4 +1,4 @@
-import type { BreathPattern } from "./types";
+import type { BreathPattern, BreathSounds } from "./types";
 
 export type BreathPhase = "inhale" | "hold" | "exhale" | "hold_out" | "rest";
 
@@ -20,6 +20,27 @@ const PHASE_LABEL: Record<BreathPhase, string> = {
 
 export function breathPhaseLabel(phase: BreathPhase): string {
   return PHASE_LABEL[phase];
+}
+
+// The sound cue for a given phase, if the pattern declares one. `rest` is
+// always silent.
+export function breathPhaseCue(
+  sounds: BreathSounds | undefined,
+  phase: BreathPhase,
+): string | null {
+  if (!sounds) return null;
+  switch (phase) {
+    case "inhale":
+      return sounds.inhale ?? null;
+    case "hold":
+      return sounds.hold ?? null;
+    case "exhale":
+      return sounds.exhale ?? null;
+    case "hold_out":
+      return sounds.hold_out ?? null;
+    case "rest":
+      return null;
+  }
 }
 
 // Map a fullness (0..1) to the ring's `--breath-scale`. Reduced-motion users
