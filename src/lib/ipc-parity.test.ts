@@ -150,6 +150,13 @@ const PAIRS: Pair[] = [
     rust: { file: "screen_time_store.rs", struct: "ScreenTimeSnapshot" },
   },
   {
+    // TS calls it `ChoresState` (the runtime list the UI edits), Rust calls
+    // it `ChoresSnapshot` (the on-disk shape). Same fields either way.
+    name: "ChoresState ↔ ChoresSnapshot",
+    ts: { file: "views/settings/types.ts", type: "ChoresState" },
+    rust: { file: "chores_store.rs", struct: "ChoresSnapshot" },
+  },
+  {
     name: "BreakSound",
     ts: { file: "lib/break-sound.ts", type: "BreakSound" },
     rust: { file: "scheduler/settings.rs", struct: "BreakSound" },

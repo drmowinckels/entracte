@@ -133,6 +133,13 @@
   min-height: 1.5em;
 }
 
+/* A chore nudge is a deliberate, user-entered task rather than an ambient
+   tip, so it reads with full opacity and a touch more weight than a hint. */
+.overlay-hint.overlay-chore {
+  opacity: 1;
+  font-weight: 600;
+}
+
 .overlay-routine {
   margin: 0 0 1.5rem;
 }

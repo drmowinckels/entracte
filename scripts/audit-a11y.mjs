@@ -122,6 +122,12 @@ const TAURI_SHIM = `
     rename_profile: null,
     delete_profile: null,
     get_screen_time: { date: "2026-05-16", seconds: 14400, last_reminder_epoch_secs: null },
+    get_chores: {
+      date: "2026-05-16",
+      items: ["Water the plants", "Reply to Sam"],
+      rotation: 0,
+    },
+    set_chores: { date: "2026-05-16", items: [], rotation: 0 },
     get_stats_digest: DIGEST,
     get_supporter_status: { is_supporter: false, masked_key: null, last_validated_at: null },
     trigger_test_break: null,

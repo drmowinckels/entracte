@@ -89,6 +89,9 @@ export const breakEventSchema = z.object({
   routine_pacing: z.enum(["hold", "fill", "loop"]).optional(),
   routine_max_step_secs: z.number().optional(),
   routine_breath: breathSchema.optional(),
+  // The day's long-break chore nudge; absent for micro / bedtime and for an
+  // empty list (backend skips the field via skip_serializing_if).
+  chore_prompt: z.string().optional(),
 }) satisfies z.ZodType<BreakEvent>;
 
 export const postponeStateSchema = z.object({

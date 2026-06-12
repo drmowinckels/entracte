@@ -159,6 +159,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
     // the scheduled duration from `fire_fields` and keep the rest.
     let (_, enforceable, manual_finish, hints) = fire_fields(kind, &s);
     let intensity = scheduler.stats.lock().await.intensity();
+    let chore_prompt = scheduler.resolve_chore_prompt(kind).await;
     let delivery = delivery_for(kind, &s);
     let resolved = super::super::routines::resolve_routine(kind, &s);
     deliver_break(
@@ -182,6 +183,7 @@ pub async fn trigger_break_from_cli<R: Runtime>(
             routine_pacing: resolved.pacing,
             routine_max_step_secs: resolved.max_step_secs,
             routine_breath: resolved.breath,
+            chore_prompt,
         },
         delivery,
         s.monitor_placement,
@@ -563,6 +565,10 @@ fn resume_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEve
         routine_pacing: resolved.pacing,
         routine_max_step_secs: resolved.max_step_secs,
         routine_breath: resolved.breath,
+        // Resuming re-fires a break the user already skipped/postponed; the
+        // chore nudge (and its rotation) was resolved on the original fire,
+        // so a resume stays chore-free rather than advancing it again.
+        chore_prompt: None,
     }
 }
 
