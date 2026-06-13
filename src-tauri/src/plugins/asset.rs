@@ -740,4 +740,23 @@ mod tests {
         let err = validate_asset(&signed("a.svg", b"<html><body>hi</body></html>")).unwrap_err();
         assert!(err.contains("not a supported image"));
     }
+
+    #[test]
+    fn xml_prolog_without_svg_element_is_not_an_image() {
+        // Starts with an XML prolog (so it passes the root sniff) but carries no
+        // <svg> element — falls through to the unsupported-format error.
+        let err = validate_asset(&signed("a.svg", b"<?xml version=\"1.0\"?><note>hi</note>"))
+            .unwrap_err();
+        assert!(err.contains("not a supported image"));
+    }
+
+    #[test]
+    fn the_word_on_in_text_is_not_an_event_handler() {
+        // "on" as ordinary word content (with surrounding spaces) exercises the
+        // handler scanner's enter-but-no-match path; it must not be flagged, so
+        // the SVG validates.
+        let (_, kind) =
+            validate_asset(&signed("a.svg", &svg("<text>carry on now</text>"))).unwrap();
+        assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
+    }
 }
