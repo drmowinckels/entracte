@@ -229,6 +229,14 @@ fn is_safe_asset_id(id: &str) -> bool {
 /// entity-expansion ("billion laughs") and external-entity (XXE) attacks, which
 /// happen at parse time. There is no pixel cap (vector); the decoded-byte cap
 /// bounds the source, and with no entities it cannot expand.
+///
+/// The `<script>`/handler/external-ref checks below are coarse string/scanner
+/// filters, **not** a general SVG sanitizer: a determined document can evade
+/// them (whitespace around `=`, encoded characters, unquoted attributes). That
+/// is harmless *only* because the render context is `<img>` + CSP, where the
+/// evaded constructs are inert. Revisit them before rendering a plugin SVG any
+/// other way (inline `<svg>`, `<object>`, a rasterizer, top-level navigation) —
+/// in those contexts they would not be sufficient on their own.
 fn validate_svg(bytes: &[u8]) -> Option<Result<(), String>> {
     let text = std::str::from_utf8(bytes).ok()?;
     let head = text.trim_start_matches('\u{feff}').trim_start();
@@ -264,7 +272,8 @@ fn validate_svg(bytes: &[u8]) -> Option<Result<(), String>> {
 /// `true` if the text holds an inline `on…="` event-handler attribute (a space
 /// or tab/newline, then `on`, then letters, then `=`). No benign SVG attribute
 /// begins with `on`, so the heuristic has no real false positives. Namespace
-/// declarations (`xmlns`) and href/src values are untouched.
+/// declarations (`xmlns`) and href/src values are untouched. Coarse by design —
+/// see [`validate_svg`] for why that is sufficient in the `<img>` render context.
 fn has_event_handler(lower: &str) -> bool {
     let b = lower.as_bytes();
     let is_sep = |c: u8| matches!(c, b' ' | b'\t' | b'\n' | b'\r');
@@ -291,7 +300,9 @@ fn has_event_handler(lower: &str) -> bool {
 /// `true` if a fetching attribute/function (`href`, `src`, CSS `url(...)`,
 /// `@import`) points at a remote scheme (`http`, `https`, or protocol-relative
 /// `//`). Deliberately does *not* match `xmlns="http://…"` namespace URLs (they
-/// carry no `href`/`src`/`url(`), nor self-contained `data:` URIs.
+/// carry no `href`/`src`/`url(`), nor self-contained `data:` URIs. Coarse by
+/// design — see [`validate_svg`] for why that is sufficient in the `<img>`
+/// render context.
 fn has_external_ref(lower: &str) -> bool {
     const PAT: &[&str] = &[
         "href=\"http",
@@ -487,6 +498,7 @@ mod tests {
         assert_eq!(ImageFormat::Png.ext(), "png");
         assert_eq!(ImageFormat::Gif.ext(), "gif");
         assert_eq!(ImageFormat::Webp.ext(), "webp");
+        assert_eq!(ImageFormat::Svg.ext(), "svg");
     }
 
     fn ogg() -> Vec<u8> {
@@ -647,7 +659,6 @@ mod tests {
         assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
         assert!(!kind.is_audio());
         assert_eq!(kind.ext(), "svg");
-        assert_eq!(ImageFormat::Svg.ext(), "svg");
     }
 
     #[test]
@@ -673,6 +684,17 @@ mod tests {
             xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\" \
             xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0h10\"/></svg>";
         let (_, kind) = validate_asset(&signed("cat-cow.svg", doc)).unwrap();
+        assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
+    }
+
+    #[test]
+    fn accepts_svg_led_by_a_license_comment() {
+        // Some tooling emits a license/banner comment before the root element,
+        // so the head sniff must accept a leading `<!-- … -->` (the otherwise
+        // untaken branch) and still recognise the <svg> that follows.
+        let doc = b"<!-- License: CC0 -->\n<svg xmlns=\"http://www.w3.org/2000/svg\" \
+            width=\"4\" height=\"4\"><circle r=\"2\"/></svg>";
+        let (_, kind) = validate_asset(&signed("badge.svg", doc)).unwrap();
         assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
     }
 
