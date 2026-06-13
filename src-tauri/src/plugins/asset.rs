@@ -51,14 +51,15 @@ pub struct ManifestAsset {
     pub data_base64: String,
 }
 
-/// The image formats a plugin may ship. Chosen for small UI illustrations and
-/// simple animations; each has a header we can read dimensions from without
-/// decoding pixels.
+/// The image formats a plugin may ship. The raster formats each have a header
+/// we can read dimensions from without decoding pixels; `Svg` is vector XML,
+/// vetted structurally instead (see [`validate_svg`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     Png,
     Gif,
     Webp,
+    Svg,
 }
 
 impl ImageFormat {
@@ -68,6 +69,7 @@ impl ImageFormat {
             ImageFormat::Png => "png",
             ImageFormat::Gif => "gif",
             ImageFormat::Webp => "webp",
+            ImageFormat::Svg => "svg",
         }
     }
 }
@@ -214,6 +216,103 @@ fn is_safe_asset_id(id: &str) -> bool {
         })
 }
 
+/// Recognise and structurally vet an SVG document.
+///
+/// `None` means the bytes are not an SVG at all, so validation falls through to
+/// the audio sniffer / unsupported-format error. `Some(Ok)` is a safe SVG;
+/// `Some(Err(reason))` is an SVG carrying a dangerous construct.
+///
+/// The overlay renders assets with `<img src=asset:…>` under a CSP of
+/// `script-src 'self'; object-src 'none'`, so scripts, `onload`, and external
+/// fetches inside an SVG never execute — these checks are defense-in-depth, plus
+/// the one guard the `<img>` sandbox does *not* give: rejecting a DTD blocks XML
+/// entity-expansion ("billion laughs") and external-entity (XXE) attacks, which
+/// happen at parse time. There is no pixel cap (vector); the decoded-byte cap
+/// bounds the source, and with no entities it cannot expand.
+fn validate_svg(bytes: &[u8]) -> Option<Result<(), String>> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let head = text.trim_start_matches('\u{feff}').trim_start();
+    if !(head.starts_with("<svg") || head.starts_with("<?xml") || head.starts_with("<!--")) {
+        return None;
+    }
+    if !text.contains("<svg") {
+        return None;
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("<!doctype") || lower.contains("<!entity") {
+        return Some(Err(
+            "must not contain a DOCTYPE or ENTITY declaration".into()
+        ));
+    }
+    if lower.contains("<script") || lower.contains("<foreignobject") {
+        return Some(Err("must not contain <script> or <foreignObject>".into()));
+    }
+    if lower.contains("javascript:") {
+        return Some(Err("must not contain javascript: URIs".into()));
+    }
+    if has_event_handler(&lower) {
+        return Some(Err("must not contain on* event-handler attributes".into()));
+    }
+    if has_external_ref(&lower) {
+        return Some(Err(
+            "must not reference external (http/https) resources".into()
+        ));
+    }
+    Some(Ok(()))
+}
+
+/// `true` if the text holds an inline `on…="` event-handler attribute (a space
+/// or tab/newline, then `on`, then letters, then `=`). No benign SVG attribute
+/// begins with `on`, so the heuristic has no real false positives. Namespace
+/// declarations (`xmlns`) and href/src values are untouched.
+fn has_event_handler(lower: &str) -> bool {
+    let b = lower.as_bytes();
+    let is_sep = |c: u8| matches!(c, b' ' | b'\t' | b'\n' | b'\r');
+    let mut i = 0;
+    while i + 3 < b.len() {
+        if is_sep(b[i]) && b[i + 1] == b'o' && b[i + 2] == b'n' {
+            let mut j = i + 3;
+            while j < b.len() && b[j].is_ascii_alphabetic() {
+                j += 1;
+            }
+            let mut k = j;
+            while k < b.len() && is_sep(b[k]) {
+                k += 1;
+            }
+            if j > i + 3 && k < b.len() && b[k] == b'=' {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// `true` if a fetching attribute/function (`href`, `src`, CSS `url(...)`,
+/// `@import`) points at a remote scheme (`http`, `https`, or protocol-relative
+/// `//`). Deliberately does *not* match `xmlns="http://…"` namespace URLs (they
+/// carry no `href`/`src`/`url(`), nor self-contained `data:` URIs.
+fn has_external_ref(lower: &str) -> bool {
+    const PAT: &[&str] = &[
+        "href=\"http",
+        "href='http",
+        "href=\"//",
+        "href='//",
+        "src=\"http",
+        "src='http",
+        "src=\"//",
+        "src='//",
+        "url(http",
+        "url(\"http",
+        "url('http",
+        "url(//",
+        "url(\"//",
+        "url('//",
+        "@import",
+    ];
+    PAT.iter().any(|p| lower.contains(p))
+}
+
 /// Decode and fully validate one declared asset, returning its decoded bytes
 /// and sniffed format on success. Checks, first-error-wins: a filename-safe id,
 /// a 64-char lowercase-hex sha256, valid base64, the decoded-byte cap, that the
@@ -265,6 +364,11 @@ pub fn validate_asset(asset: &ManifestAsset) -> Result<(Vec<u8>, AssetKind), Str
         }
         return Ok((bytes, AssetKind::Image(format)));
     }
+    match validate_svg(&bytes) {
+        Some(Ok(())) => return Ok((bytes, AssetKind::Image(ImageFormat::Svg))),
+        Some(Err(reason)) => return Err(format!("asset '{}' {reason}", asset.id)),
+        None => {}
+    }
     if let Some(format) = sniff_audio(&bytes) {
         if bytes.len() > MAX_SOUND_BYTES {
             return Err(format!(
@@ -276,7 +380,7 @@ pub fn validate_asset(asset: &ManifestAsset) -> Result<(Vec<u8>, AssetKind), Str
         return Ok((bytes, AssetKind::Audio(format)));
     }
     Err(format!(
-        "asset '{}' is not a supported image (png/gif/webp) or sound (ogg/wav/mp3)",
+        "asset '{}' is not a supported image (png/gif/webp/svg) or sound (ogg/wav/mp3)",
         asset.id
     ))
 }
@@ -528,5 +632,112 @@ mod tests {
             data_base64: "not base64!!!".to_string(),
         };
         assert!(validate_asset(&a).unwrap_err().contains("not valid base64"));
+    }
+
+    fn svg(inner: &str) -> Vec<u8> {
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\">{inner}</svg>"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn validates_a_plain_svg_as_image() {
+        let (_, kind) = validate_asset(&signed("twist.svg", &svg("<circle r=\"8\"/>"))).unwrap();
+        assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
+        assert!(!kind.is_audio());
+        assert_eq!(kind.ext(), "svg");
+        assert_eq!(ImageFormat::Svg.ext(), "svg");
+    }
+
+    #[test]
+    fn accepts_svg_with_xml_prolog_and_namespace_urls() {
+        // An Inkscape-style document: XML prolog, multiple xmlns http URLs, a
+        // data: image. None of these are external *fetches*, so it must pass.
+        let doc = b"<?xml version=\"1.0\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" \
+            xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"8\" height=\"8\">\
+            <image xlink:href=\"data:image/png;base64,AAAA\"/></svg>";
+        let (_, kind) = validate_asset(&signed("pose.svg", doc)).unwrap();
+        assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
+    }
+
+    #[test]
+    fn accepts_inkscape_style_export() {
+        // The real shape of an Inkscape export: an XML decl, a comment whose
+        // text contains "(http://www.inkscape.org/)", and an xmlns:inkscape
+        // http URL. The comment's URL is not a fetch (no href/src/url()), and
+        // the namespace URL is xmlns, so the document must validate.
+        let doc = b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n\
+            <!-- Created with Inkscape (http://www.inkscape.org/) -->\n\
+            <svg width=\"330mm\" height=\"200mm\" version=\"1.1\" \
+            xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\" \
+            xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0h10\"/></svg>";
+        let (_, kind) = validate_asset(&signed("cat-cow.svg", doc)).unwrap();
+        assert_eq!(kind, AssetKind::Image(ImageFormat::Svg));
+    }
+
+    #[test]
+    fn rejects_svg_with_doctype_or_entity() {
+        let doctype = b"<?xml version=\"1.0\"?><!DOCTYPE svg><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert!(validate_asset(&signed("a.svg", doctype))
+            .unwrap_err()
+            .contains("DOCTYPE or ENTITY"));
+        let entity = b"<?xml version=\"1.0\"?><!DOCTYPE svg [<!ENTITY x \"y\">]><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert!(validate_asset(&signed("a.svg", entity))
+            .unwrap_err()
+            .contains("DOCTYPE or ENTITY"));
+    }
+
+    #[test]
+    fn rejects_svg_with_script_or_foreign_object() {
+        assert!(
+            validate_asset(&signed("a.svg", &svg("<script>alert(1)</script>")))
+                .unwrap_err()
+                .contains("script")
+        );
+        assert!(validate_asset(&signed(
+            "a.svg",
+            &svg("<foreignObject><p>hi</p></foreignObject>")
+        ))
+        .unwrap_err()
+        .contains("foreignObject"));
+    }
+
+    #[test]
+    fn rejects_svg_with_event_handler_or_javascript_uri() {
+        assert!(
+            validate_asset(&signed("a.svg", &svg("<rect onload=\"x()\"/>")))
+                .unwrap_err()
+                .contains("event-handler")
+        );
+        assert!(
+            validate_asset(&signed("a.svg", &svg("<a href=\"javascript:x()\">go</a>")))
+                .unwrap_err()
+                .contains("javascript:")
+        );
+    }
+
+    #[test]
+    fn rejects_svg_with_external_reference() {
+        assert!(validate_asset(&signed(
+            "a.svg",
+            &svg("<image href=\"http://evil.test/x.png\"/>")
+        ))
+        .unwrap_err()
+        .contains("external"));
+        assert!(validate_asset(&signed(
+            "a.svg",
+            &svg("<image href=\"//evil.test/x.png\"/>")
+        ))
+        .unwrap_err()
+        .contains("external"));
+    }
+
+    #[test]
+    fn non_svg_xml_is_not_treated_as_an_image() {
+        // Well-formed XML that isn't SVG falls through to the unsupported error,
+        // not a misleading SVG-specific one.
+        let err = validate_asset(&signed("a.svg", b"<html><body>hi</body></html>")).unwrap_err();
+        assert!(err.contains("not a supported image"));
     }
 }
