@@ -1,4 +1,5 @@
 mod break_stats;
+pub(crate) mod chores;
 mod commands;
 pub(crate) mod content_pack;
 mod exports;
@@ -41,6 +42,7 @@ pub use break_stats::BreakStats;
 // the handler invocation in lib.rs to resolve.
 pub use commands::backup::*;
 pub use commands::breaks::*;
+pub use commands::chores::*;
 pub use commands::content_pack::*;
 pub use commands::hooks::*;
 pub use commands::plugins::*;
@@ -72,6 +74,7 @@ pub use types::{BreathPattern, BreathSounds, RoutineStep};
 
 use timers::BreakTimers;
 
+use chores::ChoresState as InternalChoresState;
 use pause::restore_pause_state;
 use screen_time::ScreenTimeState as InternalScreenTimeState;
 use timers::local_today_string;
@@ -161,6 +164,11 @@ pub struct Scheduler {
     pub pause_path: PathBuf,
     pub events_path: PathBuf,
     pub screen_time_path: PathBuf,
+    /// The day's chore "post-it" (`chores.json` beside `screen_time.json`):
+    /// a daily-reset list the user enters and the overlay surfaces as a
+    /// long-break nudge. Global, not per-profile — a chore list is about
+    /// the day, not the active settings profile.
+    pub chores_path: PathBuf,
     /// Installed content plugins + the merge-and-track record of what each
     /// added, persisted to `plugins.json` beside `settings.json`. See
     /// `docs/developer/plugin-api-design.md`.
@@ -172,6 +180,7 @@ pub struct Scheduler {
     pub timers: Arc<Mutex<BreakTimers>>,
     pub stats: Arc<Mutex<BreakStats>>,
     pub screen_time: Arc<Mutex<InternalScreenTimeState>>,
+    pub chores: Arc<Mutex<InternalChoresState>>,
     pub current_break: Arc<std::sync::Mutex<Option<InternalBreakEvent>>>,
     pub logger: Logger,
     pub profiles: Arc<Mutex<Vec<Profile>>>,
@@ -198,6 +207,7 @@ impl Scheduler {
         pause_path: PathBuf,
         events_path: PathBuf,
         screen_time_path: PathBuf,
+        chores_path: PathBuf,
     ) -> Self {
         let camera_active = Arc::new(AtomicBool::new(false));
         camera::spawn_monitor(camera_active.clone());
@@ -214,6 +224,8 @@ impl Scheduler {
             crate::screen_time_store::load(&screen_time_path),
             &today,
         );
+        let chores =
+            InternalChoresState::from_snapshot(crate::chores_store::load(&chores_path), &today);
         let plugins_path = plugins_path_for(&config_path);
         let plugins = crate::plugin_store::load(&plugins_path);
         Self {
@@ -227,12 +239,14 @@ impl Scheduler {
             pause_path,
             events_path,
             screen_time_path,
+            chores_path,
             plugins_path,
             plugins: Arc::new(Mutex::new(plugins)),
             plugin_dialog_busy: Arc::new(AtomicBool::new(false)),
             timers: Arc::new(Mutex::new(BreakTimers::new())),
             stats: Arc::new(Mutex::new(BreakStats::default())),
             screen_time: Arc::new(Mutex::new(screen_time)),
+            chores: Arc::new(Mutex::new(chores)),
             current_break: Arc::new(std::sync::Mutex::new(None)),
             logger,
             onboarding_completed: Arc::new(AtomicBool::new(profiles_file.onboarding_completed)),
@@ -241,6 +255,23 @@ impl Scheduler {
             hook_dialog_busy: Arc::new(AtomicBool::new(false)),
             import_in_progress: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Resolve the day's chore nudge for a firing break. Long breaks only —
+    /// micro is too short and bedtime is for winding down. Rolls the list
+    /// over at local midnight, advances the rotation cursor so consecutive
+    /// long breaks suggest different tasks, and persists whenever either
+    /// changed. Shared by the scheduled-fire and manual-trigger paths so the
+    /// rollover/rotation logic lives in exactly one place.
+    pub(crate) async fn resolve_chore_prompt(&self, kind: BreakKind) -> Option<String> {
+        let today = local_today_string();
+        let mut c = self.chores.lock().await;
+        let rolled = chores::rollover_if_new_day(&mut c, &today);
+        let picked = chores::prompt_for_break(kind, &mut c);
+        if rolled || picked.is_some() {
+            chores::persist_chores(&self.chores_path, &c);
+        }
+        picked
     }
 
     /// Launch the 1Hz scheduler loop on the Tauri async runtime. Safe
@@ -315,6 +346,7 @@ impl Scheduler {
             pause_path: dir.join("pause.json"),
             events_path: events_path.clone(),
             screen_time_path: dir.join("screen_time.json"),
+            chores_path: dir.join("chores.json"),
             plugins_path: dir.join("plugins.json"),
             plugins: Arc::new(Mutex::new(crate::plugins::PluginRegistry::default())),
             plugin_dialog_busy: Arc::new(AtomicBool::new(false)),
@@ -322,6 +354,10 @@ impl Scheduler {
             stats: Arc::new(Mutex::new(BreakStats::default())),
             screen_time: Arc::new(Mutex::new(InternalScreenTimeState::from_snapshot(
                 crate::screen_time_store::ScreenTimeSnapshot::default(),
+                &local_today_string(),
+            ))),
+            chores: Arc::new(Mutex::new(InternalChoresState::from_snapshot(
+                crate::chores_store::ChoresSnapshot::default(),
                 &local_today_string(),
             ))),
             current_break: Arc::new(std::sync::Mutex::new(None)),

@@ -215,6 +215,15 @@ export type ScreenTimeState = {
   last_reminder_epoch_secs: number | null;
 };
 
+// The day's chore "post-it" (`chores.json`). Mirrors the Rust
+// `ChoresSnapshot`; `rotation` is the backend's selection cursor and is
+// unused by the settings UI, which only edits `items`.
+export type ChoresState = {
+  date: string;
+  items: string[];
+  rotation: number;
+};
+
 export type PauseInfo = {
   paused: boolean;
   remaining_secs: number | null;

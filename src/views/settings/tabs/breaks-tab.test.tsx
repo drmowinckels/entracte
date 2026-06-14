@@ -198,6 +198,21 @@ describe("BreaksTab break ideas", () => {
     expect(screen.getByRole("heading", { name: "Bedtime" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Custom CSS" })).toBeTruthy();
   });
+
+  it("offers the Today's chores editor to free users and saves on blur", async () => {
+    renderTab(false);
+    expect(
+      screen.getByRole("heading", { name: "Today's chores" }),
+    ).toBeTruthy();
+    const textarea = screen.getByPlaceholderText(/Water the plants/);
+    fireEvent.change(textarea, { target: { value: "Mow the lawn" } });
+    fireEvent.blur(textarea);
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("set_chores", {
+        items: ["Mow the lawn"],
+      }),
+    );
+  });
 });
 
 /** The checkbox owned by the CheckboxRow whose label text matches. */

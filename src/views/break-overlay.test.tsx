@@ -130,6 +130,17 @@ describe("BreakOverlay assistive-tech exposure", () => {
     within(dialog).getByRole("button", { name: "Skip break" });
   });
 
+  it("advertises the Escape shortcut on the Skip button", async () => {
+    // Escape dismisses a skippable break; aria-keyshortcuts surfaces that
+    // to assistive tech on the equivalent control.
+    const { getByRole } = await startBreak(false);
+    expect(
+      getByRole("button", { name: "Skip break" }).getAttribute(
+        "aria-keyshortcuts",
+      ),
+    ).toBe("Escape");
+  });
+
   it("does not duplicate the start announcement in non-strict mode", async () => {
     // The dialog label + aria-describedby carry the start context once,
     // on focus. A separate live region would speak it a second time,
@@ -512,6 +523,33 @@ describe("BreakOverlay guided routines", () => {
     });
     expect(getByText("Look away")).toBeTruthy();
     expect(container.querySelector(".overlay-routine")).toBeNull();
+  });
+
+  it("nudges the day's chore in the hint space instead of a random tip", async () => {
+    const { container, getByTestId, queryByText } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+      hints: ["Look away"],
+      routine_steps: [],
+      chore_prompt: "Water the plants",
+    });
+    expect(getByTestId("overlay-chore").textContent).toBe(
+      "You've got ~10 min — knock out: Water the plants",
+    );
+    // The chore takes the hint slot — the random wellness tip is suppressed.
+    expect(queryByText("Look away")).toBeNull();
+    expect(container.querySelector(".overlay-chore")).not.toBeNull();
+  });
+
+  it("prefers a guided routine over the chore nudge", async () => {
+    const { queryByTestId, getByText } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+      chore_prompt: "Water the plants",
+      routine_steps: [{ text: "Reach overhead", seconds: 20 }],
+    });
+    expect(getByText("Reach overhead")).toBeTruthy();
+    expect(queryByTestId("overlay-chore")).toBeNull();
   });
 
   it("advances to the next step as the countdown crosses a step boundary", async () => {

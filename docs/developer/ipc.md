@@ -50,16 +50,18 @@ Renderer code calls these with `invoke<ReturnType>("command_name", { args })`. C
 
 ### Stats
 
-| Command             | Args                        | Returns              | Notes                                                |
-| ------------------- | --------------------------- | -------------------- | ---------------------------------------------------- |
-| `get_break_stats`   | –                           | `BreakStats`         | In-session counter; resets on app restart.           |
-| `reset_break_stats` | –                           | `()`                 | Emits `stats:changed`. Doesn't touch `events.jsonl`. |
-| `get_stats_digest`  | `range?: "week" \| "month"` | `Digest`             | Default `"week"`. Aggregates `events.jsonl`.         |
-| `export_stats_csv`  | –                           | `string`             | CSV body for the "Export CSV" download.              |
-| `clear_event_log`   | –                           | `()`                 | Deletes `events.jsonl`. Emits `stats:cleared`.       |
-| `get_idle_secs`     | –                           | `number`             | Seconds since last input.                            |
-| `get_screen_time`   | –                           | `ScreenTimeState`    | Auto-rolls over at local midnight.                   |
-| `get_current_break` | –                           | `BreakEvent \| null` | Lets the overlay rehydrate after a reload.           |
+| Command             | Args                        | Returns              | Notes                                                                         |
+| ------------------- | --------------------------- | -------------------- | ----------------------------------------------------------------------------- |
+| `get_break_stats`   | –                           | `BreakStats`         | In-session counter; resets on app restart.                                    |
+| `reset_break_stats` | –                           | `()`                 | Emits `stats:changed`. Doesn't touch `events.jsonl`.                          |
+| `get_stats_digest`  | `range?: "week" \| "month"` | `Digest`             | Default `"week"`. Aggregates `events.jsonl`.                                  |
+| `export_stats_csv`  | –                           | `string`             | CSV body for the "Export CSV" download.                                       |
+| `clear_event_log`   | –                           | `()`                 | Deletes `events.jsonl`. Emits `stats:cleared`.                                |
+| `get_idle_secs`     | –                           | `number`             | Seconds since last input.                                                     |
+| `get_screen_time`   | –                           | `ScreenTimeState`    | Auto-rolls over at local midnight.                                            |
+| `get_chores`        | –                           | `ChoresState`        | Today's chore list; auto-rolls over at local midnight.                        |
+| `set_chores`        | `items: string[]`           | `ChoresState`        | Replaces today's list (trimmed, de-blanked, capped). Returns the stored list. |
+| `get_current_break` | –                           | `BreakEvent \| null` | Lets the overlay rehydrate after a reload.                                    |
 
 ### Misc
 

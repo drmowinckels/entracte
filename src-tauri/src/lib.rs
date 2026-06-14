@@ -1,5 +1,6 @@
 mod audio;
 mod camera;
+mod chores_store;
 pub mod cli;
 mod config;
 mod diagnostics;
@@ -170,6 +171,8 @@ pub fn run() {
             scheduler::clear_event_log,
             scheduler::get_idle_secs,
             scheduler::get_screen_time,
+            scheduler::get_chores,
+            scheduler::set_chores,
             scheduler::list_profiles,
             scheduler::get_active_profile,
             scheduler::set_active_profile,
@@ -229,6 +232,7 @@ pub fn run() {
             let events_path = data_dir.join("events.jsonl");
             let _ = secure_io::tighten_existing_file(&events_path);
             let screen_time_path = data_dir.join("screen_time.json");
+            let chores_path = data_dir.join("chores.json");
             // `stats::append_one` only sets mode at file creation, so
             // a file recreated through migration / `cp` / restore
             // would otherwise keep the process umask until next
@@ -240,7 +244,13 @@ pub fn run() {
                 std::time::Duration::from_secs(60),
             );
 
-            let scheduler = Scheduler::new(config_path, pause_path, events_path, screen_time_path);
+            let scheduler = Scheduler::new(
+                config_path,
+                pause_path,
+                events_path,
+                screen_time_path,
+                chores_path,
+            );
             // Snapshot the loaded settings before `spawn` so the run loop
             // can't be holding the lock — used to register global hotkeys
             // once the app is up.

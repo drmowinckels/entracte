@@ -292,6 +292,7 @@ mod tests {
 
     use crate::config::{Profile, DEFAULT_PROFILE_NAME};
     use crate::scheduler::break_stats::BreakStats;
+    use crate::scheduler::chores::ChoresState;
     use crate::scheduler::screen_time::ScreenTimeState;
     use crate::scheduler::settings::Settings;
     use crate::scheduler::timers::BreakTimers;
@@ -310,6 +311,7 @@ mod tests {
         let pause_path = dir.path().join("pause.json");
         let events_path = dir.path().join("events.jsonl");
         let screen_time_path = dir.path().join("screen_time.json");
+        let chores_path = dir.path().join("chores.json");
         let logger = Logger::spawn(events_path.clone());
         let sched = Scheduler {
             settings: Arc::new(TokioMutex::new(settings.clone())),
@@ -322,6 +324,7 @@ mod tests {
             pause_path,
             events_path,
             screen_time_path,
+            chores_path,
             plugins_path: dir.path().join("plugins.json"),
             plugins: Arc::new(TokioMutex::new(crate::plugins::PluginRegistry::default())),
             plugin_dialog_busy: Arc::new(AtomicBool::new(false)),
@@ -331,6 +334,7 @@ mod tests {
                 ScreenTimeSnapshot::default(),
                 "1970-01-01",
             ))),
+            chores: Arc::new(TokioMutex::new(ChoresState::default())),
             current_break: Arc::new(std::sync::Mutex::new(None)),
             logger,
             profiles: Arc::new(TokioMutex::new(vec![Profile {
@@ -402,6 +406,7 @@ mod tests {
             routine_pacing: None,
             routine_max_step_secs: None,
             routine_breath: None,
+            chore_prompt: None,
         });
         let (snap, _) = sched.tray_countdown_snapshot().await;
         assert_eq!(snap, TrayCountdownSnapshot::OnBreak);

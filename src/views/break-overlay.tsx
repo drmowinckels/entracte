@@ -19,6 +19,7 @@ import { useOverlayCssVars } from "./break-overlay/hooks/use-overlay-css-vars";
 import { useFocusTrap } from "./break-overlay/hooks/use-focus-trap";
 import { useMilestoneAnnouncer } from "./break-overlay/hooks/use-milestone-announcer";
 import { useMountFocus } from "./break-overlay/hooks/use-mount-focus";
+import { choreNudge } from "./break-overlay/chore-prompt";
 import { derivePostpone } from "./break-overlay/postpone";
 import { routineProgress } from "./break-overlay/routine";
 import {
@@ -157,6 +158,12 @@ export default function BreakOverlay() {
   const seconds = remaining % 60;
   const label = labelFor(active.kind);
   const hintText = active.hints[hintIndex] ?? "";
+  // A long break with chores entered today nudges one specific task in the
+  // wellness-hint space, in place of a random tip. Backend only sends
+  // `chore_prompt` for long breaks with a non-empty list.
+  const chorePrompt = active.chore_prompt
+    ? choreNudge(active.chore_prompt, active.duration_secs)
+    : "";
   const routineText = routine ? routineSteps[routine.index].text : "";
   // A plugin-supplied image for the current step, if any. The backend sends an
   // absolute path; convertFileSrc turns it into an `asset:` URL the webview can
@@ -343,6 +350,20 @@ export default function BreakOverlay() {
               {routine.stepRemaining > 0 ? ` · ${routine.stepRemaining}s` : ""}
             </p>
           </div>
+        ) : chorePrompt ? (
+          <p
+            className="overlay-hint overlay-chore"
+            role="note"
+            data-testid="overlay-chore"
+            // Deliberately focusable: the overlay traps focus, so keyboard
+            // and screen-reader users can only reach the chore nudge if it
+            // sits in the tab order.
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+            aria-label={`Chore for this break: ${active.chore_prompt}`}
+          >
+            {chorePrompt}
+          </p>
         ) : (
           appearance.show_hint &&
           hintText && (
@@ -390,6 +411,9 @@ export default function BreakOverlay() {
               className="overlay-button ghost"
               onClick={onSkip}
               aria-label="Skip break"
+              // Escape dismisses a skippable break (use-escape-to-dismiss),
+              // so surface that to assistive tech on the equivalent control.
+              aria-keyshortcuts="Escape"
             >
               Skip
             </button>
