@@ -1,6 +1,5 @@
 use chrono::Local;
 use tauri::{AppHandle, Emitter, Runtime};
-use user_idle::UserIdle;
 
 use crate::stats;
 
@@ -82,9 +81,7 @@ pub async fn export_stats_csv(scheduler: tauri::State<'_, Scheduler>) -> Result<
 /// the countdown is paused.
 #[tauri::command]
 pub fn get_idle_secs() -> Result<u64, String> {
-    UserIdle::get_time()
-        .map(|i| i.as_seconds())
-        .map_err(|e| e.to_string())
+    super::super::idle::idle_secs()
 }
 
 /// Today's accumulated screen time + the last-reminder marker.
