@@ -27,9 +27,25 @@ use user_idle::UserIdle;
 /// always logged, and the non-GNOME Wayland case (e.g. sway, where neither
 /// source works) is the one where the error matters.
 pub fn idle_secs() -> Result<u64, String> {
-    match UserIdle::get_time() {
-        Ok(idle) => Ok(idle.as_seconds()),
-        Err(primary) => fallback_idle_secs().ok_or_else(|| primary.to_string()),
+    let primary = UserIdle::get_time()
+        .map(|idle| idle.as_seconds())
+        .map_err(|e| e.to_string());
+    combine_idle(primary, fallback_idle_secs)
+}
+
+/// Resolve the primary reading against the platform fallback: the primary
+/// value wins; on primary failure the injected `fallback` is consulted and,
+/// if it too has nothing, the primary error is surfaced. The fallback is a
+/// closure so this decision is pure and unit-testable on every OS without
+/// touching a windowing system — only the two FFI sources it's wired to in
+/// [`idle_secs`] stay platform-bound.
+fn combine_idle(
+    primary: Result<u64, String>,
+    fallback: impl FnOnce() -> Option<u64>,
+) -> Result<u64, String> {
+    match primary {
+        Ok(secs) => Ok(secs),
+        Err(primary_err) => fallback().ok_or(primary_err),
     }
 }
 
@@ -134,10 +150,25 @@ mod tests {
     }
 
     #[test]
-    fn idle_secs_does_not_panic_on_host() {
-        // Smoke: exercise the primary probe + (on Linux) the gdbus fallback
-        // FFI path without asserting a value — CI hosts have no GNOME shell,
-        // so this returns either a real reading or an error string.
-        let _ = idle_secs();
+    fn combine_idle_uses_primary_and_skips_fallback_on_success() {
+        let mut fallback_called = false;
+        let result = combine_idle(Ok(42), || {
+            fallback_called = true;
+            Some(7)
+        });
+        assert_eq!(result, Ok(42));
+        assert!(!fallback_called, "fallback must not run when primary works");
+    }
+
+    #[test]
+    fn combine_idle_falls_back_when_primary_fails() {
+        let result = combine_idle(Err("Status not OK".into()), || Some(7));
+        assert_eq!(result, Ok(7));
+    }
+
+    #[test]
+    fn combine_idle_surfaces_primary_error_when_fallback_empty() {
+        let result = combine_idle(Err("Status not OK".into()), || None);
+        assert_eq!(result, Err("Status not OK".to_string()));
     }
 }
