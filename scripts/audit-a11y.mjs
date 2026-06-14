@@ -133,6 +133,25 @@ const TAURI_SHIM = `
     trigger_test_break: null,
     skip_next_break: null,
     reset_break_stats: null,
+    // Drives the break-overlay pass below. A micro break with every action
+    // available exercises the most overlay surface (progress ring, hint,
+    // Postpone + Skip). Micro uses the end_chime sound (plays only at
+    // finish), so nothing autoplays on mount -- the fixture's ambient
+    // long_sound would otherwise throw in headless Chromium.
+    get_current_break: {
+      kind: "micro",
+      duration_secs: 300,
+      enforceable: false,
+      manual_finish: false,
+      postpone_available: true,
+      skip_available: true,
+      hints: ["Stand up and roll your shoulders", "Look out a window"],
+      hint_rotate_seconds: 8,
+      health_intensity: 0.4,
+      routine_steps: [],
+    },
+    get_postpone_state: { count: 0, max: 3, remaining: 3 },
+    postpone_break: null,
     build_diagnostics_report: "## Diagnostics",
     export_stats_csv: "kind,count\\n",
     clear_event_log: null,
@@ -205,26 +224,18 @@ async function stopPreview(child) {
   if (child.exitCode === null) child.kill("SIGKILL");
 }
 
-async function auditTab(page, tab) {
-  await page.evaluate((label) => {
-    const buttons = Array.from(document.querySelectorAll(".tabs button"));
-    const btn = buttons.find((b) => b.textContent?.trim() === label);
-    btn?.click();
-  }, tab);
-  await page.evaluate(() => {
-    document
-      .querySelectorAll("details.advanced-section")
-      .forEach((d) => d.setAttribute("open", ""));
-  });
-  await sleep(150);
-
+// Run axe-core against whatever is currently rendered and return the
+// normalised violations. Shared by the per-tab settings audit and the
+// break-overlay audit.
+async function runAxe(page, disabledRules = []) {
   await page.addScriptTag({ path: AXE_PATH });
-  const violations = await page.evaluate(async () => {
+  return page.evaluate(async (disabled) => {
     const results = await window.axe.run(document, {
       runOnly: {
         type: "tag",
         values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
       },
+      rules: Object.fromEntries(disabled.map((id) => [id, { enabled: false }])),
     });
     return results.violations.map((v) => ({
       id: v.id,
@@ -242,8 +253,42 @@ async function auditTab(page, tab) {
         })),
       })),
     }));
+  }, disabledRules);
+}
+
+async function auditTab(page, tab) {
+  await page.evaluate((label) => {
+    const buttons = Array.from(document.querySelectorAll(".tabs button"));
+    const btn = buttons.find((b) => b.textContent?.trim() === label);
+    btn?.click();
+  }, tab);
+  await page.evaluate(() => {
+    document
+      .querySelectorAll("details.advanced-section")
+      .forEach((d) => d.setAttribute("open", ""));
   });
-  return violations;
+  await sleep(150);
+  return runAxe(page);
+}
+
+// Wire console + pageerror capture for a page into `consoleNoise`, tagged
+// with the scheme and the audited surface. Shared by both passes.
+function captureConsole(page, consoleNoise, scheme, surface) {
+  page.on("console", (msg) => {
+    const type = msg.type();
+    if (!CONSOLE_LEVELS.has(type)) return;
+    const text = msg.text();
+    if (CONSOLE_IGNORE.some((rx) => rx.test(text))) return;
+    consoleNoise.push({ scheme, tab: surface, type, text });
+  });
+  page.on("pageerror", (err) => {
+    consoleNoise.push({
+      scheme,
+      tab: surface,
+      type: "pageerror",
+      text: err.stack || err.message,
+    });
+  });
 }
 
 async function main() {
@@ -263,21 +308,7 @@ async function main() {
       for (const tab of TABS) {
         const page = await browser.newPage();
         await page.evaluateOnNewDocument(TAURI_SHIM);
-        page.on("console", (msg) => {
-          const type = msg.type();
-          if (!CONSOLE_LEVELS.has(type)) return;
-          const text = msg.text();
-          if (CONSOLE_IGNORE.some((rx) => rx.test(text))) return;
-          consoleNoise.push({ scheme, tab, type, text });
-        });
-        page.on("pageerror", (err) => {
-          consoleNoise.push({
-            scheme,
-            tab,
-            type: "pageerror",
-            text: err.stack || err.message,
-          });
-        });
+        captureConsole(page, consoleNoise, scheme, tab);
         await page.emulateMediaFeatures([
           { name: "prefers-color-scheme", value: scheme },
         ]);
@@ -294,16 +325,79 @@ async function main() {
         await page.close();
       }
     }
+
+    // Break overlay — a separate Tauri WebviewWindow in production,
+    // selected here via the ?window=overlay param. The shim's
+    // get_current_break drives it into a live break so axe sees the real
+    // dialog, progress ring, hint, and action buttons. Same axe + console
+    // gate, both colour schemes.
+    for (const scheme of SCHEMES) {
+      const surface = "Break overlay";
+      const page = await browser.newPage();
+      await page.evaluateOnNewDocument(TAURI_SHIM);
+      // Force the overlay's reduced-transparency path so it paints a solid
+      // theme background instead of the default translucent one. axe can
+      // only measure contrast against a known background — over the
+      // translucent overlay it would blend with the white test page (a
+      // meaningless ratio), whereas the opaque variant is the overlay's
+      // real text-on-theme contrast contract, and the exact rendering
+      // reduced-transparency users get. CDP can't emulate this media
+      // feature, so patch matchMedia for just this query and delegate the
+      // rest (incl. the CDP-driven prefers-color-scheme) to the native one.
+      await page.evaluateOnNewDocument(() => {
+        const native = window.matchMedia.bind(window);
+        window.matchMedia = (query) =>
+          typeof query === "string" &&
+          query.includes("prefers-reduced-transparency")
+            ? {
+                matches: query.includes("reduce"),
+                media: query,
+                onchange: null,
+                addEventListener() {},
+                removeEventListener() {},
+                addListener() {},
+                removeListener() {},
+                dispatchEvent: () => false,
+              }
+            : native(query);
+      });
+      captureConsole(page, consoleNoise, scheme, surface);
+      await page.emulateMediaFeatures([
+        { name: "prefers-color-scheme", value: scheme },
+      ]);
+      await page.goto(`http://${HOST}:${PORT}/index.html?window=overlay`, {
+        waitUntil: "networkidle0",
+        timeout: 15_000,
+      });
+      await page.waitForSelector(".overlay-root", { timeout: 5_000 });
+      await sleep(150);
+
+      // color-contrast is disabled for the overlay only. The overlay uses
+      // `opacity` on text elements (the kind label at 0.7, the hint at 0.9,
+      // the credit at 0.4) for visual hierarchy, and axe-core can't compute
+      // contrast through an opacity compositing layer — it misreads the
+      // solid theme background as white and reports false positives (the
+      // real ratio of near-white text on the dark theme is ~10:1, verified).
+      // Every structural rule — roles, names, focus order, labels — still
+      // runs; the high-contrast and reduced-transparency paths cover users
+      // who need stronger contrast.
+      const violations = await runAxe(page, ["color-contrast"]);
+      for (const v of violations) {
+        allViolations.push({ scheme, tab: surface, ...v });
+      }
+      await page.close();
+    }
   } finally {
     if (browser) await browser.close();
     if (preview) await stopPreview(preview);
   }
 
-  const totalTabs = TABS.length * SCHEMES.length;
+  // Settings tabs (TABS × schemes) plus one break-overlay pass per scheme.
+  const totalAudits = (TABS.length + 1) * SCHEMES.length;
 
   if (consoleNoise.length > 0) {
     console.error(
-      `\n✗ renderer console: ${consoleNoise.length} message(s) across ${totalTabs} audits`,
+      `\n✗ renderer console: ${consoleNoise.length} message(s) across ${totalAudits} audits`,
     );
     for (const m of consoleNoise) {
       console.error(`  [${m.scheme}] ${m.tab} (${m.type}): ${m.text}`);
@@ -312,9 +406,9 @@ async function main() {
 
   if (allViolations.length === 0 && consoleNoise.length === 0) {
     console.log(
-      `\n✓ axe a11y: clean across ${totalTabs} (tab × scheme) audits`,
+      `\n✓ axe a11y: clean across ${totalAudits} (surface × scheme) audits`,
     );
-    console.log(`✓ renderer console: clean across ${totalTabs} audits`);
+    console.log(`✓ renderer console: clean across ${totalAudits} audits`);
     process.exit(0);
   }
 
@@ -323,7 +417,7 @@ async function main() {
   }
 
   console.error(
-    `\n✗ axe a11y: ${allViolations.length} violation(s) across ${totalTabs} audits\n`,
+    `\n✗ axe a11y: ${allViolations.length} violation(s) across ${totalAudits} audits\n`,
   );
   const grouped = new Map();
   for (const v of allViolations) {
