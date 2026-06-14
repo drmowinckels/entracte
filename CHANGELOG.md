@@ -19,7 +19,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Security
 
-- **Upgraded the frontend build toolchain to Vite 8, removing the vulnerable esbuild.** The nightly audit flagged GHSA-gv7w-rqvm-qjhr (HIGH) and GHSA-g7r4-m6w7-qqqr (LOW) in esbuild, which Entracte pulled in transitively through Vite 7. Both are dev-server / build-time issues with no exposure in the shipped app, but the fix needed a major Vite bump. Vite 8 (with `@vitejs/plugin-react` 6) switches the bundler to Rolldown and drops esbuild from the dependency tree entirely, so `npm audit` is clean again. No user-facing change: the production bundle, tests, accessibility audit, and bundle-size budgets all pass unchanged. ([#188](https://github.com/drmowinckels/entracte/issues/188))
+- **Upgraded the frontend build toolchain to Vite 8, removing the vulnerable esbuild.** The nightly audit flagged a HIGH-severity esbuild advisory (and a related low-severity one), which Entracte pulled in transitively through Vite 7. Both are dev-server / build-time issues with no exposure in the shipped app, but the fix needed a major Vite bump. Vite 8 (with `@vitejs/plugin-react` 6) switches the bundler to Rolldown and drops esbuild from the dependency tree entirely, so `npm audit` is clean again. No user-facing change: the production bundle, tests, accessibility audit, and bundle-size budgets all pass unchanged. ([#188](https://github.com/drmowinckels/entracte/issues/188))
 
 ## [0.0.6] — 2026-06-06
 
