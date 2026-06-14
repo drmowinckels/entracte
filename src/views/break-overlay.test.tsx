@@ -130,6 +130,17 @@ describe("BreakOverlay assistive-tech exposure", () => {
     within(dialog).getByRole("button", { name: "Skip break" });
   });
 
+  it("advertises the Escape shortcut on the Skip button", async () => {
+    // Escape dismisses a skippable break; aria-keyshortcuts surfaces that
+    // to assistive tech on the equivalent control.
+    const { getByRole } = await startBreak(false);
+    expect(
+      getByRole("button", { name: "Skip break" }).getAttribute(
+        "aria-keyshortcuts",
+      ),
+    ).toBe("Escape");
+  });
+
   it("does not duplicate the start announcement in non-strict mode", async () => {
     // The dialog label + aria-describedby carry the start context once,
     // on focus. A separate live region would speak it a second time,
