@@ -240,17 +240,19 @@ When a long break is enforceable it intentionally renders no Skip control. In th
 
 ### Audit infrastructure
 
-`npm run audit:a11y` boots a Vite preview, drives Chromium with puppeteer, and runs axe-core against every tab × light/dark scheme. The same script also fails on any unexpected `console.error` in the renderer. Add new violations to the explicit allowlist only when you've ruled out a real bug — the default is to fix.
+`npm run audit:a11y` boots a Vite preview, drives Chromium with puppeteer, and runs axe-core against every Settings tab × light/dark scheme, plus the break overlay (`?window=overlay`) in both schemes. The same script also fails on any unexpected `console.error` in the renderer. Add new violations to the explicit allowlist only when you've ruled out a real bug — the default is to fix.
+
+The overlay pass forces the reduced-transparency rendering (patching `matchMedia` for that one query, since CDP can't emulate it) so the overlay paints a solid theme background axe can measure, and disables the `color-contrast` rule for that surface only: the overlay uses `opacity` on text for visual hierarchy, which axe can't compute contrast through (it misreads the solid background as white). Every structural rule still runs.
 
 ## Testing layout
 
-| Where                                          | Coverage                                                      |
-| ---------------------------------------------- | ------------------------------------------------------------- |
-| `src-tauri/src/*/mod.rs` (and submodule tests) | Pure-function unit tests beside the code                      |
-| `src/lib/*.test.ts`                            | TS lib helpers — color, time, clock-list, etc.                |
-| `src/lib/a11y.test.ts`                         | Screen-reader text generation                                 |
-| `scripts/audit-a11y.mjs`                       | Headless Vite preview + axe-core, every tab × scheme          |
-| `src-tauri/Cargo.toml` lib tests               | Cargo runs them; `cargo test --lib` skips integration targets |
+| Where                                          | Coverage                                                       |
+| ---------------------------------------------- | -------------------------------------------------------------- |
+| `src-tauri/src/*/mod.rs` (and submodule tests) | Pure-function unit tests beside the code                       |
+| `src/lib/*.test.ts`                            | TS lib helpers — color, time, clock-list, etc.                 |
+| `src/lib/a11y.test.ts`                         | Screen-reader text generation                                  |
+| `scripts/audit-a11y.mjs`                       | Headless Vite preview + axe-core, every tab × scheme + overlay |
+| `src-tauri/Cargo.toml` lib tests               | Cargo runs them; `cargo test --lib` skips integration targets  |
 
 What's _not_ covered yet:
 
