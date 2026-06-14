@@ -92,6 +92,7 @@ fn startup_banner(
     webview: &str,
     monitor_count: usize,
     idle: &Result<u64, String>,
+    wlfix: &str,
 ) -> String {
     let idle = match idle {
         Ok(secs) => format!("{secs}s"),
@@ -99,7 +100,7 @@ fn startup_banner(
     };
     format!(
         "startup: Entracte {version} | os={os} | display={display} | webview={webview} \
-         | monitors={monitor_count} | idle={idle}"
+         | monitors={monitor_count} | idle={idle} | wlfix={wlfix}"
     )
 }
 
@@ -114,6 +115,11 @@ pub fn log_startup_banner<R: Runtime>(app: &AppHandle<R>) {
         Ok(i) => Ok(i.as_seconds()),
         Err(e) => Err(format!("{e}")),
     };
+    let wlfix = if cfg!(target_os = "linux") {
+        crate::window::wayland_fix_strategy().as_str()
+    } else {
+        "n/a"
+    };
     log::info!(
         "{}",
         startup_banner(
@@ -123,6 +129,7 @@ pub fn log_startup_banner<R: Runtime>(app: &AppHandle<R>) {
             &webview,
             monitor_count,
             &idle,
+            wlfix,
         )
     );
 }
@@ -702,23 +709,34 @@ mod tests {
 
     #[test]
     fn startup_banner_is_a_compact_one_liner_with_idle_state() {
-        let ok = startup_banner("0.0.1", "macos", "Cocoa (native)", "WKWebView", 2, &Ok(3));
+        let ok = startup_banner(
+            "0.0.1",
+            "macos",
+            "Cocoa (native)",
+            "WKWebView",
+            2,
+            &Ok(3),
+            "n/a",
+        );
         assert!(ok.starts_with("startup: Entracte 0.0.1"));
         assert!(ok.contains("os=macos"));
         assert!(ok.contains("display=Cocoa (native)"));
         assert!(ok.contains("monitors=2"));
         assert!(ok.contains("idle=3s"));
+        assert!(ok.contains("wlfix=n/a"));
         assert!(!ok.contains('\n'), "banner must be a single line");
 
         let bad = startup_banner(
             "0.0.1",
             "linux",
-            "X11",
+            "Wayland",
             "WebKitGTK",
             1,
-            &Err("MIT-SCREEN-SAVER missing".into()),
+            &Err("Status not OK".into()),
+            "maximize",
         );
-        assert!(bad.contains("idle=unavailable (MIT-SCREEN-SAVER missing)"));
+        assert!(bad.contains("idle=unavailable (Status not OK)"));
+        assert!(bad.contains("wlfix=maximize"));
     }
 
     #[test]
