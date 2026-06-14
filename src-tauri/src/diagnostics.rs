@@ -110,10 +110,7 @@ pub fn log_startup_banner<R: Runtime>(app: &AppHandle<R>) {
     let display = display_server(os, &EnvFacts::from_env());
     let webview = tauri::webview_version().unwrap_or_else(|_| "unknown".to_string());
     let monitor_count = gather_monitors(app).len();
-    let idle = match user_idle::UserIdle::get_time() {
-        Ok(i) => Ok(i.as_seconds()),
-        Err(e) => Err(format!("{e}")),
-    };
+    let idle = crate::scheduler::idle::idle_secs();
     log::info!(
         "{}",
         startup_banner(
@@ -479,10 +476,7 @@ pub async fn build_diagnostics_report<R: Runtime>(
         app.autolaunch().is_enabled().ok()
     };
     let live = LiveReadings {
-        idle_probe: match user_idle::UserIdle::get_time() {
-            Ok(i) => Ok(i.as_seconds()),
-            Err(e) => Err(format!("{e}")),
-        },
+        idle_probe: crate::scheduler::idle::idle_secs(),
         dnd_active: crate::dnd::is_active(),
         screen_locked: crate::scheduler::session_lock::screen_locked(),
         notification_permission,

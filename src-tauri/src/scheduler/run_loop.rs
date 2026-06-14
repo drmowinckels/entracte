@@ -4,13 +4,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::time::sleep;
-use user_idle::UserIdle;
 
 use crate::dnd;
 use crate::hooks::{self, HookContext, HookEvent};
 use crate::proc_match::process_match_lower;
 use crate::stats::{EventPayload, GuardReason, Logger};
 
+use super::idle;
 use super::overlay::deliver_break;
 use super::pause::{persist_pause, PauseState};
 use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind_screen_time};
@@ -135,16 +135,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         crate::media::set_enabled(s.pause_media_during_breaks);
         let now_min = current_minutes();
 
-        // `UserIdle::get_time()` round-trips to the windowing system on X11 /
-        // Wayland and isn't free on macOS either, so fetch once per tick and
-        // reuse for screen-time, idle-suppression, and the typing-defer check.
-        // The closure is the only platform-bound part; `resolve_idle_secs`
-        // holds the (unit-tested) back-off / fallback decision.
-        let idle_reading = resolve_idle_secs(&mut idle_backoff, || {
-            UserIdle::get_time()
-                .map(|i| i.as_seconds())
-                .map_err(|e| e.to_string())
-        });
+        // Probing idle round-trips to the windowing system (and, on
+        // GNOME/Wayland, to Mutter over the session bus) and isn't free on
+        // macOS either, so fetch once per tick and reuse for screen-time,
+        // idle-suppression, and the typing-defer check. `idle::idle_secs`
+        // is the only platform-bound part; `resolve_idle_secs` holds the
+        // (unit-tested) back-off decision.
+        let idle_reading = resolve_idle_secs(&mut idle_backoff, idle::idle_secs);
         // Unknown idle maps to 0 ("active") for screen-time and
         // suppression; the typing-defer path below keeps the `Option` so
         // it can tell "active" apart from "couldn't measure" (#67).
@@ -997,8 +994,9 @@ fn warn_user_idle_failure(err: &str, backoff_secs: u64) {
         USER_IDLE_WARN_INTERVAL_SECS,
     ) {
         log::warn!(
-            "scheduler: UserIdle::get_time failed (treating user as active; \
-             backing off probe for {backoff_secs}s): {err}"
+            "scheduler: idle probe failed (no windowing-system counter and \
+             no Mutter fallback; treating user as active; backing off probe \
+             for {backoff_secs}s): {err}"
         );
     }
 }
