@@ -19,6 +19,7 @@ import {
 } from "../constants";
 import type { UseSettings } from "../hooks/use-settings";
 import { useRoutines } from "../hooks/use-routines";
+import { useChores } from "../hooks/use-chores";
 import type {
   MonitorPlacement,
   SchedulerSettings,
@@ -39,6 +40,11 @@ export function BreaksTab({
 }) {
   const isSupporter = supporter.is_supporter;
   const { routines, reload: reloadRoutines } = useRoutines();
+  const { chores, save: saveChores } = useChores();
+  const [choreLines, setChoreLines] = useLocalDraft(
+    () => listToLines(chores?.items ?? []),
+    [chores?.items],
+  );
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),
@@ -511,6 +517,23 @@ export function BreaksTab({
           onChange={(v) => update("allow_plugin_sounds", v)}
           tip="When on (default), routines from plugins may play their own short sound cues — a breathing in/out tone, or a chime between exercises. Cues always follow your overall sound volume; turn this off to silence them."
         />
+        <h3>Today's chores</h3>
+        <p className="placeholder">
+          Jot down chores you'd like done today — one per line. During a long
+          break, Entracte nudges you to knock one out. The list clears each
+          morning.
+        </p>
+        <label className="row stacked">
+          <span>One chore per line</span>
+          <textarea
+            className="textarea"
+            rows={6}
+            value={choreLines}
+            placeholder={"Water the plants\nEmpty the dishwasher\nReply to Sam"}
+            onChange={(e) => setChoreLines(e.target.value)}
+            onBlur={() => saveChores(linesToList(choreLines))}
+          />
+        </label>
         {isSupporter && (
           <>
             <label className="row stacked">

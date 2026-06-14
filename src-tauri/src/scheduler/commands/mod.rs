@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod breaks;
+pub mod chores;
 pub mod content_pack;
 pub mod hooks;
 pub mod plugins;

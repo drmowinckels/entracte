@@ -138,6 +138,10 @@ pub struct BreathPattern {
 /// `routine_max_step_secs` caps individual step durations when
 /// `routine_pacing` is `fill` and scaling would exceed this limit (the
 /// overlay falls back to `loop` behaviour for the remainder in that case).
+/// `chore_prompt` is the day's user-entered chore the overlay nudges during
+/// a long break (`None` for micro / bedtime, and for long breaks when the
+/// list is empty); it occupies the wellness-hint space in place of a random
+/// tip.
 #[derive(Debug, Clone, Serialize)]
 pub struct BreakEvent {
     pub kind: BreakKind,
@@ -157,6 +161,8 @@ pub struct BreakEvent {
     /// step text. `None` for non-breathing routines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routine_breath: Option<BreathPattern>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chore_prompt: Option<String>,
 }
 
 /// The most recently skipped or postponed break, or `None` if none yet

@@ -65,6 +65,10 @@ export type BreakEvent = {
   // The resolved routine's breathing pattern, if it carries one. When set,
   // the overlay animates the ring and shows phase labels instead of steps.
   routine_breath?: BreathPattern;
+  // The day's chore the overlay nudges during a long break, occupying the
+  // wellness-hint space in place of a random tip. Absent for micro / bedtime
+  // breaks and for long breaks when the user's list is empty.
+  chore_prompt?: string;
 };
 
 export type OverlaySettings = {

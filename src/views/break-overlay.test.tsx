@@ -514,6 +514,33 @@ describe("BreakOverlay guided routines", () => {
     expect(container.querySelector(".overlay-routine")).toBeNull();
   });
 
+  it("nudges the day's chore in the hint space instead of a random tip", async () => {
+    const { container, getByTestId, queryByText } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+      hints: ["Look away"],
+      routine_steps: [],
+      chore_prompt: "Water the plants",
+    });
+    expect(getByTestId("overlay-chore").textContent).toBe(
+      "You've got ~10 min — knock out: Water the plants",
+    );
+    // The chore takes the hint slot — the random wellness tip is suppressed.
+    expect(queryByText("Look away")).toBeNull();
+    expect(container.querySelector(".overlay-chore")).not.toBeNull();
+  });
+
+  it("prefers a guided routine over the chore nudge", async () => {
+    const { queryByTestId, getByText } = await startBreak(false, {
+      kind: "long",
+      duration_secs: 600,
+      chore_prompt: "Water the plants",
+      routine_steps: [{ text: "Reach overhead", seconds: 20 }],
+    });
+    expect(getByText("Reach overhead")).toBeTruthy();
+    expect(queryByTestId("overlay-chore")).toBeNull();
+  });
+
   it("advances to the next step as the countdown crosses a step boundary", async () => {
     // Drives the real countdown with fake timers so the wiring from
     // `remaining` → `routineProgress` → step label is exercised (the pure

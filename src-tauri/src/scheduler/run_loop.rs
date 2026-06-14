@@ -509,7 +509,8 @@ async fn deliver_scheduled_break<R: Runtime>(
     kind: BreakKind,
 ) -> BreakDelivery {
     let intensity = sched.stats.lock().await.intensity();
-    let event = scheduled_break_event(kind, s, intensity);
+    let chore_prompt = sched.resolve_chore_prompt(kind).await;
+    let event = scheduled_break_event(kind, s, intensity, chore_prompt);
     let duration_secs = event.duration_secs;
     let enforceable = event.enforceable;
     let delivery = delivery_for(kind, s);
@@ -587,6 +588,7 @@ fn sleep_break_event(s: &Settings, intensity: f32) -> BreakEvent {
         routine_pacing: None,
         routine_max_step_secs: None,
         routine_breath: None,
+        chore_prompt: None,
     }
 }
 
@@ -596,7 +598,12 @@ fn sleep_break_event(s: &Settings, intensity: f32) -> BreakEvent {
 /// — is unit-testable without a windowing runtime. `intensity` is the
 /// live value from the stats lock; the helper applies the
 /// `break_health_enabled` gate. Sleep never reaches here (bedtime path).
-fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> BreakEvent {
+fn scheduled_break_event(
+    kind: BreakKind,
+    s: &Settings,
+    intensity: f32,
+    chore_prompt: Option<String>,
+) -> BreakEvent {
     // Sleep is delivered through the bedtime path, never here; enforce that
     // invariant with a panic rather than silently firing the bedtime fields.
     assert!(
@@ -624,6 +631,7 @@ fn scheduled_break_event(kind: BreakKind, s: &Settings, intensity: f32) -> Break
         routine_pacing: resolved.pacing,
         routine_max_step_secs: resolved.max_step_secs,
         routine_breath: resolved.breath,
+        chore_prompt,
     }
 }
 
@@ -1187,7 +1195,12 @@ mod tests {
     fn scheduled_break_event_long_draws_long_fields() {
         let mut s = Settings::default();
         s.rebuild_derived();
-        let e = scheduled_break_event(BreakKind::Long, &s, 0.5);
+        let e = scheduled_break_event(
+            BreakKind::Long,
+            &s,
+            0.5,
+            Some("Water the plants".to_string()),
+        );
         assert_eq!(e.kind, BreakKind::Long);
         assert_eq!(e.duration_secs, s.long_duration_secs);
         assert_eq!(e.manual_finish, s.long_manual_finish);
@@ -1195,18 +1208,22 @@ mod tests {
         assert!(!e.hints.is_empty(), "default long hints are non-empty");
         // break_health is enabled by default → live intensity passes through.
         assert_eq!(e.health_intensity, 0.5);
+        // The resolved chore nudge is carried straight onto the event.
+        assert_eq!(e.chore_prompt.as_deref(), Some("Water the plants"));
     }
 
     #[test]
     fn scheduled_break_event_micro_draws_micro_fields() {
         let mut s = Settings::default();
         s.rebuild_derived();
-        let e = scheduled_break_event(BreakKind::Micro, &s, 0.5);
+        let e = scheduled_break_event(BreakKind::Micro, &s, 0.5, None);
         assert_eq!(e.kind, BreakKind::Micro);
         assert_eq!(e.duration_secs, s.micro_duration_secs);
         assert_eq!(e.manual_finish, s.micro_manual_finish);
         assert_eq!(e.hints, s.effective_hints(BreakKind::Micro));
         assert!(!e.hints.is_empty(), "default micro hints are non-empty");
+        // Micro breaks never carry a chore nudge.
+        assert_eq!(e.chore_prompt, None);
     }
 
     #[test]
@@ -1215,7 +1232,7 @@ mod tests {
         // Sleep is delivered through the bedtime path, never this helper;
         // the invariant is enforced with a panic and asserted here.
         let s = Settings::default();
-        let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0);
+        let _ = scheduled_break_event(BreakKind::Sleep, &s, 0.0, None);
     }
 
     #[test]
@@ -1226,6 +1243,7 @@ mod tests {
         assert!(e.routine_steps.is_empty());
         assert_eq!(e.routine_pacing, None);
         assert_eq!(e.routine_max_step_secs, None);
+        assert_eq!(e.chore_prompt, None);
         assert_eq!(e.kind, BreakKind::Sleep);
         // Cover the break_health_enabled true branch.
         let mut s2 = Settings::default();
@@ -1300,7 +1318,7 @@ mod tests {
     fn scheduled_break_event_health_gate_zeroes_intensity_when_disabled() {
         let mut s = Settings::default();
         s.break_health_enabled = false;
-        let e = scheduled_break_event(BreakKind::Long, &s, 0.42);
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.42, None);
         assert_eq!(e.health_intensity, 0.0);
     }
 
@@ -1310,7 +1328,7 @@ mod tests {
         let mut s = Settings::default();
         s.strict_mode = true;
         s.postpone_enabled = true;
-        let e = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        let e = scheduled_break_event(BreakKind::Long, &s, 0.0, None);
         assert!(e.enforceable, "strict mode forces enforceable");
         assert!(!e.postpone_available, "strict mode disables postpone");
     }
@@ -1323,13 +1341,13 @@ mod tests {
         s.micro_postpone_enabled = false;
         s.long_postpone_enabled = true;
 
-        let micro = scheduled_break_event(BreakKind::Micro, &s, 0.0);
+        let micro = scheduled_break_event(BreakKind::Micro, &s, 0.0, None);
         assert!(
             !micro.postpone_available,
             "micro postpone disabled per-kind"
         );
 
-        let long = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        let long = scheduled_break_event(BreakKind::Long, &s, 0.0, None);
         assert!(long.postpone_available, "long postpone left on per-kind");
     }
 
@@ -1340,10 +1358,10 @@ mod tests {
         s.micro_skip_enabled = false;
         s.long_skip_enabled = true;
 
-        let micro = scheduled_break_event(BreakKind::Micro, &s, 0.0);
+        let micro = scheduled_break_event(BreakKind::Micro, &s, 0.0, None);
         assert!(!micro.skip_available, "micro skip disabled per-kind");
 
-        let long = scheduled_break_event(BreakKind::Long, &s, 0.0);
+        let long = scheduled_break_event(BreakKind::Long, &s, 0.0, None);
         assert!(long.skip_available, "long skip left on per-kind");
     }
 
