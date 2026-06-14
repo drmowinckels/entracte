@@ -17,6 +17,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 - **Friendlier, safer automation hooks.** The System tab's event-hooks editor gains a **Test** button that runs a command once and shows its stdout/stderr and exit code (with a short timeout), an **Insert template…** menu of editable starter commands (log to a file, pause/resume music, desktop notification, Slack status, Home Assistant scene — all plain local commands you fill in, never bundled service integrations), and clearer copy spelling out exactly what arbitrary command execution can do and which `$ENTRACTE_*` variables are available. The 32-hook cap and the save-confirmation dialog are unchanged. ([#154](https://github.com/drmowinckels/entracte/issues/154))
 - **Local content packs.** Share or back up your break ideas and guided routines as a plain JSON file under **Breaks → Content packs**. **Import** merges a pack's ideas and routines into your pools additively — nothing is removed, exact-duplicate ideas and id-colliding routines are skipped — and **Export** writes your current pools and imported routines out. The format is versioned and validated (a malformed pack is rejected with a clear message, never partially applied), and export → import round-trips losslessly. Local files only: no cloud, no registry, no automatic downloads. ([#155](https://github.com/drmowinckels/entracte/issues/155))
 
+### Security
+
+- **Upgraded the frontend build toolchain to Vite 8, removing the vulnerable esbuild.** The nightly audit flagged GHSA-gv7w-rqvm-qjhr (HIGH) and GHSA-g7r4-m6w7-qqqr (LOW) in esbuild, which Entracte pulled in transitively through Vite 7. Both are dev-server / build-time issues with no exposure in the shipped app, but the fix needed a major Vite bump. Vite 8 (with `@vitejs/plugin-react` 6) switches the bundler to Rolldown and drops esbuild from the dependency tree entirely, so `npm audit` is clean again. No user-facing change: the production bundle, tests, accessibility audit, and bundle-size budgets all pass unchanged. ([#188](https://github.com/drmowinckels/entracte/issues/188))
+
 ## [0.0.6] — 2026-06-06
 
 ### Added
