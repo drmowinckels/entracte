@@ -238,19 +238,27 @@ Strict mode swaps the dialog for an `aria-live="assertive"` `role="alert"` regio
 
 When a long break is enforceable it intentionally renders no Skip control. In that case (and only that case — not micro/sleep breaks, not when Skip or Postpone are available) the overlay surfaces a static `role="note"` line explaining why and where to change it. The decision is the pure [`shouldShowEnforceableHint`](https://github.com/drmowinckels/entracte/blob/main/src/views/break-overlay/skip-hint.ts) helper; the hint is informational, not interactive, and is part of the dialog's described content rather than a live region.
 
+On a skippable break, **Escape** dismisses the overlay (the same action as Skip) via [`use-escape-to-dismiss.ts`](https://github.com/drmowinckels/entracte/blob/main/src/views/break-overlay/hooks/use-escape-to-dismiss.ts). The Skip button carries `aria-keyshortcuts="Escape"` so assistive tech announces the shortcut on the equivalent control. An enforceable break has no Escape handler and no Skip button, so there's no shortcut to advertise.
+
+### Keyboard shortcuts and the VoiceOver modifier
+
+In-app keyboard shortcuts are surfaced to assistive tech via `aria-keyshortcuts` on the control they activate (currently only the overlay's Skip → `Escape`). The global hotkeys on the System tab are different: they're OS-level accelerators registered natively, user-defined, and **off by default** — Entracte ships no pre-bound chord. When choosing any default or example accelerator, avoid `Ctrl+Option` (the "VO keys" — VoiceOver's default modifier on macOS); a `Ctrl+Option` chord would be swallowed by VoiceOver before it reached the app. The current example placeholder is `CmdOrCtrl+Alt+P`, which resolves to `Cmd+Option` on macOS and so doesn't collide.
+
 ### Audit infrastructure
 
-`npm run audit:a11y` boots a Vite preview, drives Chromium with puppeteer, and runs axe-core against every tab × light/dark scheme. The same script also fails on any unexpected `console.error` in the renderer. Add new violations to the explicit allowlist only when you've ruled out a real bug — the default is to fix.
+`npm run audit:a11y` boots a Vite preview, drives Chromium with puppeteer, and runs axe-core against every Settings tab × light/dark scheme, plus the break overlay (`?window=overlay`) in both schemes. The same script also fails on any unexpected `console.error` in the renderer. Add new violations to the explicit allowlist only when you've ruled out a real bug — the default is to fix.
+
+The overlay pass forces the reduced-transparency rendering (patching `matchMedia` for that one query, since CDP can't emulate it) so the overlay paints a solid theme background axe can measure, and disables the `color-contrast` rule for that surface only: the overlay uses `opacity` on text for visual hierarchy, which axe can't compute contrast through (it misreads the solid background as white). Every structural rule still runs.
 
 ## Testing layout
 
-| Where                                          | Coverage                                                      |
-| ---------------------------------------------- | ------------------------------------------------------------- |
-| `src-tauri/src/*/mod.rs` (and submodule tests) | Pure-function unit tests beside the code                      |
-| `src/lib/*.test.ts`                            | TS lib helpers — color, time, clock-list, etc.                |
-| `src/lib/a11y.test.ts`                         | Screen-reader text generation                                 |
-| `scripts/audit-a11y.mjs`                       | Headless Vite preview + axe-core, every tab × scheme          |
-| `src-tauri/Cargo.toml` lib tests               | Cargo runs them; `cargo test --lib` skips integration targets |
+| Where                                          | Coverage                                                       |
+| ---------------------------------------------- | -------------------------------------------------------------- |
+| `src-tauri/src/*/mod.rs` (and submodule tests) | Pure-function unit tests beside the code                       |
+| `src/lib/*.test.ts`                            | TS lib helpers — color, time, clock-list, etc.                 |
+| `src/lib/a11y.test.ts`                         | Screen-reader text generation                                  |
+| `scripts/audit-a11y.mjs`                       | Headless Vite preview + axe-core, every tab × scheme + overlay |
+| `src-tauri/Cargo.toml` lib tests               | Cargo runs them; `cargo test --lib` skips integration targets  |
 
 What's _not_ covered yet:
 

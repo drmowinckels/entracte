@@ -411,6 +411,9 @@ export default function BreakOverlay() {
               className="overlay-button ghost"
               onClick={onSkip}
               aria-label="Skip break"
+              // Escape dismisses a skippable break (use-escape-to-dismiss),
+              // so surface that to assistive tech on the equivalent control.
+              aria-keyshortcuts="Escape"
             >
               Skip
             </button>

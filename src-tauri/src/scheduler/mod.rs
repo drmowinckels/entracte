@@ -4,6 +4,7 @@ mod commands;
 pub(crate) mod content_pack;
 mod exports;
 mod hotkeys;
+pub(crate) mod idle;
 mod overlay;
 mod pause;
 mod routines;
