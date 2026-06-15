@@ -225,52 +225,10 @@ function checkboxForLabel(label: string): HTMLInputElement {
   return input as HTMLInputElement;
 }
 
-function queryRowLabel(label: string): HTMLElement | null {
-  return screen.queryByText(label);
-}
-
 describe("BreaksTab per-break postpone & skip", () => {
-  it("shows per-kind postpone and skip toggles to free users", () => {
-    renderTab(false);
-    expect(checkboxForLabel("Postpone micro breaks")).toBeTruthy();
-    expect(checkboxForLabel("Postpone long breaks")).toBeTruthy();
-    expect(checkboxForLabel("Skip micro breaks")).toBeTruthy();
-    expect(checkboxForLabel("Skip long breaks")).toBeTruthy();
-  });
-
-  it("toggling a per-kind postpone calls update with that key", () => {
-    const update = vi.fn();
-    renderTab(false, update);
-    fireEvent.click(checkboxForLabel("Postpone micro breaks"));
-    expect(update).toHaveBeenCalledWith("micro_postpone_enabled", false);
-    fireEvent.click(checkboxForLabel("Postpone long breaks"));
-    expect(update).toHaveBeenCalledWith("long_postpone_enabled", false);
-  });
-
-  it("toggling a per-kind skip calls update with that key", () => {
-    const update = vi.fn();
-    renderTab(false, update);
-    fireEvent.click(checkboxForLabel("Skip long breaks"));
-    expect(update).toHaveBeenCalledWith("long_skip_enabled", false);
-    fireEvent.click(checkboxForLabel("Skip micro breaks"));
-    expect(update).toHaveBeenCalledWith("micro_skip_enabled", false);
-  });
-
-  it("hides the per-kind postpone toggles when the global master is off", () => {
-    renderTab(false, () => {}, { postpone_enabled: false });
-    expect(queryRowLabel("Postpone micro breaks")).toBeNull();
-    expect(queryRowLabel("Postpone long breaks")).toBeNull();
-    // Skip toggles are independent of the postpone master.
-    expect(checkboxForLabel("Skip micro breaks")).toBeTruthy();
-  });
-
-  it("hides every per-kind toggle in strict mode", () => {
-    renderTab(false, () => {}, { strict_mode: true });
-    expect(queryRowLabel("Postpone micro breaks")).toBeNull();
-    expect(queryRowLabel("Skip micro breaks")).toBeNull();
-    expect(queryRowLabel("Skip long breaks")).toBeNull();
-  });
-
+  // The per-kind postpone/skip toggles themselves moved to the Schedule tab
+  // (see schedule-tab.test.tsx); this only covers the Skip-next action button
+  // that still lives here and reacts to a kind's skip setting.
   it("disables the Skip-next button when that kind's skip is off", () => {
     renderTab(false, () => {}, { micro_skip_enabled: false });
     const micro = screen.getByRole("button", {
