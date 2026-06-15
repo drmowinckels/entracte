@@ -166,6 +166,7 @@ export type SchedulerSettings = {
   app_pause_enabled: boolean;
   app_pause_list: string[];
   break_health_enabled: boolean;
+  morning_chore_prompt_enabled: boolean;
   micro_physical_hints: string[];
   micro_psychological_hints: string[];
   micro_hint_mix: MicroHintMix;
@@ -222,6 +223,9 @@ export type ChoresState = {
   date: string;
   items: string[];
   rotation: number;
+  /** Backend-internal: the day the morning prompt last fired. On the wire
+   * (get_chores returns the full state) but unused by the UI. */
+  prompted_date: string;
 };
 
 export type PauseInfo = {

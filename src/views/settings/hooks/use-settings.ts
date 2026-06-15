@@ -110,6 +110,7 @@ export const schedulerSettingsSchema = z.object({
   app_pause_enabled: z.boolean(),
   app_pause_list: z.array(z.string()),
   break_health_enabled: z.boolean(),
+  morning_chore_prompt_enabled: z.boolean(),
   micro_physical_hints: z.array(z.string()),
   micro_psychological_hints: z.array(z.string()),
   micro_hint_mix: z.enum(["both", "physical", "psychological"]),

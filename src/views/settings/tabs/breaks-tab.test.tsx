@@ -22,6 +22,7 @@ const baseSettings = {
   overlay_custom_rgb: "20, 24, 32",
   overlay_high_contrast: false,
   break_health_enabled: false,
+  morning_chore_prompt_enabled: true,
   show_hint: true,
   hint_rotate_seconds: 0,
   show_current_time: true,
@@ -280,5 +281,48 @@ describe("BreaksTab per-break postpone & skip", () => {
     }) as HTMLButtonElement;
     expect(micro.disabled).toBe(true);
     expect(long.disabled).toBe(false);
+  });
+});
+
+describe("BreaksTab morning chore prompt", () => {
+  it("toggling the morning-prompt checkbox persists the setting", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    const toggle = screen.getByRole("checkbox", {
+      name: /Prompt me to plan chores each morning/,
+    }) as HTMLInputElement;
+    expect(toggle.checked).toBe(true); // baseSettings has it on
+    fireEvent.click(toggle);
+    expect(update).toHaveBeenCalledWith("morning_chore_prompt_enabled", false);
+  });
+
+  it("pulls focus to the chores input when the prompt nonce bumps", () => {
+    const supporter: SupporterStatus = {
+      is_supporter: false,
+      masked_key: null,
+      last_validated_at: null,
+    };
+    const { rerender } = render(
+      <BreaksTab
+        settings={baseSettings}
+        update={(() => {}) as never}
+        supporter={supporter}
+        reload={async () => {}}
+        focusChoresNonce={0}
+      />,
+    );
+    const textarea = screen.getByLabelText("One chore per line");
+    expect(document.activeElement).not.toBe(textarea);
+    // The shell bumps the nonce when the backend's morning prompt fires.
+    rerender(
+      <BreaksTab
+        settings={baseSettings}
+        update={(() => {}) as never}
+        supporter={supporter}
+        reload={async () => {}}
+        focusChoresNonce={1}
+      />,
+    );
+    expect(document.activeElement).toBe(textarea);
   });
 });

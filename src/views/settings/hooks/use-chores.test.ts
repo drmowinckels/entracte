@@ -11,6 +11,7 @@ describe("useChores", () => {
       date: TODAY,
       items: ["Water the plants"],
       rotation: 0,
+      prompted_date: "",
     });
     const { result } = renderHook(() => useChores({ invoke }));
     expect(result.current.chores).toBeNull();
@@ -40,11 +41,17 @@ describe("useChores", () => {
   it("save() persists the edited list and re-seeds from the sanitized result", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce({ date: TODAY, items: [], rotation: 0 })
+      .mockResolvedValueOnce({
+        date: TODAY,
+        items: [],
+        rotation: 0,
+        prompted_date: "",
+      })
       .mockResolvedValueOnce({
         date: TODAY,
         items: ["Tidy desk"],
         rotation: 0,
+        prompted_date: "",
       });
     const { result } = renderHook(() => useChores({ invoke }));
     await waitFor(() => expect(result.current.chores).not.toBeNull());
@@ -60,7 +67,12 @@ describe("useChores", () => {
   it("leaves the list unchanged when set_chores returns a malformed shape", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce({ date: TODAY, items: ["Keep me"], rotation: 0 })
+      .mockResolvedValueOnce({
+        date: TODAY,
+        items: ["Keep me"],
+        rotation: 0,
+        prompted_date: "",
+      })
       .mockResolvedValueOnce({ bogus: true });
     const { result } = renderHook(() => useChores({ invoke }));
     await waitFor(() => expect(result.current.chores).not.toBeNull());

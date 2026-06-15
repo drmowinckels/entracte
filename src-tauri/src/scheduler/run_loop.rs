@@ -10,6 +10,7 @@ use crate::hooks::{self, HookContext, HookEvent};
 use crate::proc_match::process_match_lower;
 use crate::stats::{EventPayload, GuardReason, Logger};
 
+use super::chores;
 use super::idle;
 use super::overlay::deliver_break;
 use super::pause::{persist_pause, PauseState};
@@ -248,6 +249,36 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // interval check on the persisted `Instant` is the only re-fire
         // gate; on the next day the elapsed time naturally exceeds any
         // sane `bedtime_interval_secs`, so a fresh bedtime entry fires.
+
+        // Morning chore prompt: the first time the work window opens each day
+        // with an empty list, open Preferences to the chores input so the
+        // user can plan the day. Fires at most once per day (tracked by the
+        // persisted `prompted_date`) and independently of the break
+        // suppressions below — it's a planning nudge, not a break.
+        {
+            let in_work = !s.work_window_enabled
+                || in_window(now_min, s.work_start_minutes, s.work_end_minutes);
+            let mut c = sched.chores.lock().await;
+            let rolled = chores::rollover_if_new_day(&mut c, &today_str);
+            let prompt = chores::should_prompt_morning_chores(
+                s.morning_chore_prompt_enabled,
+                in_work,
+                now_min,
+                &c,
+                &today_str,
+            );
+            if prompt {
+                c.prompted_date = today_str.clone();
+            }
+            if rolled || prompt {
+                chores::persist_chores(&sched.chores_path, &c);
+            }
+            drop(c);
+            if prompt {
+                crate::window::show_main_window(&app);
+                let _ = app.emit("chores:prompt", ());
+            }
+        }
 
         // Live readings for the guard decision. Short-circuit each
         // call on the matching setting so `dnd::is_active()` and the

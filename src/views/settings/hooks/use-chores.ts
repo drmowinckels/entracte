@@ -7,6 +7,7 @@ const choresSchema = z.object({
   date: z.string(),
   items: z.array(z.string()),
   rotation: z.number(),
+  prompted_date: z.string(),
 }) satisfies z.ZodType<ChoresState>;
 
 export type UseChoresDeps = {

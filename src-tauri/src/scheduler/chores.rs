@@ -18,6 +18,10 @@ pub struct ChoresState {
     pub date: String,
     pub items: Vec<String>,
     pub rotation: u64,
+    /// Local day the morning prompt last fired (see
+    /// [`ChoresSnapshot::prompted_date`]). `!= date` means "not prompted yet
+    /// today".
+    pub prompted_date: String,
 }
 
 impl ChoresState {
@@ -30,12 +34,14 @@ impl ChoresState {
                 date: snap.date,
                 items: snap.items,
                 rotation: snap.rotation,
+                prompted_date: snap.prompted_date,
             }
         } else {
             Self {
                 date: today.to_string(),
                 items: Vec::new(),
                 rotation: 0,
+                prompted_date: String::new(),
             }
         }
     }
@@ -47,6 +53,7 @@ impl ChoresState {
             date: self.date.clone(),
             items: self.items.clone(),
             rotation: self.rotation,
+            prompted_date: self.prompted_date.clone(),
         }
     }
 }
@@ -59,10 +66,35 @@ pub fn rollover_if_new_day(state: &mut ChoresState, today: &str) -> bool {
         state.date = today.to_string();
         state.items.clear();
         state.rotation = 0;
+        state.prompted_date = String::new();
         true
     } else {
         false
     }
+}
+
+/// Earliest local minute-of-day the morning chore prompt may fire. Guards the
+/// all-day work-window case (`work_start = 00:00`) so the prompt lands in the
+/// morning rather than at the post-midnight rollover tick.
+const MORNING_PROMPT_FLOOR_MIN: u32 = 5 * 60;
+
+/// Whether to surface the morning chore prompt this tick. Fires once per
+/// local day — the first time the user is inside their work window (past an
+/// early-morning floor), while today's list is still empty and we haven't
+/// already prompted today. Pure so the gating is unit-testable without a
+/// scheduler or clock.
+pub fn should_prompt_morning_chores(
+    enabled: bool,
+    in_work_window: bool,
+    now_min: u32,
+    state: &ChoresState,
+    today: &str,
+) -> bool {
+    enabled
+        && in_work_window
+        && now_min >= MORNING_PROMPT_FLOOR_MIN
+        && state.items.is_empty()
+        && state.prompted_date != today
 }
 
 /// Persist `state` to disk, logging (never panicking) on failure — a chore
@@ -106,6 +138,7 @@ mod tests {
             date: "2026-06-11".to_string(),
             items: items.iter().map(|s| s.to_string()).collect(),
             rotation,
+            prompted_date: String::new(),
         }
     }
 
@@ -115,10 +148,12 @@ mod tests {
             date: "2026-06-11".to_string(),
             items: vec!["Water the plants".to_string()],
             rotation: 2,
+            prompted_date: "2026-06-11".to_string(),
         };
         let st = ChoresState::from_snapshot(snap, "2026-06-11");
         assert_eq!(st.items, vec!["Water the plants".to_string()]);
         assert_eq!(st.rotation, 2);
+        assert_eq!(st.prompted_date, "2026-06-11");
     }
 
     #[test]
@@ -127,20 +162,116 @@ mod tests {
             date: "2026-06-10".to_string(),
             items: vec!["Yesterday's chore".to_string()],
             rotation: 5,
+            prompted_date: "2026-06-10".to_string(),
         };
         let st = ChoresState::from_snapshot(snap, "2026-06-11");
         assert_eq!(st.date, "2026-06-11");
         assert!(st.items.is_empty());
         assert_eq!(st.rotation, 0);
+        // A stale day's "already prompted" marker must not suppress today's
+        // prompt.
+        assert_eq!(st.prompted_date, "");
     }
 
     #[test]
     fn rollover_clears_on_new_day() {
         let mut st = state_with(&["a", "b"], 3);
+        st.prompted_date = "2026-06-11".to_string();
         assert!(rollover_if_new_day(&mut st, "2026-06-12"));
         assert!(st.items.is_empty());
         assert_eq!(st.rotation, 0);
         assert_eq!(st.date, "2026-06-12");
+        assert_eq!(st.prompted_date, "");
+    }
+
+    #[test]
+    fn morning_prompt_fires_in_window_with_empty_list() {
+        let st = state_with(&[], 0);
+        assert!(should_prompt_morning_chores(
+            true,
+            true,
+            9 * 60,
+            &st,
+            "2026-06-11"
+        ));
+    }
+
+    #[test]
+    fn morning_prompt_skips_when_disabled() {
+        let st = state_with(&[], 0);
+        assert!(!should_prompt_morning_chores(
+            false,
+            true,
+            9 * 60,
+            &st,
+            "2026-06-11"
+        ));
+    }
+
+    #[test]
+    fn morning_prompt_skips_outside_work_window() {
+        let st = state_with(&[], 0);
+        assert!(!should_prompt_morning_chores(
+            true,
+            false,
+            9 * 60,
+            &st,
+            "2026-06-11"
+        ));
+    }
+
+    #[test]
+    fn morning_prompt_skips_before_the_morning_floor() {
+        // All-day work window: in_window is true even at 02:00, but the floor
+        // keeps the prompt from firing at the post-midnight rollover.
+        let st = state_with(&[], 0);
+        assert!(!should_prompt_morning_chores(
+            true,
+            true,
+            2 * 60,
+            &st,
+            "2026-06-11"
+        ));
+        assert!(should_prompt_morning_chores(
+            true,
+            true,
+            MORNING_PROMPT_FLOOR_MIN,
+            &st,
+            "2026-06-11"
+        ));
+    }
+
+    #[test]
+    fn morning_prompt_skips_when_list_already_has_chores() {
+        let st = state_with(&["Water the plants"], 0);
+        assert!(!should_prompt_morning_chores(
+            true,
+            true,
+            9 * 60,
+            &st,
+            "2026-06-11"
+        ));
+    }
+
+    #[test]
+    fn morning_prompt_skips_when_already_prompted_today() {
+        let mut st = state_with(&[], 0);
+        st.prompted_date = "2026-06-11".to_string();
+        assert!(!should_prompt_morning_chores(
+            true,
+            true,
+            9 * 60,
+            &st,
+            "2026-06-11"
+        ));
+        // …but a new day re-enables it.
+        assert!(should_prompt_morning_chores(
+            true,
+            true,
+            9 * 60,
+            &st,
+            "2026-06-12"
+        ));
     }
 
     #[test]
