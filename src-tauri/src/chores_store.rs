@@ -27,6 +27,11 @@ pub struct ChoresSnapshot {
     pub date: String,
     pub items: Vec<String>,
     pub rotation: u64,
+    /// Local day (YYYY-MM-DD) the morning chore prompt last fired, so a
+    /// restart mid-morning doesn't re-prompt. Empty until the first prompt;
+    /// a value `!= date` means we haven't prompted today yet. Defaults empty
+    /// on older stores that predate the field.
+    pub prompted_date: String,
 }
 
 pub fn load(path: &Path) -> ChoresSnapshot {
@@ -99,9 +104,25 @@ mod tests {
                 "Empty the dishwasher".to_string(),
             ],
             rotation: 3,
+            prompted_date: "2026-06-11".to_string(),
         };
         save(&path, &snap).unwrap();
         assert_eq!(load(&path), snap);
+    }
+
+    #[test]
+    fn load_tolerates_store_without_prompted_date() {
+        // Stores written before the morning-prompt feature have no
+        // `prompted_date`; serde(default) must fill it in as empty.
+        let (_dir, path) = temp_chores_file();
+        std::fs::write(
+            &path,
+            r#"{"date":"2026-06-11","items":["Water the plants"],"rotation":1}"#,
+        )
+        .unwrap();
+        let loaded = load(&path);
+        assert_eq!(loaded.items, vec!["Water the plants".to_string()]);
+        assert_eq!(loaded.prompted_date, "");
     }
 
     #[test]

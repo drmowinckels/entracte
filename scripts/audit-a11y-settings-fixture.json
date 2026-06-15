@@ -53,6 +53,7 @@
   "app_pause_enabled": true,
   "app_pause_list": ["zoom"],
   "break_health_enabled": true,
+  "morning_chore_prompt_enabled": true,
   "micro_physical_hints": ["Look 20 feet away."],
   "micro_psychological_hints": ["Unclench your jaw."],
   "micro_hint_mix": "both",

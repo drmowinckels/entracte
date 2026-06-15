@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useCustomStylesheet } from "../../lib/use-custom-stylesheet";
+import { useTauriListen } from "../../lib/use-tauri-listen";
 import { OnboardingWizard } from "./components/onboarding/onboarding-wizard";
 import { TABS } from "./constants";
 import { useHooks } from "./hooks/use-hooks";
@@ -30,6 +31,17 @@ const tabPanelId = (id: Tab) => `settings-tabpanel-${id}`;
  * available, then renders the active tab. */
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("schedule");
+  // Bumped when the backend's morning chore prompt fires; switches to the
+  // Breaks tab and pulls focus to the chores input (see BreaksTab).
+  const [chorePromptNonce, setChorePromptNonce] = useState(0);
+  useTauriListen(
+    "chores:prompt",
+    () => {
+      setTab("breaks");
+      setChorePromptNonce((n) => n + 1);
+    },
+    [],
+  );
   const { settings, update, updateMany, reloadFromActive, setAutostart } =
     useSettings();
   const pauseInfo = usePause();
@@ -111,6 +123,7 @@ export default function Settings() {
                 update={update}
                 supporter={supporter.status}
                 reload={reloadFromActive}
+                focusChoresNonce={chorePromptNonce}
               />
             </div>
             <div

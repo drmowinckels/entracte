@@ -58,6 +58,7 @@
   "app_pause_enabled": false,
   "app_pause_list": [],
   "break_health_enabled": true,
+  "morning_chore_prompt_enabled": true,
   "micro_physical_hints": [
     "Look at something 20 feet away.",
     "Blink slowly ten times.",

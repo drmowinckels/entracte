@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   clampCsvToDark,
@@ -32,11 +33,15 @@ export function BreaksTab({
   update,
   supporter,
   reload,
+  focusChoresNonce = 0,
 }: {
   settings: SchedulerSettings;
   update: UseSettings["update"];
   supporter: SupporterStatus;
   reload: () => Promise<unknown>;
+  /// Bumped by the shell when the morning chore prompt fires, to pull focus
+  /// to the chores input. `0` is the initial value and never focuses.
+  focusChoresNonce?: number;
 }) {
   const isSupporter = supporter.is_supporter;
   const { routines, reload: reloadRoutines } = useRoutines();
@@ -45,6 +50,13 @@ export function BreaksTab({
     () => listToLines(chores?.items ?? []),
     [chores?.items],
   );
+  const choresRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (focusChoresNonce > 0) {
+      choresRef.current?.scrollIntoView?.({ block: "center" });
+      choresRef.current?.focus();
+    }
+  }, [focusChoresNonce]);
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),
@@ -520,12 +532,13 @@ export function BreaksTab({
         <h3>Today's chores</h3>
         <p className="placeholder">
           Jot down chores you'd like done today — one per line. During a long
-          break, Entracte nudges you to knock one out. The list clears each
-          morning.
+          break, Entracte nudges you to knock one out (these take precedence
+          over the rotating wellness tips). The list clears each morning.
         </p>
         <label className="row stacked">
           <span>One chore per line</span>
           <textarea
+            ref={choresRef}
             className="textarea"
             rows={6}
             value={choreLines}
@@ -534,6 +547,12 @@ export function BreaksTab({
             onBlur={() => saveChores(linesToList(choreLines))}
           />
         </label>
+        <CheckboxRow
+          label="Prompt me to plan chores each morning"
+          value={settings.morning_chore_prompt_enabled}
+          onChange={(v) => update("morning_chore_prompt_enabled", v)}
+          tip="When on (default), the first time your work window opens each day with an empty list, Entracte opens this Preferences window here so you can jot down the day's chores. Turn it off to never be prompted — you can still fill the list in yourself any time."
+        />
         {isSupporter && (
           <>
             <label className="row stacked">
