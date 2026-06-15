@@ -24,9 +24,12 @@ pub fn spawn_monitor(active: Arc<AtomicBool>) {
 ///     `kCameraStreamStart`/`kCameraStreamStop` events.
 ///   * macOS 26+ stopped posting those on Apple Silicon (#113). Control
 ///     Center instead publishes the *full set* of in-use cameras as
-///     `Frame publisher cameras changed to [...]` — an empty `[]` means
-///     every camera was released, a non-empty list means at least one is
-///     live. This aggregate is more robust than the old per-stream events.
+///     `Frame publisher cameras changed to [...]`. The payload is keyed by
+///     client, e.g. `[us.zoom.xos: ["0x…"]]`; "every camera released" is an
+///     empty collection — `[]` on earlier macOS, `[:]` (an empty
+///     *dictionary*) on macOS 26 (#158). A non-empty payload means at least
+///     one camera is live. This aggregate is more robust than the old
+///     per-stream events.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn classify_camera_line(line: &str) -> Option<bool> {
     if line.contains("kCameraStreamStart") {
@@ -43,13 +46,20 @@ pub(crate) fn classify_camera_line(line: &str) -> Option<bool> {
 
 /// Decide whether Control Center's published camera set is empty. `rest`
 /// is everything after `"cameras changed to "`. `Some(false)` for an empty
-/// list (`[]`), `Some(true)` for a non-empty one. Returns `None` when the
-/// payload is redacted (`<private>`) or otherwise has no bracketed list —
-/// we can't tell the state, so we leave it unchanged rather than guess.
+/// collection — `[]` (earlier macOS) or `[:]` (the empty-dictionary form
+/// macOS 26 emits on release, #158) — and `Some(true)` for a non-empty one.
+/// Returns `None` when the payload is redacted (`<private>`) or otherwise
+/// has no bracketed collection — we can't tell the state, so we leave it
+/// unchanged rather than guess.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn classify_camera_set(rest: &str) -> Option<bool> {
     let open = rest.find('[')?;
     let inner = rest[open + 1..].trim_start();
+    // An empty dictionary prints as `[:]`; drop the leading colon so the
+    // empty check below treats it the same as the empty array `[]`. A
+    // non-empty payload (`[bundle.id: [...]]`) has content before the colon,
+    // so this strip is a no-op there.
+    let inner = inner.strip_prefix(':').map_or(inner, str::trim_start);
     Some(!inner.starts_with(']'))
 }
 
@@ -269,6 +279,34 @@ mod tests {
     fn classify_control_center_empty_set_tolerates_inner_space() {
         let line = "Frame publisher cameras changed to [ ]";
         assert_eq!(classify_camera_line(line), Some(false));
+    }
+
+    #[test]
+    fn classify_control_center_empty_dict_is_off_macos26() {
+        // macOS 26 publishes the in-use set as a dictionary keyed by client;
+        // "all released" is the empty-dictionary literal `[:]`, not `[]`
+        // (#158). Captured verbatim from a macOS 26.5 log stream.
+        let line = "2026-06-15 ControlCenter[808:1afb] \
+            [com.apple.controlcenter:captureFrameReceiver] Frame publisher \
+            cameras changed to [:]";
+        assert_eq!(classify_camera_line(line), Some(false));
+    }
+
+    #[test]
+    fn classify_control_center_empty_dict_tolerates_inner_space() {
+        assert_eq!(
+            classify_camera_line("Frame publisher cameras changed to [ : ]"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn classify_control_center_single_client_dict_is_on_macos26() {
+        // The non-empty macOS 26 form, captured verbatim: one client holding
+        // a camera. The leading-colon strip must not fire here.
+        let line = "Frame publisher cameras changed to \
+            [com.apple.PhotoBooth: [\"EBB0ACC7-C7DB-49F1-B1FD-C77F4E234E8C\"]]";
+        assert_eq!(classify_camera_line(line), Some(true));
     }
 
     #[test]
