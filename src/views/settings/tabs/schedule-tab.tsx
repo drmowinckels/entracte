@@ -126,6 +126,22 @@ export function ScheduleTab({
               multiplier={1}
               onChange={(v) => update("micro_duration_secs", v)}
             />
+            {settings.postpone_enabled && !settings.strict_mode && (
+              <CheckboxRow
+                label="Postpone micro breaks"
+                value={settings.micro_postpone_enabled}
+                onChange={(v) => update("micro_postpone_enabled", v)}
+                tip="When on, the micro break overlay offers a Postpone button. Requires the postpone master switch (Breaks → Skip & postpone)."
+              />
+            )}
+            {!settings.strict_mode && (
+              <CheckboxRow
+                label="Skip micro breaks"
+                value={settings.micro_skip_enabled}
+                onChange={(v) => update("micro_skip_enabled", v)}
+                tip="When off, the micro break overlay has no Skip button and Esc won't dismiss it."
+              />
+            )}
             <SoundControls
               sound={settings.micro_sound}
               volume={settings.sound_volume}
@@ -237,6 +253,22 @@ export function ScheduleTab({
               multiplier={60}
               onChange={(v) => update("long_duration_secs", v)}
             />
+            {settings.postpone_enabled && !settings.strict_mode && (
+              <CheckboxRow
+                label="Postpone long breaks"
+                value={settings.long_postpone_enabled}
+                onChange={(v) => update("long_postpone_enabled", v)}
+                tip="When on, the long break overlay offers a Postpone button. Requires the postpone master switch (Breaks → Skip & postpone)."
+              />
+            )}
+            {!settings.strict_mode && (
+              <CheckboxRow
+                label="Skip long breaks"
+                value={settings.long_skip_enabled}
+                onChange={(v) => update("long_skip_enabled", v)}
+                tip="When off, the long break overlay has no Skip button and Esc won't dismiss it."
+              />
+            )}
             <SoundControls
               sound={settings.long_sound}
               volume={settings.sound_volume}
