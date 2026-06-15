@@ -1,10 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SchedulerSettings } from "./types";
 
 let mockSettings: SchedulerSettings | null = null;
 let mockOnboardingNeeded = false;
+
+// Capture the handlers registered via useTauriListen so tests can fire
+// backend events (e.g. the morning chore prompt) at the shell.
+const eventHandlers = new Map<string, (e: { payload: unknown }) => void>();
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(
+    async (name: string, handler: (e: { payload: unknown }) => void) => {
+      eventHandlers.set(name, handler);
+      return () => eventHandlers.delete(name);
+    },
+  ),
+}));
 
 vi.mock("./hooks/use-settings", () => ({
   useSettings: () => ({
@@ -128,6 +140,19 @@ describe("Settings shell ARIA + keyboard", () => {
     render(<Settings />);
     const tablist = screen.getByRole("tablist", { name: "Settings sections" });
     expect(tablist.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+
+  it("the morning chore prompt switches to the Breaks tab", async () => {
+    mockSettings = hydratedSettings;
+    render(<Settings />);
+    const breaksTab = screen
+      .getAllByRole("tab")
+      .find((t) => t.id === "settings-tab-breaks");
+    if (!breaksTab) throw new Error("breaks tab not found");
+    expect(breaksTab.getAttribute("aria-selected")).toBe("false");
+    await waitFor(() => expect(eventHandlers.has("chores:prompt")).toBe(true));
+    act(() => eventHandlers.get("chores:prompt")!({ payload: undefined }));
+    expect(breaksTab.getAttribute("aria-selected")).toBe("true");
   });
 
   it("marks the initial Schedule tab selected and gives the rest tabindex=-1", () => {
