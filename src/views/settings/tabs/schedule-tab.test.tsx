@@ -53,11 +53,15 @@ describe("ScheduleTab per-break postpone & skip", () => {
     expect(checkbox("Skip long breaks")).toBeTruthy();
   });
 
-  it("toggling a per-kind postpone or skip calls update with that key", () => {
+  it("toggling each per-kind postpone or skip calls update with that key", () => {
     const update = vi.fn();
     renderTab(update, { postpone_enabled: true, strict_mode: false });
     fireEvent.click(checkbox("Postpone micro breaks"));
     expect(update).toHaveBeenCalledWith("micro_postpone_enabled", false);
+    fireEvent.click(checkbox("Skip micro breaks"));
+    expect(update).toHaveBeenCalledWith("micro_skip_enabled", false);
+    fireEvent.click(checkbox("Postpone long breaks"));
+    expect(update).toHaveBeenCalledWith("long_postpone_enabled", false);
     fireEvent.click(checkbox("Skip long breaks"));
     expect(update).toHaveBeenCalledWith("long_skip_enabled", false);
   });
