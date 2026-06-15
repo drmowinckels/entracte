@@ -7,6 +7,8 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+## [0.0.7] — 2026-06-15
+
 ### Added
 
 - **Morning chore prompt.** Since the chore post-it resets each morning, it's easy to forget to fill it in. The first time your work window opens each day with an empty list, Entracte now opens Preferences to the chore input so you can plan the day's chores in one go. It fires at most once a day and only with an empty list, so it never nags. On by default; turn it off under **Breaks → Today's chores → "Prompt me to plan chores each morning."** ([#156](https://github.com/drmowinckels/entracte/issues/156))
