@@ -155,6 +155,8 @@ mod inner {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
+    use crate::proc::{CommandTimeoutExt, PROBE_TIMEOUT};
+
     // `loginctl show-session` spawns a child process. While it's
     // answering we re-probe at `HEALTHY_TTL` so a lock/unlock is noticed
     // promptly without forking once per 1 Hz tick.
@@ -335,24 +337,84 @@ mod inner {
         // regardless of compositor or desktop environment (GNOME, KDE,
         // sway, X11, Wayland). Shelling out to `loginctl` keeps the
         // dependency surface tiny — pulling in zbus/dbus would add 30+
-        // crates for one boolean read.
-        let session = std::env::var("XDG_SESSION_ID")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "self".to_string());
-        let out = match Command::new("loginctl")
-            .args(["show-session", &session, "-p", "LockedHint", "--value"])
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) => return ProbeOutcome::Failed(format!("spawn failed: {e}")),
-        };
-        if !out.status.success() {
-            return ProbeOutcome::Failed(format!("loginctl exited {:?}", out.status.code()));
+        // crates for one boolean read. Run under the shared probe timeout
+        // so a wedged session bus can't stall the lock check (#191).
+        let candidates = session_candidates(std::env::var("XDG_SESSION_ID").ok().as_deref());
+        let mut last_err = String::from("loginctl produced no session candidate");
+        for session in &candidates {
+            let out = match Command::new("loginctl")
+                .args([
+                    "show-session",
+                    session.as_str(),
+                    "-p",
+                    "LockedHint",
+                    "--value",
+                ])
+                .output_timeout(PROBE_TIMEOUT)
+            {
+                Ok(o) => o,
+                // A spawn/timeout failure won't change between candidates
+                // (missing binary, hung bus), so stop trying and report it.
+                Err(e) => return ProbeOutcome::Failed(format!("spawn failed: {e}")),
+            };
+            match classify_loginctl(
+                session,
+                out.status.success(),
+                out.status.code(),
+                &String::from_utf8_lossy(&out.stdout),
+                &String::from_utf8_lossy(&out.stderr),
+            ) {
+                Ok(outcome) => return outcome,
+                Err(detail) => last_err = detail,
+            }
         }
-        match parse_locked_hint(&String::from_utf8_lossy(&out.stdout)) {
-            Some(b) => ProbeOutcome::Determined(b),
-            None => ProbeOutcome::Unknown,
+        ProbeOutcome::Failed(last_err)
+    }
+
+    /// Ordered `loginctl show-session` identifiers to try. The caller's own
+    /// `XDG_SESSION_ID` is the most specific, but it's frequently unset for
+    /// GUI apps launched detached from the logind session (D-Bus
+    /// activation, some autostart paths) — and there the old literal `self`
+    /// fallback resolved to nothing, so `loginctl` exited non-zero and lock
+    /// detection disabled itself (#191). `auto` is logind's lenient
+    /// resolver — the caller's session if it has one, otherwise the user's
+    /// display session — so it succeeds where `self` can't. Pure so the
+    /// fallback order is testable without a logind session.
+    pub(super) fn session_candidates(env_session_id: Option<&str>) -> Vec<String> {
+        let mut candidates = Vec::new();
+        if let Some(id) = env_session_id.map(str::trim).filter(|s| !s.is_empty()) {
+            candidates.push(id.to_string());
+        }
+        candidates.push("auto".to_string());
+        candidates
+    }
+
+    /// Classify one `loginctl` invocation. `Ok(outcome)` ends the probe;
+    /// `Err(detail)` means "this candidate failed, try the next" and
+    /// carries the failure detail — including `loginctl`'s stderr, which
+    /// the old code dropped, so a bug report now pins the exact cause
+    /// (#191). Pure over the raw output pieces so the success classification
+    /// and stderr capture are testable without spawning `loginctl`.
+    pub(super) fn classify_loginctl(
+        session: &str,
+        success: bool,
+        code: Option<i32>,
+        stdout: &str,
+        stderr: &str,
+    ) -> Result<ProbeOutcome, String> {
+        if success {
+            return Ok(match parse_locked_hint(stdout) {
+                Some(b) => ProbeOutcome::Determined(b),
+                None => ProbeOutcome::Unknown,
+            });
+        }
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            Err(format!("loginctl show-session {session} exited {code:?}"))
+        } else {
+            Err(format!(
+                "loginctl show-session {session} exited {code:?}: {stderr}"
+            ))
         }
     }
 
@@ -390,6 +452,65 @@ mod inner {
             assert_eq!(parse_locked_hint(""), None);
             assert_eq!(parse_locked_hint("maybe"), None);
             assert_eq!(parse_locked_hint("1"), None);
+        }
+
+        #[test]
+        fn session_candidates_prefers_env_id_then_auto() {
+            assert_eq!(session_candidates(Some("3")), vec!["3", "auto"]);
+        }
+
+        #[test]
+        fn session_candidates_falls_back_to_auto_when_unset_or_blank() {
+            assert_eq!(session_candidates(None), vec!["auto"]);
+            assert_eq!(session_candidates(Some("")), vec!["auto"]);
+            assert_eq!(session_candidates(Some("   ")), vec!["auto"]);
+        }
+
+        #[test]
+        fn session_candidates_trims_a_padded_env_id() {
+            assert_eq!(session_candidates(Some("  7  ")), vec!["7", "auto"]);
+        }
+
+        #[test]
+        fn classify_success_yes_is_determined_locked() {
+            assert_eq!(
+                classify_loginctl("3", true, Some(0), "yes\n", ""),
+                Ok(ProbeOutcome::Determined(true))
+            );
+        }
+
+        #[test]
+        fn classify_success_unparseable_hint_is_unknown() {
+            // loginctl answered but `LockedHint` was unset/empty: healthy,
+            // just no value this time.
+            assert_eq!(
+                classify_loginctl("3", true, Some(0), "\n", ""),
+                Ok(ProbeOutcome::Unknown)
+            );
+        }
+
+        #[test]
+        fn classify_failure_captures_stderr_for_diagnostics() {
+            let detail = classify_loginctl(
+                "auto",
+                false,
+                Some(1),
+                "",
+                "Failed to get session: No such file or directory\n",
+            )
+            .unwrap_err();
+            assert!(detail.contains("auto"));
+            assert!(detail.contains("Some(1)"));
+            assert!(detail.contains("No such file or directory"));
+        }
+
+        #[test]
+        fn classify_failure_without_stderr_still_reports_the_exit() {
+            let detail = classify_loginctl("self", false, Some(1), "", "  \n").unwrap_err();
+            assert!(detail.contains("self"));
+            assert!(detail.contains("Some(1)"));
+            // No trailing ": " when there's nothing to append.
+            assert!(!detail.trim_end().ends_with(':'));
         }
 
         #[test]

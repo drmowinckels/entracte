@@ -66,6 +66,7 @@ pmset
 geninfo
 gdbus
 systemd
+logind
 xprop
 XDG
 DBus
