@@ -76,6 +76,7 @@ export const schedulerSettingsSchema = z.object({
   work_window_enabled: z.boolean(),
   work_start_minutes: z.number(),
   work_end_minutes: z.number(),
+  work_days_mask: z.number(),
   bedtime_enabled: z.boolean(),
   bedtime_start_minutes: z.number(),
   bedtime_end_minutes: z.number(),

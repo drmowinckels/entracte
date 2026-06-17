@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Active hours can target specific weekdays.** The Schedule tab's **Active hours** section gains an **On these days** picker, so the work window can apply only on the days you actually work — turn off Saturday and Sunday and Entracte stays quiet while you game or relax at the weekend, no need to remember to pause it. Defaults to every day, so existing setups are unchanged on upgrade. A window that runs past midnight (e.g. 22:00–06:00) counts its early-morning hours as part of the day it started. ([#204](https://github.com/drmowinckels/entracte/issues/204))
+
 ## [0.0.7] — 2026-06-15
 
 ### Added

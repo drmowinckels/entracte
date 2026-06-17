@@ -18,9 +18,10 @@ use super::screen_time::{persist_screen_time, rollover_if_new_day, should_remind
 use super::session_lock;
 use super::settings::{delivery_for, Settings};
 use super::timers::{
-    current_minutes, decide_bedtime, in_window, interval_break_due, local_today_string,
+    current_minutes, current_weekday, decide_bedtime, interval_break_due, local_today_string,
     prebreak_warn_due, reanchor_intervals_on_resume, record_scheduled_fire,
-    should_defer_for_typing, should_fire_fixed_now, BedtimeAction, BedtimeWindow, PrebreakGate,
+    should_defer_for_typing, should_fire_fixed_now, work_window_active, BedtimeAction,
+    BedtimeWindow, PrebreakGate,
 };
 use super::types::{BreakDelivery, BreakEvent, BreakKind, SuppressReason};
 use super::Scheduler;
@@ -135,6 +136,7 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // when a break fires (#77).
         crate::media::set_enabled(s.pause_media_during_breaks);
         let now_min = current_minutes();
+        let today_weekday = current_weekday();
 
         // Probing idle round-trips to the windowing system (and, on
         // GNOME/Wayland, to Mutter over the session bus) and isn't free on
@@ -257,7 +259,13 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
         // suppressions below — it's a planning nudge, not a break.
         {
             let in_work = !s.work_window_enabled
-                || in_window(now_min, s.work_start_minutes, s.work_end_minutes);
+                || work_window_active(
+                    now_min,
+                    s.work_start_minutes,
+                    s.work_end_minutes,
+                    today_weekday,
+                    s.work_days_mask,
+                );
             let mut c = sched.chores.lock().await;
             let rolled = chores::rollover_if_new_day(&mut c, &today_str);
             let prompt = chores::should_prompt_morning_chores(
@@ -308,7 +316,10 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
 
         if let Some(outcome) = evaluate_guards(
             &s,
-            now_min,
+            TickClock {
+                now_min,
+                weekday: today_weekday,
+            },
             dnd_live,
             camera_live,
             video_live,
@@ -766,6 +777,17 @@ pub(super) struct GuardOutcome {
     pub log_as: Option<GuardReason>,
 }
 
+/// The wall-clock decomposition the guards reason about: minute-of-day
+/// and weekday (days-since-Monday, `0`=Mon … `6`=Sun), both sampled from
+/// the single `Local::now()` taken at the top of the tick. Grouped so the
+/// two related time values travel together and `evaluate_guards` stays
+/// under the positional-argument limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TickClock {
+    pub now_min: u32,
+    pub weekday: u32,
+}
+
 /// Pure decision: given the per-tick guard inputs, return which
 /// `SuppressReason` should fire (if any) and whether the run-loop
 /// should also write a `GuardSuppress` event for it.
@@ -778,14 +800,22 @@ pub(super) struct GuardOutcome {
 /// and the function applies the setting gates itself.
 pub(super) fn evaluate_guards(
     s: &Settings,
-    now_min: u32,
+    clock: TickClock,
     dnd_active: bool,
     camera_active: bool,
     video_active: bool,
     app_pause_active: bool,
     plugin_suppress: bool,
 ) -> Option<GuardOutcome> {
-    if s.work_window_enabled && !in_window(now_min, s.work_start_minutes, s.work_end_minutes) {
+    if s.work_window_enabled
+        && !work_window_active(
+            clock.now_min,
+            s.work_start_minutes,
+            s.work_end_minutes,
+            clock.weekday,
+            s.work_days_mask,
+        )
+    {
         return Some(GuardOutcome {
             reason: SuppressReason::WorkWindow,
             log_as: None,
@@ -1935,11 +1965,27 @@ mod tests {
 
     const INSIDE_WORK_WINDOW: u32 = 10 * 60;
     const OUTSIDE_WORK_WINDOW: u32 = 20 * 60;
+    // Default `work_days_mask` enables every day, so the weekday passed to
+    // these time-window tests doesn't change their outcome; the day-gating
+    // behaviour gets its own dedicated tests below.
+    const ANY_WEEKDAY: u32 = 0;
 
     #[test]
     fn evaluate_guards_returns_none_when_all_off() {
         let s = settings_for_guards(false, false, false, false, false);
-        assert!(evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true, false).is_none());
+        assert!(evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY
+            },
+            true,
+            true,
+            true,
+            true,
+            false
+        )
+        .is_none());
     }
 
     #[test]
@@ -1947,9 +1993,19 @@ mod tests {
         // work_window_enabled with a current minute inside [start,end)
         // is the happy path — no suppression.
         let s = settings_for_guards(true, false, false, false, false);
-        assert!(
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false, false).is_none()
-        );
+        assert!(evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY
+            },
+            false,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
     }
 
     #[test]
@@ -1957,8 +2013,19 @@ mod tests {
         // Outside-hours suppression doesn't log — it's a scheduled
         // silence, not an unexpected event.
         let s = settings_for_guards(true, false, false, false, false);
-        let outcome =
-            evaluate_guards(&s, OUTSIDE_WORK_WINDOW, false, false, false, false, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: OUTSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::WorkWindow);
         assert!(
             outcome.log_as.is_none(),
@@ -1967,29 +2034,117 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_guards_work_window_suppresses_on_disabled_weekday() {
+        // Inside the time window, but today's weekday bit is cleared, so the
+        // work-window guard still fires (silently) — the day toggle is the
+        // new gate for #204.
+        let mut s = settings_for_guards(true, false, false, false, false);
+        s.work_days_mask = 0b001_1111; // Mon..Fri only
+        let saturday = 5;
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: saturday,
+            },
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(outcome.reason, SuppressReason::WorkWindow);
+        assert!(outcome.log_as.is_none());
+    }
+
+    #[test]
+    fn evaluate_guards_work_window_allows_enabled_weekday() {
+        // Same window, but a weekday whose bit is set → happy path, no guard.
+        let mut s = settings_for_guards(true, false, false, false, false);
+        s.work_days_mask = 0b001_1111; // Mon..Fri only
+        let wednesday = 2;
+        assert!(evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: wednesday
+            },
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .is_none());
+    }
+
+    #[test]
     fn evaluate_guards_dnd_fires_only_when_setting_and_state_both_true() {
         let s_off = settings_for_guards(false, false, false, false, false);
-        assert!(
-            evaluate_guards(&s_off, INSIDE_WORK_WINDOW, true, false, false, false, false).is_none()
-        );
+        assert!(evaluate_guards(
+            &s_off,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY
+            },
+            true,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
 
         let s_on = settings_for_guards(false, true, false, false, false);
-        let outcome =
-            evaluate_guards(&s_on, INSIDE_WORK_WINDOW, true, false, false, false, false).unwrap();
+        let outcome = evaluate_guards(
+            &s_on,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            true,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Dnd);
         assert_eq!(outcome.log_as, Some(GuardReason::Dnd));
 
         // Setting on but state false → no suppression.
-        assert!(
-            evaluate_guards(&s_on, INSIDE_WORK_WINDOW, false, false, false, false, false).is_none()
-        );
+        assert!(evaluate_guards(
+            &s_on,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY
+            },
+            false,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
     }
 
     #[test]
     fn evaluate_guards_camera_logs_camera_reason() {
         let s = settings_for_guards(false, false, true, false, false);
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, false, false, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            true,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Camera);
         assert_eq!(outcome.log_as, Some(GuardReason::Camera));
     }
@@ -1997,8 +2152,19 @@ mod tests {
     #[test]
     fn evaluate_guards_video_logs_video_reason() {
         let s = settings_for_guards(false, false, false, true, false);
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, false, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            false,
+            true,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Video);
         assert_eq!(outcome.log_as, Some(GuardReason::Video));
     }
@@ -2009,14 +2175,27 @@ mod tests {
         // so the guard must not fire even when app_pause_active is true.
         let mut s = settings_for_guards(false, false, false, false, true);
         s.app_pause_list.clear();
-        assert!(
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true, false).is_none()
-        );
+        assert!(evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY
+            },
+            false,
+            false,
+            false,
+            true,
+            false
+        )
+        .is_none());
 
         let with_target = settings_for_guards(false, false, false, false, true);
         let outcome = evaluate_guards(
             &with_target,
-            INSIDE_WORK_WINDOW,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
             false,
             false,
             false,
@@ -2033,11 +2212,32 @@ mod tests {
         // No setting toggles plugin suppression — a true verdict suppresses,
         // a false one doesn't.
         let s = settings_for_guards(false, false, false, false, false);
-        assert!(
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false, false).is_none()
-        );
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, false, true).unwrap();
+        assert!(evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY
+            },
+            false,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            false,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Plugin);
         assert_eq!(outcome.log_as, Some(GuardReason::Plugin));
     }
@@ -2048,8 +2248,19 @@ mod tests {
         // firing simultaneously, work_window short-circuits the rest
         // (and stays silent, per its no-log policy).
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome =
-            evaluate_guards(&s, OUTSIDE_WORK_WINDOW, true, true, true, true, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: OUTSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            true,
+            true,
+            true,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::WorkWindow);
         assert!(outcome.log_as.is_none());
     }
@@ -2058,32 +2269,76 @@ mod tests {
     fn evaluate_guards_dnd_outranks_camera_video_app_pause() {
         let s = settings_for_guards(true, true, true, true, true);
         // Inside the work window, so work_window does NOT fire.
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, true, true, true, true, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            true,
+            true,
+            true,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Dnd);
     }
 
     #[test]
     fn evaluate_guards_camera_outranks_video_and_app_pause() {
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, true, true, true, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            true,
+            true,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Camera);
     }
 
     #[test]
     fn evaluate_guards_video_outranks_app_pause() {
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, true, true, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            false,
+            true,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::Video);
     }
 
     #[test]
     fn evaluate_guards_app_pause_only_when_higher_guards_quiet() {
         let s = settings_for_guards(true, true, true, true, true);
-        let outcome =
-            evaluate_guards(&s, INSIDE_WORK_WINDOW, false, false, false, true, false).unwrap();
+        let outcome = evaluate_guards(
+            &s,
+            TickClock {
+                now_min: INSIDE_WORK_WINDOW,
+                weekday: ANY_WEEKDAY,
+            },
+            false,
+            false,
+            false,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(outcome.reason, SuppressReason::AppPause);
     }
 
