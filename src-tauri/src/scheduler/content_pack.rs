@@ -434,6 +434,39 @@ mod tests {
         assert!(parse_pack("{ not json").is_err());
     }
 
+    // Settings load tolerates unknown routine category/difficulty values
+    // (#212), but content packs must stay strict — a pack is curated data, so
+    // an unrecognised enum is a malformed file, not something to silently
+    // coerce. Routines parse through the derived `Deserialize`, so these are
+    // rejected at parse time with a clear message.
+    #[test]
+    fn parse_rejects_routine_with_unknown_category() {
+        let json = r#"{
+            "version": 1,
+            "name": "Bad pack",
+            "routines": [{
+                "id": "r1", "label": "R", "kind": "micro",
+                "category": "telepathy", "difficulty": "gentle",
+                "steps": [{"text": "x", "seconds": 5}]
+            }]
+        }"#;
+        assert!(parse_pack(json).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_routine_with_unknown_difficulty() {
+        let json = r#"{
+            "version": 1,
+            "name": "Bad pack",
+            "routines": [{
+                "id": "r1", "label": "R", "kind": "micro",
+                "category": "eyes", "difficulty": "extreme",
+                "steps": [{"text": "x", "seconds": 5}]
+            }]
+        }"#;
+        assert!(parse_pack(json).is_err());
+    }
+
     #[test]
     fn validate_rejects_wrong_version() {
         let mut p = pack_with(vec![], PackHints::default());

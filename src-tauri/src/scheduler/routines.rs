@@ -41,6 +41,23 @@ pub enum RoutineCategory {
     DeskYoga,
 }
 
+impl RoutineCategory {
+    /// Parse the on-disk (snake_case) string; `None` for an unknown value so
+    /// a stale, hand-edited, or future category can be dropped from a
+    /// settings filter list rather than failing the whole profile load
+    /// (#212). Content packs parse routines through the strict derived
+    /// `Deserialize`, so a bad category there is still rejected.
+    pub(crate) fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "eyes" => Some(Self::Eyes),
+            "mobility" => Some(Self::Mobility),
+            "breathing" => Some(Self::Breathing),
+            "desk_yoga" => Some(Self::DeskYoga),
+            _ => None,
+        }
+    }
+}
+
 /// How demanding a routine is. Ordered `Gentle < Moderate < Active`; the
 /// per-kind `*_routine_max_difficulty` filter includes everything up to and
 /// including the chosen level.
@@ -59,6 +76,20 @@ impl RoutineDifficulty {
             Self::Gentle => 1,
             Self::Moderate => 2,
             Self::Active => 3,
+        }
+    }
+
+    /// Parse the on-disk (lowercase) string; `None` for an unknown value so a
+    /// stale `*_routine_max_difficulty` falls back to the default instead of
+    /// failing the whole profile load (#212). Content packs parse routines
+    /// through the strict derived `Deserialize`, so a bad difficulty there is
+    /// still rejected.
+    pub(crate) fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "gentle" => Some(Self::Gentle),
+            "moderate" => Some(Self::Moderate),
+            "active" => Some(Self::Active),
+            _ => None,
         }
     }
 }
@@ -377,6 +408,43 @@ pub async fn get_routines(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routine_category_from_disk_str_round_trips_every_variant() {
+        for (raw, want) in [
+            ("eyes", RoutineCategory::Eyes),
+            ("mobility", RoutineCategory::Mobility),
+            ("breathing", RoutineCategory::Breathing),
+            ("desk_yoga", RoutineCategory::DeskYoga),
+        ] {
+            assert_eq!(RoutineCategory::from_disk_str(raw), Some(want));
+        }
+    }
+
+    #[test]
+    fn routine_category_from_disk_str_rejects_unknown() {
+        assert_eq!(RoutineCategory::from_disk_str("telepathy"), None);
+        assert_eq!(RoutineCategory::from_disk_str("Eyes"), None);
+        assert_eq!(RoutineCategory::from_disk_str(""), None);
+    }
+
+    #[test]
+    fn routine_difficulty_from_disk_str_round_trips_every_variant() {
+        for (raw, want) in [
+            ("gentle", RoutineDifficulty::Gentle),
+            ("moderate", RoutineDifficulty::Moderate),
+            ("active", RoutineDifficulty::Active),
+        ] {
+            assert_eq!(RoutineDifficulty::from_disk_str(raw), Some(want));
+        }
+    }
+
+    #[test]
+    fn routine_difficulty_from_disk_str_rejects_unknown() {
+        assert_eq!(RoutineDifficulty::from_disk_str("extreme"), None);
+        assert_eq!(RoutineDifficulty::from_disk_str("Gentle"), None);
+        assert_eq!(RoutineDifficulty::from_disk_str(""), None);
+    }
 
     #[test]
     fn starter_routines_have_unique_nonempty_ids_and_steps() {
