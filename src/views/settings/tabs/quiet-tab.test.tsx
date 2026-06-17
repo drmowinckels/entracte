@@ -1,8 +1,16 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 
 import type { Platform, PlatformCapabilities } from "../../../lib/platform";
+import type { PauseInfo } from "../types";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
@@ -97,5 +105,57 @@ describe("QuietTab — fullscreen video reliability warning", () => {
     ) as HTMLInputElement;
     checkbox.click();
     expect(update).toHaveBeenCalledWith("pause_during_video", true);
+  });
+});
+
+describe("QuietTab — pause until a datetime", () => {
+  function renderPause(pauseInfo: PauseInfo) {
+    return render(
+      <QuietTab
+        settings={baseSettings}
+        update={vi.fn() as unknown as Parameters<typeof QuietTab>[0]["update"]}
+        pauseInfo={pauseInfo}
+      />,
+    );
+  }
+
+  it("disables the button until a future datetime is chosen", () => {
+    renderPause({ paused: false, remaining_secs: null });
+    const button = screen.getByRole("button", {
+      name: "Pause until then",
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 17, 12, 0, 0));
+    try {
+      const input = screen.getByLabelText("Pause until") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "2026-06-17T13:00" } });
+      expect(button.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pauses for the seconds remaining until the chosen datetime", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 17, 12, 0, 0));
+    try {
+      renderPause({ paused: false, remaining_secs: null });
+      const input = screen.getByLabelText("Pause until") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "2026-06-17T14:30" } });
+      fireEvent.click(screen.getByRole("button", { name: "Pause until then" }));
+      // 14:30 − 12:00 = 2h30m = 9000s.
+      expect(invoke).toHaveBeenCalledWith("pause", { durationSecs: 9000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows Resume and the remaining time instead of the picker when paused", () => {
+    renderPause({ paused: true, remaining_secs: 2 * 86400 + 3 * 3600 });
+    expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+    expect(screen.queryByLabelText("Pause until")).toBeNull();
+    expect(screen.getByText(/2d 3h left/)).toBeTruthy();
   });
 });

@@ -6,7 +6,11 @@ import {
   tokenFor,
 } from "../../../lib/app-suggestions";
 import { usePlatform, usePlatformCapabilities } from "../../../lib/platform";
-import { formatRemaining } from "../../../lib/time";
+import {
+  formatRemaining,
+  secondsUntil,
+  toDatetimeLocalValue,
+} from "../../../lib/time";
 import { CheckboxRow } from "../components/rows";
 import type { UseSettings } from "../hooks/use-settings";
 import type { PauseInfo, SchedulerSettings } from "../types";
@@ -26,6 +30,8 @@ export function QuietTab({
   const [appPauseText, setAppPauseText] = useState(
     listToLines(settings.app_pause_list),
   );
+  const [pauseUntil, setPauseUntil] = useState("");
+  const pauseUntilSecs = secondsUntil(pauseUntil);
 
   // Re-seed if the active profile switched and replaced the list.
   useEffect(() => {
@@ -158,9 +164,36 @@ export function QuietTab({
             </span>
           </div>
         ) : (
-          <p className="placeholder">
-            Pause from the menu bar icon — choose a duration there.
-          </p>
+          <>
+            <p className="placeholder">
+              Pause from the menu bar icon for a quick duration, or until a
+              specific date and time below — handy over a holiday when you're on
+              the computer but not working.
+            </p>
+            <label className="row">
+              <span>Pause until</span>
+              <input
+                type="datetime-local"
+                className="pause-until-input"
+                min={toDatetimeLocalValue()}
+                value={pauseUntil}
+                onChange={(e) => setPauseUntil(e.target.value)}
+              />
+            </label>
+            <div className="actions inline">
+              <button
+                type="button"
+                disabled={pauseUntilSecs === null}
+                onClick={async () => {
+                  if (pauseUntilSecs === null) return;
+                  await invoke("pause", { durationSecs: pauseUntilSecs });
+                  setPauseUntil("");
+                }}
+              >
+                Pause until then
+              </button>
+            </div>
+          </>
         )}
       </section>
     </>

@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
+
 ## [0.0.7] — 2026-06-15
 
 ### Added
