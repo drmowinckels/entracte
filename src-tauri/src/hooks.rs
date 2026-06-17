@@ -937,10 +937,10 @@ mod tests {
 
         #[test]
         fn truncates_and_bounds_a_high_volume_command() {
-            // `yes` floods until `head` closes the pipe at 100 KiB — far past
-            // the 8 KiB display cap. The capture is bounded at the read layer
-            // (#213), so the command still completes and the output carries
-            // the truncation marker instead of the whole flood.
+            // End-to-end smoke test that a flood still completes and is
+            // marked truncated: `yes` floods until `head` closes the pipe at
+            // 100 KiB, far past the 8 KiB display cap. The read-layer bounding
+            // itself is unit-tested in `proc::read_capped_*`.
             let outcome = run_command_capture(
                 r#"/bin/sh -c "yes entracte | head -c 100000""#,
                 &[],

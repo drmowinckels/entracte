@@ -69,13 +69,17 @@ fn read_capped(mut reader: impl Read, cap: Option<usize>) -> Vec<u8> {
     let mut chunk = [0u8; READ_CHUNK];
     loop {
         match reader.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(n) => {
                 if buf.len() < cap {
                     let room = cap - buf.len();
                     buf.extend_from_slice(&chunk[..n.min(room)]);
                 }
             }
+            // Retry on EINTR like `read_to_end` does, so a stray signal
+            // mid-read doesn't look like EOF and stop the drain early.
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
         }
     }
     buf
@@ -171,6 +175,30 @@ mod tests {
     fn read_capped_passes_short_input_through() {
         let out = read_capped(io::Cursor::new(b"hello".to_vec()), Some(8193));
         assert_eq!(out, b"hello");
+    }
+
+    #[test]
+    fn read_capped_retries_on_interrupted() {
+        // A reader that returns EINTR once before its data. The retry branch
+        // must keep reading rather than treating EINTR as EOF (which would
+        // return an empty buffer).
+        struct Flaky {
+            step: u8,
+        }
+        impl Read for Flaky {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.step += 1;
+                match self.step {
+                    1 => Err(io::Error::from(io::ErrorKind::Interrupted)),
+                    2 => {
+                        buf[..3].copy_from_slice(b"abc");
+                        Ok(3)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+        assert_eq!(read_capped(Flaky { step: 0 }, Some(8)), b"abc");
     }
 
     #[test]
