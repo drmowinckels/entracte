@@ -202,6 +202,19 @@ mod tests {
     }
 
     #[test]
+    fn read_capped_stops_on_a_hard_error() {
+        // A non-Interrupted error ends the drain (returning what was read so
+        // far) rather than looping — distinct from the EINTR retry above.
+        struct Boom;
+        impl Read for Boom {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::BrokenPipe))
+            }
+        }
+        assert!(read_capped(Boom, Some(8)).is_empty());
+    }
+
+    #[test]
     fn read_capped_drains_the_reader_past_the_cap() {
         // Even once the retained buffer fills at `cap`, the reader is consumed
         // to EOF — so a real child pipe never blocks on a full buffer. The
