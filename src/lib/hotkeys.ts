@@ -5,6 +5,9 @@ import type { Hotkey, HotkeyAction } from "../views/settings/types";
 // behaviour as the equivalent CLI command.
 export const HOTKEY_ACTIONS: { action: HotkeyAction; label: string }[] = [
   { action: "pause", label: "Pause breaks" },
+  { action: "pause_15m", label: "Pause for 15 minutes" },
+  { action: "pause_30m", label: "Pause for 30 minutes" },
+  { action: "pause_60m", label: "Pause for 60 minutes" },
   { action: "resume", label: "Resume breaks" },
   { action: "trigger_micro", label: "Take a micro break now" },
   { action: "trigger_long", label: "Take a long break now" },

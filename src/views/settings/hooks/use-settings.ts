@@ -32,6 +32,9 @@ const hookConfigSchema = z.object({
 const hotkeySchema = z.object({
   action: z.enum([
     "pause",
+    "pause_15m",
+    "pause_30m",
+    "pause_60m",
     "resume",
     "trigger_micro",
     "trigger_long",

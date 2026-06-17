@@ -48,6 +48,9 @@ export type HookTestOutcome = {
 // `src-tauri/src/scheduler/hotkeys.rs`.
 export type HotkeyAction =
   | "pause"
+  | "pause_15m"
+  | "pause_30m"
+  | "pause_60m"
   | "resume"
   | "trigger_micro"
   | "trigger_long"
