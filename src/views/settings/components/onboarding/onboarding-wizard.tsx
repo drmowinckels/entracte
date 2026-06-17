@@ -3,6 +3,7 @@ import type { UseSettings } from "../../hooks/use-settings";
 import type { SchedulerSettings } from "../../types";
 import { CheckboxRow, TimeRow } from "../rows";
 import { InfoTip } from "../info-tip";
+import { WeekdayToggle } from "../weekday-toggle";
 import "./onboarding.css";
 
 type StepId = "welcome" | "login" | "window" | "hints" | "winddown" | "done";
@@ -180,6 +181,12 @@ function StepContent({
                 value={settings.work_end_minutes}
                 format={settings.clock_format}
                 onChange={(v) => update("work_end_minutes", v)}
+              />
+              <WeekdayToggle
+                label="On these days"
+                mask={settings.work_days_mask}
+                onChange={(v) => update("work_days_mask", v)}
+                tip="Turn off days you don't work — like the weekend — and Entracte stays quiet then. You can fine-tune this later under Schedule."
               />
             </>
           )}
