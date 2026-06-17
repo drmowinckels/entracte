@@ -296,12 +296,21 @@ where
 
 /// Deserialise a `*_routine_categories` filter list permissively: unknown
 /// entries are dropped (each with a logged warning) instead of failing the
-/// whole profile load (#212). An empty result still means "all categories".
+/// whole profile load (#212). A wholly malformed value (not an array of
+/// strings) degrades to an empty list rather than failing the load — matching
+/// the difficulty handler's tolerance. An empty result still means "all
+/// categories".
 fn deserialize_routine_categories<'de, D>(deserializer: D) -> Result<Vec<RoutineCategory>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let raw = Vec::<String>::deserialize(deserializer)?;
+    let raw = match Vec::<String>::deserialize(deserializer) {
+        Ok(raw) => raw,
+        Err(_) => {
+            warn!("settings: routine categories not an array of strings — falling back to all");
+            return Ok(Vec::new());
+        }
+    };
     Ok(raw
         .into_iter()
         .filter_map(|s| {
@@ -1963,6 +1972,20 @@ mod tests {
             s.micro_routine_max_difficulty,
             default_routine_max_difficulty()
         );
+    }
+
+    #[test]
+    fn malformed_routine_categories_fall_back_to_all_not_a_failed_load() {
+        // Not an array, and an array with a non-string element: both degrade
+        // to "all categories" rather than failing the whole profile load.
+        let not_array = r#"{"micro_interval_secs": 99, "micro_routine_categories": "eyes"}"#;
+        let s: Settings = serde_json::from_str(not_array).unwrap();
+        assert_eq!(s.micro_interval_secs, 99);
+        assert!(s.micro_routine_categories.is_empty());
+
+        let bad_element = r#"{"long_routine_categories": ["eyes", 42]}"#;
+        let s: Settings = serde_json::from_str(bad_element).unwrap();
+        assert!(s.long_routine_categories.is_empty());
     }
 
     #[test]
