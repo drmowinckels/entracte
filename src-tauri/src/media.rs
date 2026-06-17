@@ -64,10 +64,19 @@ pub fn set_enabled(enabled: bool) {
 /// Called as a break overlay opens. No-op unless the feature is enabled.
 /// Performs the (fast, infrequent) platform media-pause inline.
 pub fn on_break_start() {
+    on_break_start_with(platform_pause);
+}
+
+/// Testable core of [`on_break_start`]: the enabled-gate and token
+/// bookkeeping, with the platform pause action injected. The injection
+/// keeps unit tests off the real key-send — `platform_pause` posts a
+/// genuine system Play/Pause media key on macOS/Windows, which would
+/// toggle whatever the developer is playing every time the suite runs.
+fn on_break_start_with(pause: impl FnOnce() -> ResumeToken) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    let token = platform_pause();
+    let token = pause();
     if token != ResumeToken::Noop {
         // If a previous break never resumed (app killed mid-break, say),
         // its media is already paused; overwrite the stale token rather
@@ -80,8 +89,15 @@ pub fn on_break_start() {
 /// paused. Deliberately NOT gated on `ENABLED`: if the user toggled the
 /// feature off mid-break, we still resume what we paused.
 pub fn on_break_end() {
+    on_break_end_with(platform_resume);
+}
+
+/// Testable core of [`on_break_end`]: always drains the stored token and
+/// hands it to the injected resume action (see [`on_break_start_with`]
+/// for why the action is injected rather than called directly).
+fn on_break_end_with(resume: impl FnOnce(&ResumeToken)) {
     let token = std::mem::replace(&mut *lock_resume(), ResumeToken::Noop);
-    platform_resume(&token);
+    resume(&token);
 }
 
 /// A poisoned lock only means a previous holder panicked; the media state
@@ -673,22 +689,53 @@ mod tests {
     }
 
     #[test]
-    fn disabled_start_is_noop_and_end_always_drains_token() {
+    fn start_gates_on_enabled_and_end_always_drains_token() {
         // One test for the global-state orchestration so it can't race a
         // sibling on the process-wide statics (these are the only tests
         // that touch ENABLED / RESUME).
         //
-        // Feature off: a start records nothing, so end has nothing to undo.
+        // Drive the platform action through the injectable cores rather
+        // than the real `on_break_start`/`on_break_end`: the latter post a
+        // genuine system Play/Pause media key on macOS/Windows, which would
+        // toggle whatever the developer is playing every test run. The
+        // public wrappers are still exercised via the safe disabled path
+        // below.
+        use std::cell::Cell;
+
+        // Stand-in for the platform pause that always reports it paused
+        // something. Used for both the disabled and enabled cases below;
+        // the enabled case exercises its body so no line is left uncovered.
+        fn paused_media_key() -> ResumeToken {
+            ResumeToken::MediaKey
+        }
+
+        // Feature off: the platform pause is never consulted, so nothing is
+        // recorded for end to undo — driving the core with a pause that
+        // *would* report MediaKey, the resume slot still stays Noop. The
+        // real `on_break_start` is safe here (it returns before touching the
+        // platform), so it also covers the public wrapper.
         *lock_resume() = ResumeToken::Noop;
         set_enabled(false);
+        on_break_start_with(paused_media_key);
         on_break_start();
         assert_eq!(*lock_resume(), ResumeToken::Noop);
-        on_break_end();
+
+        // Feature on: start stores whatever the platform pause returns.
+        set_enabled(true);
+        on_break_start_with(paused_media_key);
+        assert_eq!(*lock_resume(), ResumeToken::MediaKey);
+
+        // End always drains the stored token and hands it to resume,
+        // regardless of the enabled flag — capture it with a spy instead of
+        // posting a real media key.
+        let resumed_with: Cell<Option<ResumeToken>> = Cell::new(None);
+        on_break_end_with(|t| resumed_with.set(Some(t.clone())));
+        assert_eq!(resumed_with.take(), Some(ResumeToken::MediaKey));
         assert_eq!(*lock_resume(), ResumeToken::Noop);
 
-        // A leftover token (e.g. from a break that never resumed) is always
-        // drained by end, regardless of the current enabled flag.
-        *lock_resume() = ResumeToken::MediaKey;
+        // A Noop token is safe to run through the real `on_break_end`, so
+        // use it to cover the public wrapper.
+        set_enabled(false);
         on_break_end();
         assert_eq!(*lock_resume(), ResumeToken::Noop);
     }
