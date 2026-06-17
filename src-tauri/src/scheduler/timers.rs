@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use chrono::{Local, Timelike};
+use chrono::{Datelike, Local, Timelike};
 
 use super::types::{BreakDelivery, BreakKind};
 
@@ -177,6 +177,13 @@ pub fn local_today_string() -> String {
     Local::now().date_naive().format("%Y-%m-%d").to_string()
 }
 
+/// The current local weekday as days-since-Monday (`0` = Monday … `6` =
+/// Sunday). Matches the bit layout of `Settings::work_days_mask` so the
+/// work-window day check can index it directly.
+pub fn current_weekday() -> u32 {
+    Local::now().weekday().num_days_from_monday()
+}
+
 /// Parse `"HH:MM"` (or `"H:MM"`) into minutes since midnight.
 /// Returns `None` on anything out of range or unparseable — used to
 /// filter the user's fixed-time list without spilling errors.
@@ -223,6 +230,32 @@ pub fn in_window(now: u32, start: u32, end: u32) -> bool {
     } else {
         now >= start || now < end
     }
+}
+
+/// True iff the work window is open right now: the time-of-day is inside
+/// `[start, end)` **and** the relevant weekday's bit is set in
+/// `days_mask`. `today` is days-since-Monday (`0`=Mon … `6`=Sun), the
+/// same layout as the mask.
+///
+/// For a window that wraps past midnight (`start > end`, e.g.
+/// 22:00–06:00) the early-morning portion is gated on the day the window
+/// *began* — Friday's 22:00 shift still covers Saturday 02:00 even when
+/// Saturday is off, and an off Sunday won't start a window that bleeds
+/// into Monday morning. A window that doesn't wrap is gated on `today`.
+///
+/// `days_mask == 0` (no day enabled) always returns false; callers gate
+/// on `work_window_enabled` before reaching here, so that simply means
+/// the window never opens.
+pub fn work_window_active(now: u32, start: u32, end: u32, today: u32, days_mask: u8) -> bool {
+    if !in_window(now, start, end) {
+        return false;
+    }
+    let window_day = if start <= end || now >= start {
+        today
+    } else {
+        (today + 6) % 7
+    };
+    days_mask & (1 << window_day) != 0
 }
 
 /// True iff an interval-mode break of this kind is due to fire now.
@@ -445,6 +478,74 @@ mod tests {
     fn current_minutes_in_range() {
         let m = current_minutes();
         assert!(m < 24 * 60);
+    }
+
+    #[test]
+    fn current_weekday_in_range() {
+        assert!(current_weekday() < 7);
+    }
+
+    const ALL_DAYS: u8 = 0b111_1111;
+
+    #[test]
+    fn work_window_active_all_days_matches_in_window() {
+        // With every day enabled, the day gate is a no-op: the result is
+        // exactly `in_window` regardless of `today`.
+        for today in 0..7 {
+            assert_eq!(
+                work_window_active(800, 540, 1080, today, ALL_DAYS),
+                in_window(800, 540, 1080),
+            );
+            assert_eq!(
+                work_window_active(200, 540, 1080, today, ALL_DAYS),
+                in_window(200, 540, 1080),
+            );
+        }
+    }
+
+    #[test]
+    fn work_window_active_gates_on_enabled_day() {
+        // 09:00–17:00, weekdays only (Mon..Fri = bits 0..4).
+        let weekdays = 0b001_1111;
+        // 10:00 Wednesday (today=2) → enabled.
+        assert!(work_window_active(600, 540, 1080, 2, weekdays));
+        // 10:00 Saturday (today=5) → disabled even though inside the hours.
+        assert!(!work_window_active(600, 540, 1080, 5, weekdays));
+        // 20:00 Wednesday → outside the hours regardless of the day.
+        assert!(!work_window_active(1200, 540, 1080, 2, weekdays));
+    }
+
+    #[test]
+    fn work_window_active_empty_mask_is_never_active() {
+        for today in 0..7 {
+            assert!(!work_window_active(600, 540, 1080, today, 0));
+        }
+    }
+
+    #[test]
+    fn work_window_active_wrap_gates_morning_on_starting_day() {
+        // 22:00–06:00 window, enabled Friday only (bit 4).
+        let friday = 1 << 4;
+        // 23:00 Friday (today=4) → the window started today → active.
+        assert!(work_window_active(1380, 1320, 360, 4, friday));
+        // 02:00 Saturday (today=5) → the window started *Friday*, so it's
+        // still Friday's shift → active even though Saturday is off.
+        assert!(work_window_active(120, 1320, 360, 5, friday));
+        // 02:00 Friday (today=4) belongs to Thursday's shift → Thursday is
+        // off → not active.
+        assert!(!work_window_active(120, 1320, 360, 4, friday));
+        // 23:00 Saturday (today=5) starts Saturday's shift → off.
+        assert!(!work_window_active(1380, 1320, 360, 5, friday));
+    }
+
+    #[test]
+    fn work_window_active_wrap_sunday_to_monday_morning() {
+        // 23:00–01:00 window, enabled Sunday only (bit 6). Monday 00:30
+        // (today=0) belongs to Sunday's shift: (0 + 6) % 7 == 6 → active.
+        let sunday = 1 << 6;
+        assert!(work_window_active(30, 1380, 60, 0, sunday));
+        // Sunday 00:30 (today=6) belongs to Saturday's shift → off.
+        assert!(!work_window_active(30, 1380, 60, 6, sunday));
     }
 
     #[test]

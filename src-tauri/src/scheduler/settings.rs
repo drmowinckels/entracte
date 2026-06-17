@@ -310,6 +310,14 @@ fn default_clock_format() -> String {
     "24h".to_string()
 }
 
+/// Every weekday enabled (`0b111_1111`). The default for `work_days_mask`,
+/// so a `settings.json` written before the field existed loads as
+/// "work window applies on all seven days" — preserving the prior
+/// behaviour where the work window had no day-of-week distinction.
+fn default_work_days_mask() -> u8 {
+    0b111_1111
+}
+
 fn default_windowed_fraction() -> f64 {
     0.8
 }
@@ -475,6 +483,17 @@ pub struct Settings {
     pub work_window_enabled: bool,
     pub work_start_minutes: u32,
     pub work_end_minutes: u32,
+    /// Which weekdays the work window applies to, as a 7-bit mask: bit `i`
+    /// (`0` = Monday … `6` = Sunday, matching chrono's
+    /// `Weekday::num_days_from_monday`) set means breaks may fire on that
+    /// day. Only consulted when `work_window_enabled` is on. Defaults to
+    /// every day (`0b111_1111`) so an upgrading user — whose `settings.json`
+    /// predates this field — keeps the old "all days" behaviour. A wrapping
+    /// window (e.g. 22:00–06:00) gates its early-morning portion on the day
+    /// it *started*, not the calendar day it spills into; see
+    /// [`super::timers::work_window_active`].
+    #[serde(default = "default_work_days_mask")]
+    pub work_days_mask: u8,
     pub bedtime_enabled: bool,
     pub bedtime_start_minutes: u32,
     pub bedtime_end_minutes: u32,
@@ -658,6 +677,7 @@ impl Default for Settings {
             work_window_enabled: false,
             work_start_minutes: 9 * 60,
             work_end_minutes: 17 * 60,
+            work_days_mask: default_work_days_mask(),
             bedtime_enabled: false,
             bedtime_start_minutes: 22 * 60,
             bedtime_end_minutes: 23 * 60,
@@ -909,6 +929,11 @@ impl Settings {
         // Time-of-day windows are minutes-since-midnight (0..1439).
         self.work_start_minutes = self.work_start_minutes.min(1_439);
         self.work_end_minutes = self.work_end_minutes.min(1_439);
+        // Only the low 7 bits are meaningful weekdays; drop any stray high
+        // bits a hand-edited settings.json might set. `0` (no days) is a
+        // valid "never inside the window" state and must survive untouched —
+        // masking, not clamping, keeps it.
+        self.work_days_mask &= 0b111_1111;
         self.bedtime_start_minutes = self.bedtime_start_minutes.min(1_439);
         self.bedtime_end_minutes = self.bedtime_end_minutes.min(1_439);
         // Visual: opacity / volume in [0, 1]; font scale in [0.5, 3.0].
@@ -1190,6 +1215,10 @@ mod tests {
         assert!(s.long_enforceable);
         assert!(!s.micro_enforceable);
         assert!(s.work_end_minutes > s.work_start_minutes);
+        assert_eq!(
+            s.work_days_mask, 0b111_1111,
+            "work window defaults to every weekday enabled"
+        );
         assert!(s.overlay_opacity > 0.0 && s.overlay_opacity <= 1.0);
         assert!(s.postpone_minutes > 0);
         assert!(s.sound_volume >= 0.0 && s.sound_volume <= 1.0);
@@ -1285,6 +1314,30 @@ mod tests {
         s.clamp();
         assert!(s.work_start_minutes <= 1_439);
         assert!(s.bedtime_end_minutes <= 1_439);
+    }
+
+    #[test]
+    fn clamp_strips_stray_high_bits_from_work_days_mask() {
+        // A hand-edited settings.json could set bits above the 7 weekday
+        // bits; masking drops them so the bit-test never reads a phantom day.
+        let mut s = Settings {
+            work_days_mask: 0b1010_1010,
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.work_days_mask, 0b010_1010);
+    }
+
+    #[test]
+    fn clamp_keeps_zero_work_days_mask_as_no_days() {
+        // 0 = "no weekday enabled" is a deliberate state (work window on but
+        // every day toggled off). Masking must not turn it into a real day.
+        let mut s = Settings {
+            work_days_mask: 0,
+            ..Settings::default()
+        };
+        s.clamp();
+        assert_eq!(s.work_days_mask, 0);
     }
 
     #[test]

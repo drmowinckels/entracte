@@ -6,6 +6,7 @@ import { Advanced } from "../components/advanced";
 import { BreakModeRow } from "../components/break-mode-row";
 import { CheckboxRow, NumberRow, TimeRow } from "../components/rows";
 import { SoundControls } from "../components/sound-controls";
+import { WeekdayToggle } from "../components/weekday-toggle";
 import type { UseSettings } from "../hooks/use-settings";
 import { useScreenTime } from "../hooks/use-screen-time";
 import type { SchedulerSettings, SupporterStatus } from "../types";
@@ -56,6 +57,13 @@ export function ScheduleTab({
           onChange={(v) => update("work_end_minutes", v)}
           disabled={!settings.work_window_enabled}
           format={settings.clock_format}
+        />
+        <WeekdayToggle
+          label="On these days"
+          mask={settings.work_days_mask}
+          onChange={(v) => update("work_days_mask", v)}
+          disabled={!settings.work_window_enabled}
+          tip="Breaks only fire within the hours above on the selected days — turn off weekends so Entracte stays quiet while you game or relax. A window that runs past midnight (e.g. 22:00–06:00) counts the early-morning hours as part of the day it started."
         />
       </section>
 
