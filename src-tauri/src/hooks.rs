@@ -951,10 +951,10 @@ mod tests {
                 outcome.stdout.contains("…[truncated]"),
                 "expected a truncation marker"
             );
+            let len = outcome.stdout.len();
             assert!(
-                outcome.stdout.len() <= MAX_TEST_OUTPUT_BYTES + 16,
-                "captured output should stay bounded, was {} bytes",
-                outcome.stdout.len()
+                len <= MAX_TEST_OUTPUT_BYTES + 16,
+                "capture not bounded: {len} bytes"
             );
         }
     }
