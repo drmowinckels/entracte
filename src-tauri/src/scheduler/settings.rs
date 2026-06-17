@@ -273,25 +273,24 @@ where
     })
 }
 
-/// Deserialise a `*_routine_max_difficulty` permissively: an unknown value
-/// (stale, hand-edited, or from a future build) falls back to the default
-/// rather than failing the whole profile load (#212). Mirrors the
-/// [`deserialize_with_fallback`] behaviour, but the fallback is the field's
-/// own default since [`RoutineDifficulty`] has no `Default`.
+/// Deserialise a `*_routine_max_difficulty` permissively: an unknown or
+/// wrong-typed value (stale, hand-edited, or from a future build) falls back
+/// to [`RoutineDifficulty::default`] rather than failing the whole profile
+/// load (#212). Shares the [`deserialize_with_fallback`] helper with the
+/// other tolerant settings enums; kept as a field-level `deserialize_with`
+/// (not a type-level `Deserialize` impl) so content packs still parse
+/// routines through the strict derived `Deserialize`.
 fn deserialize_routine_max_difficulty<'de, D>(
     deserializer: D,
 ) -> Result<RoutineDifficulty, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let raw = match String::deserialize(deserializer) {
-        Ok(raw) => raw,
-        Err(_) => return Ok(default_routine_max_difficulty()),
-    };
-    Ok(RoutineDifficulty::from_disk_str(&raw).unwrap_or_else(|| {
-        warn!("settings: unknown routine_max_difficulty value {raw:?} — falling back to default");
-        default_routine_max_difficulty()
-    }))
+    Ok(deserialize_with_fallback(
+        deserializer,
+        "routine_max_difficulty",
+        RoutineDifficulty::from_disk_str,
+    ))
 }
 
 /// Deserialise a `*_routine_categories` filter list permissively: unknown
