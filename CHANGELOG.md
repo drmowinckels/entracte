@@ -9,6 +9,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Added
 
+- **Active hours can target specific weekdays.** The Schedule tab's **Active hours** section gains an **On these days** picker, so the work window can apply only on the days you actually work — turn off Saturday and Sunday and Entracte stays quiet while you game or relax at the weekend, no need to remember to pause it. Defaults to every day, so existing setups are unchanged on upgrade. A window that runs past midnight (e.g. 22:00–06:00) counts its early-morning hours as part of the day it started. ([#204](https://github.com/drmowinckels/entracte/issues/204))
 - **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
 
 ## [0.0.7] — 2026-06-15

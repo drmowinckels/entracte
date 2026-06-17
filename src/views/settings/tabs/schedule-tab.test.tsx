@@ -83,3 +83,39 @@ describe("ScheduleTab per-break postpone & skip", () => {
     expect(screen.queryByText("Skip long breaks")).toBeNull();
   });
 });
+
+describe("ScheduleTab active-hours weekday picker", () => {
+  it("renders a labelled toggle for each weekday reflecting the mask", () => {
+    // 0b001_1111 = Mon..Fri on, Sat/Sun off.
+    renderTab(() => {}, {
+      work_window_enabled: true,
+      work_days_mask: 0b001_1111,
+    });
+    const monday = screen.getByRole("button", { name: "Monday" });
+    const saturday = screen.getByRole("button", { name: "Saturday" });
+    expect(monday.getAttribute("aria-pressed")).toBe("true");
+    expect(saturday.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("clicking a day toggles its bit via update", () => {
+    const update = vi.fn();
+    renderTab(update, {
+      work_window_enabled: true,
+      work_days_mask: 0b111_1111,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Saturday" }));
+    // Saturday is bit 5: 0b111_1111 ^ (1 << 5) = 0b101_1111 = 95.
+    expect(update).toHaveBeenCalledWith("work_days_mask", 0b101_1111);
+  });
+
+  it("disables the day toggles when the work window is off", () => {
+    renderTab(() => {}, {
+      work_window_enabled: false,
+      work_days_mask: 0b111_1111,
+    });
+    expect(
+      (screen.getByRole("button", { name: "Monday" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+});

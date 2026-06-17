@@ -16,6 +16,7 @@
   "work_window_enabled": false,
   "work_start_minutes": 540,
   "work_end_minutes": 1020,
+  "work_days_mask": 127,
   "bedtime_enabled": false,
   "bedtime_start_minutes": 1320,
   "bedtime_end_minutes": 1380,

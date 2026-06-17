@@ -132,6 +132,9 @@ export type SchedulerSettings = {
   work_window_enabled: boolean;
   work_start_minutes: number;
   work_end_minutes: number;
+  /** 7-bit weekday mask for the work window: bit 0 = Monday … bit 6 =
+   * Sunday. Only consulted when `work_window_enabled` is true. */
+  work_days_mask: number;
   bedtime_enabled: boolean;
   bedtime_start_minutes: number;
   bedtime_end_minutes: number;

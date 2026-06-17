@@ -372,6 +372,39 @@ body,
   font-style: italic;
 }
 
+.settings .weekday-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.settings .weekday-chip {
+  min-width: 2.7rem;
+  padding: 0.3rem 0.55rem;
+  background: var(--input-bg);
+  color: var(--fg);
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.settings .weekday-chip:hover:not(:disabled) {
+  background: var(--input-hover);
+  border-color: var(--accent);
+}
+
+.settings .weekday-chip.active {
+  background: var(--accent-strong, var(--accent));
+  border-color: var(--accent-strong, var(--accent));
+  color: white;
+}
+
+.settings .weekday-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .settings .hint-label {
   font-size: 0.85rem;
   color: var(--muted-fg);
