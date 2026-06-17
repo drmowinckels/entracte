@@ -14,6 +14,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 ### Fixed
 
 - **A stale routine filter no longer resets your whole profile.** The guided-routine **category** and **maximum difficulty** filters are stored by name; if `settings.json` carried a value an older or hand-edited build didn't recognise, the entire profile failed to load and silently reverted to defaults. Unknown categories are now dropped from the filter list and an unknown maximum difficulty falls back to its default, so the rest of your settings load untouched. Content packs stay strict — an unrecognised value there is still rejected as a malformed pack. ([#212](https://github.com/drmowinckels/entracte/issues/212))
+- **The hook Test button can't be flooded into hogging memory.** Testing an event-hook command captures its output to show you stdout/stderr; a command that spewed output could previously buffer all of it in memory before it was trimmed for display. The capture is now bounded as it's read — the command still runs to completion and you still see its (truncated) output, but a runaway never balloons memory. ([#213](https://github.com/drmowinckels/entracte/issues/213))
 
 ## [0.0.7] — 2026-06-15
 
