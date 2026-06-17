@@ -60,12 +60,16 @@ impl RoutineCategory {
 
 /// How demanding a routine is. Ordered `Gentle < Moderate < Active`; the
 /// per-kind `*_routine_max_difficulty` filter includes everything up to and
-/// including the chosen level.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+/// including the chosen level. `Default` is `Active` (the most permissive
+/// filter) so a stale/unknown value can fall back through the shared
+/// `deserialize_with_fallback` helper, matching the other tolerant settings
+/// enums.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RoutineDifficulty {
     Gentle,
     Moderate,
+    #[default]
     Active,
 }
 
@@ -444,6 +448,13 @@ mod tests {
         assert_eq!(RoutineDifficulty::from_disk_str("extreme"), None);
         assert_eq!(RoutineDifficulty::from_disk_str("Gentle"), None);
         assert_eq!(RoutineDifficulty::from_disk_str(""), None);
+    }
+
+    #[test]
+    fn routine_difficulty_defaults_to_active() {
+        // The tolerant settings deserializer falls back through this default,
+        // so it must stay the most permissive level.
+        assert_eq!(RoutineDifficulty::default(), RoutineDifficulty::Active);
     }
 
     #[test]
