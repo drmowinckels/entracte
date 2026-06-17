@@ -28,12 +28,34 @@ use super::Scheduler;
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyAction {
     Pause,
+    #[serde(rename = "pause_15m")]
+    Pause15m,
+    #[serde(rename = "pause_30m")]
+    Pause30m,
+    #[serde(rename = "pause_60m")]
+    Pause60m,
     Resume,
     TriggerMicro,
     TriggerLong,
     SkipMicro,
     SkipLong,
     CycleProfile,
+}
+
+impl HotkeyAction {
+    /// For a pause action, the pause length: `Some(None)` is an indefinite
+    /// pause, `Some(Some(secs))` a timed one; `None` for non-pause actions.
+    /// Pure so the duration mapping is unit-testable. The timed values mirror
+    /// the `entracte pause <dur>` / `IpcRequest::Pause { duration_secs }` path.
+    fn pause_duration_secs(self) -> Option<Option<u64>> {
+        match self {
+            HotkeyAction::Pause => Some(None),
+            HotkeyAction::Pause15m => Some(Some(15 * 60)),
+            HotkeyAction::Pause30m => Some(Some(30 * 60)),
+            HotkeyAction::Pause60m => Some(Some(60 * 60)),
+            _ => None,
+        }
+    }
 }
 
 /// A single binding: an [`HotkeyAction`] and the accelerator that triggers
@@ -116,8 +138,17 @@ pub async fn execute_hotkey_action<R: Runtime>(
 ) {
     use super::PauseState;
     match action {
-        HotkeyAction::Pause => {
-            *scheduler.pause_state.lock().await = PauseState::PausedUntil(None);
+        HotkeyAction::Pause
+        | HotkeyAction::Pause15m
+        | HotkeyAction::Pause30m
+        | HotkeyAction::Pause60m => {
+            // `Some(None)` = indefinite, `Some(Some(secs))` = timed. Mirrors
+            // the IPC `Pause { duration_secs }` write.
+            let until = action
+                .pause_duration_secs()
+                .flatten()
+                .map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+            *scheduler.pause_state.lock().await = PauseState::PausedUntil(until);
             let _ = app.emit("pause:changed", true);
         }
         HotkeyAction::Resume => {
@@ -260,6 +291,34 @@ mod tests {
     }
 
     #[test]
+    fn pause_duration_secs_maps_each_pause_action() {
+        assert_eq!(HotkeyAction::Pause.pause_duration_secs(), Some(None));
+        assert_eq!(
+            HotkeyAction::Pause15m.pause_duration_secs(),
+            Some(Some(900))
+        );
+        assert_eq!(
+            HotkeyAction::Pause30m.pause_duration_secs(),
+            Some(Some(1800))
+        );
+        assert_eq!(
+            HotkeyAction::Pause60m.pause_duration_secs(),
+            Some(Some(3600))
+        );
+        // Non-pause actions carry no pause duration.
+        assert_eq!(HotkeyAction::Resume.pause_duration_secs(), None);
+        assert_eq!(HotkeyAction::CycleProfile.pause_duration_secs(), None);
+    }
+
+    #[test]
+    fn pause_actions_serialize_to_their_on_disk_strings() {
+        let json = serde_json::to_string(&HotkeyAction::Pause15m).unwrap();
+        assert_eq!(json, "\"pause_15m\"");
+        let back: HotkeyAction = serde_json::from_str("\"pause_60m\"").unwrap();
+        assert_eq!(back, HotkeyAction::Pause60m);
+    }
+
+    #[test]
     fn next_profile_name_handles_single_profile() {
         let names = vec!["Only".to_string()];
         // One profile: cycling lands back on itself.
@@ -299,6 +358,22 @@ mod tests {
                 *sched.pause_state.lock().await,
                 PauseState::Running
             ));
+        }
+
+        #[tokio::test]
+        async fn timed_pause_sets_a_future_deadline() {
+            let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+            let before = std::time::Instant::now();
+            execute_hotkey_action(app.handle(), &sched, HotkeyAction::Pause30m).await;
+            let state = sched.pause_state.lock().await.clone();
+            match state {
+                PauseState::PausedUntil(Some(until)) => {
+                    // ~30 minutes out, with slack for execution time.
+                    assert!(until > before + std::time::Duration::from_secs(29 * 60));
+                    assert!(until <= before + std::time::Duration::from_secs(31 * 60));
+                }
+                ref other => panic!("expected a timed pause, got {other:?}"),
+            }
         }
 
         #[tokio::test]
