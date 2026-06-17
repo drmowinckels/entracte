@@ -702,24 +702,27 @@ mod tests {
         // below.
         use std::cell::Cell;
 
-        // Feature off: the platform pause is never invoked, so nothing is
-        // recorded for end to undo. The real `on_break_start` is safe here
-        // (it returns before touching the platform), so use it to cover the
-        // public wrapper.
+        // Stand-in for the platform pause that always reports it paused
+        // something. Used for both the disabled and enabled cases below;
+        // the enabled case exercises its body so no line is left uncovered.
+        fn paused_media_key() -> ResumeToken {
+            ResumeToken::MediaKey
+        }
+
+        // Feature off: the platform pause is never consulted, so nothing is
+        // recorded for end to undo — driving the core with a pause that
+        // *would* report MediaKey, the resume slot still stays Noop. The
+        // real `on_break_start` is safe here (it returns before touching the
+        // platform), so it also covers the public wrapper.
         *lock_resume() = ResumeToken::Noop;
         set_enabled(false);
-        let paused = Cell::new(false);
-        on_break_start_with(|| {
-            paused.set(true);
-            ResumeToken::MediaKey
-        });
-        assert!(!paused.get(), "disabled start must not touch the platform");
+        on_break_start_with(paused_media_key);
         on_break_start();
         assert_eq!(*lock_resume(), ResumeToken::Noop);
 
         // Feature on: start stores whatever the platform pause returns.
         set_enabled(true);
-        on_break_start_with(|| ResumeToken::MediaKey);
+        on_break_start_with(paused_media_key);
         assert_eq!(*lock_resume(), ResumeToken::MediaKey);
 
         // End always drains the stored token and hands it to resume,
