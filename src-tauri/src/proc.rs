@@ -225,10 +225,10 @@ mod tests {
         let out = cmd
             .output_timeout_capped(Duration::from_secs(5), 4096)
             .expect("command completes within the timeout");
+        let len = out.stdout.len();
         assert!(
-            out.stdout.len() <= 4096,
-            "stdout should be bounded by the cap, was {}",
-            out.stdout.len()
+            len <= 4096,
+            "stdout should be bounded by the cap, was {len}"
         );
         assert!(out.stderr.is_empty());
     }
