@@ -116,9 +116,9 @@ describe("hotkey action parity", () => {
 
   it("the zod hotkey schema accepts every HOTKEY_ACTIONS action", () => {
     for (const { action } of HOTKEY_ACTIONS) {
-      expect(
-        hotkeySchema.safeParse({ action, accelerator: "" }).success,
-      ).toBe(true);
+      expect(hotkeySchema.safeParse({ action, accelerator: "" }).success).toBe(
+        true,
+      );
     }
   });
 
