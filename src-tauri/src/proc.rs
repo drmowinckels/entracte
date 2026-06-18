@@ -214,6 +214,25 @@ mod tests {
         assert!(read_capped(Boom, Some(8)).is_empty());
     }
 
+    // Directly exercises the `output_timeout_capped` (`Some(cap)`) wiring
+    // through a real child, not just the `read_capped` core. Unix-only: needs
+    // a shell that floods then exits when the reader stops (yes | head).
+    #[cfg(unix)]
+    #[test]
+    fn output_timeout_capped_bounds_each_stream() {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "yes entracte | head -c 100000"]);
+        let out = cmd
+            .output_timeout_capped(Duration::from_secs(5), 4096)
+            .expect("command completes within the timeout");
+        let len = out.stdout.len();
+        assert!(
+            len <= 4096,
+            "stdout should be bounded by the cap, was {len}"
+        );
+        assert!(out.stderr.is_empty());
+    }
+
     #[test]
     fn read_capped_drains_the_reader_past_the_cap() {
         // Even once the retained buffer fills at `cap`, the reader is consumed

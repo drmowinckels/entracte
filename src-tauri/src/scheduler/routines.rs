@@ -415,13 +415,20 @@ mod tests {
 
     #[test]
     fn routine_category_from_disk_str_round_trips_every_variant() {
-        for (raw, want) in [
-            ("eyes", RoutineCategory::Eyes),
-            ("mobility", RoutineCategory::Mobility),
-            ("breathing", RoutineCategory::Breathing),
-            ("desk_yoga", RoutineCategory::DeskYoga),
-        ] {
-            assert_eq!(RoutineCategory::from_disk_str(raw), Some(want));
+        use RoutineCategory::*;
+        for c in [Eyes, Mobility, Breathing, DeskYoga] {
+            // Exhaustive match: a new variant fails to compile here until it
+            // gains a `from_disk_str` arm, guarding against one silently
+            // parsing to `None` through that fn's `_` arm. Also pins the disk
+            // string to the serde rename in both directions.
+            let disk = match c {
+                Eyes => "eyes",
+                Mobility => "mobility",
+                Breathing => "breathing",
+                DeskYoga => "desk_yoga",
+            };
+            assert_eq!(serde_json::to_value(c).unwrap(), serde_json::json!(disk));
+            assert_eq!(RoutineCategory::from_disk_str(disk), Some(c));
         }
     }
 
@@ -434,12 +441,18 @@ mod tests {
 
     #[test]
     fn routine_difficulty_from_disk_str_round_trips_every_variant() {
-        for (raw, want) in [
-            ("gentle", RoutineDifficulty::Gentle),
-            ("moderate", RoutineDifficulty::Moderate),
-            ("active", RoutineDifficulty::Active),
-        ] {
-            assert_eq!(RoutineDifficulty::from_disk_str(raw), Some(want));
+        use RoutineDifficulty::*;
+        for d in [Gentle, Moderate, Active] {
+            // Exhaustive match: see the category test above — a new variant
+            // can't compile without a `from_disk_str` arm and a serde-rename
+            // cross-check.
+            let disk = match d {
+                Gentle => "gentle",
+                Moderate => "moderate",
+                Active => "active",
+            };
+            assert_eq!(serde_json::to_value(d).unwrap(), serde_json::json!(disk));
+            assert_eq!(RoutineDifficulty::from_disk_str(disk), Some(d));
         }
     }
 
