@@ -72,8 +72,15 @@ export function localDateString(d: Date = new Date()): string {
 }
 
 /** Human-friendly remaining duration for the pause status row
- * (`"1h 23m"`, `"4m 09s"`, `"42s"`). */
+ * (`"3d 4h"`, `"1h 23m"`, `"4m 09s"`, `"42s"`). The day tier keeps a
+ * long "pause until <date>" readable instead of rendering hundreds of
+ * hours. */
 export function formatRemaining(secs: number): string {
+  if (secs >= 86400) {
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    return `${d}d ${h}h`;
+  }
   if (secs >= 3600) {
     const h = Math.floor(secs / 3600);
     const m = Math.floor((secs % 3600) / 60);
@@ -85,4 +92,28 @@ export function formatRemaining(secs: number): string {
     return `${m}m ${String(s).padStart(2, "0")}s`;
   }
   return `${secs}s`;
+}
+
+/** Format a `Date` as the `"YYYY-MM-DDTHH:MM"` value an
+ * `<input type="datetime-local">` expects, in the user's local timezone.
+ * Built on {@link localDateString} so it never drifts a day via UTC. */
+export function toDatetimeLocalValue(d: Date = new Date()): string {
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${localDateString(d)}T${hh}:${mm}`;
+}
+
+/** Whole seconds from `now` until the local datetime `target` (a string
+ * from an `<input type="datetime-local">`, or a `Date`). Returns `null`
+ * for an invalid value or any time at/before `now` — the caller uses
+ * `null` to mean "nothing to pause for." A bare date-time string with no
+ * timezone is interpreted as local time, matching the picker. */
+export function secondsUntil(
+  target: string | Date,
+  now: Date = new Date(),
+): number | null {
+  const t = typeof target === "string" ? new Date(target) : target;
+  if (Number.isNaN(t.getTime())) return null;
+  const secs = Math.floor((t.getTime() - now.getTime()) / 1000);
+  return secs > 0 ? secs : null;
 }

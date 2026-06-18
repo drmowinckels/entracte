@@ -3,7 +3,9 @@ import {
   formatRemaining,
   localDateString,
   minutesToTime,
+  secondsUntil,
   timeToMinutes,
+  toDatetimeLocalValue,
 } from "./time";
 
 describe("minutesToTime", () => {
@@ -70,5 +72,53 @@ describe("formatRemaining", () => {
     expect(formatRemaining(3600)).toBe("1h 0m");
     expect(formatRemaining(3700)).toBe("1h 1m");
     expect(formatRemaining(7325)).toBe("2h 2m");
+  });
+
+  it("uses days and hours for a day or more", () => {
+    expect(formatRemaining(86400)).toBe("1d 0h");
+    expect(formatRemaining(86400 + 3600)).toBe("1d 1h");
+    // A week-long holiday pause stays readable instead of "168h 0m".
+    expect(formatRemaining(7 * 86400 + 5 * 3600)).toBe("7d 5h");
+  });
+});
+
+describe("toDatetimeLocalValue", () => {
+  it("formats a Date as the datetime-local input value in local time", () => {
+    expect(toDatetimeLocalValue(new Date(2026, 5, 20, 9, 5))).toBe(
+      "2026-06-20T09:05",
+    );
+  });
+
+  it("zero-pads every field", () => {
+    expect(toDatetimeLocalValue(new Date(2026, 0, 3, 0, 0))).toBe(
+      "2026-01-03T00:00",
+    );
+  });
+});
+
+describe("secondsUntil", () => {
+  const now = new Date(2026, 5, 17, 12, 0, 0);
+
+  it("returns whole seconds from now to a future local datetime", () => {
+    expect(secondsUntil("2026-06-17T13:00", now)).toBe(3600);
+    expect(secondsUntil(new Date(2026, 5, 18, 12, 0, 0), now)).toBe(86400);
+  });
+
+  it("returns null for a time at or before now", () => {
+    expect(secondsUntil("2026-06-17T12:00", now)).toBeNull();
+    expect(secondsUntil("2026-06-17T11:59", now)).toBeNull();
+  });
+
+  it("returns null for an invalid value", () => {
+    expect(secondsUntil("", now)).toBeNull();
+    expect(secondsUntil("not-a-date", now)).toBeNull();
+  });
+
+  it("round-trips with toDatetimeLocalValue", () => {
+    const target = new Date(2026, 5, 19, 8, 30, 0);
+    const secs = secondsUntil(toDatetimeLocalValue(target), now);
+    // toDatetimeLocalValue drops sub-minute precision; now is on a whole
+    // minute, so the gap is an exact number of minutes.
+    expect(secs).toBe(Math.floor((target.getTime() - now.getTime()) / 1000));
   });
 });

@@ -175,6 +175,7 @@ body,
 
 .settings input[type="time"],
 .settings input[type="number"],
+.settings input[type="datetime-local"],
 .settings input.time-input,
 .settings select {
   background: var(--input-bg);
@@ -184,6 +185,10 @@ body,
   padding: 0.35rem 0.6rem;
   font-size: 0.95rem;
   font-family: inherit;
+}
+
+.settings input[type="datetime-local"] {
+  font-variant-numeric: tabular-nums;
 }
 
 .settings input[type="number"] {
