@@ -29,9 +29,14 @@ const hookConfigSchema = z.object({
   enabled: z.boolean(),
 });
 
-const hotkeySchema = z.object({
+// Exported so the hotkey-parity test can assert the zod action enum stays in
+// sync with HOTKEY_ACTIONS (and, via the Rust-side parity test, the union).
+export const hotkeySchema = z.object({
   action: z.enum([
     "pause",
+    "pause_15m",
+    "pause_30m",
+    "pause_60m",
     "resume",
     "trigger_micro",
     "trigger_long",

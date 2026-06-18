@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   acceleratorFor,
   conflictingAccelerators,
+  HOTKEY_ACTIONS,
   isValidAccelerator,
   normalizeAccelerator,
   setAccelerator,
 } from "./hotkeys";
+import { hotkeySchema } from "../views/settings/hooks/use-settings";
 import type { Hotkey } from "../views/settings/types";
 
 describe("isValidAccelerator", () => {
@@ -99,5 +101,30 @@ describe("setAccelerator", () => {
       "   ",
     );
     expect(next).toEqual([{ action: "resume", accelerator: "Ctrl+R" }]);
+  });
+});
+
+describe("hotkey action parity", () => {
+  // The Rust enum ↔ TS union leg is guarded in settings.rs
+  // (`hotkey_action_values_match_ts_union`); this guards the two TS runtime
+  // lists — the zod action enum and HOTKEY_ACTIONS — against drifting apart.
+  it("HOTKEY_ACTIONS and the zod hotkey enum list the same actions", () => {
+    const fromList = new Set(HOTKEY_ACTIONS.map((a) => a.action));
+    const fromZod = new Set(hotkeySchema.shape.action.options);
+    expect(fromZod).toEqual(fromList);
+  });
+
+  it("the zod hotkey schema accepts every HOTKEY_ACTIONS action", () => {
+    for (const { action } of HOTKEY_ACTIONS) {
+      expect(hotkeySchema.safeParse({ action, accelerator: "" }).success).toBe(
+        true,
+      );
+    }
+  });
+
+  it("the zod hotkey schema rejects an unknown action", () => {
+    expect(
+      hotkeySchema.safeParse({ action: "teleport", accelerator: "" }).success,
+    ).toBe(false);
   });
 });

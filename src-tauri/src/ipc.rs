@@ -35,7 +35,6 @@
 //! connection. Reads are bounded by [`MAX_REQUEST_BYTES`] so a hostile
 //! peer can't OOM the server with an unbounded frame.
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -224,15 +223,13 @@ async fn dispatch(app: &AppHandle, req: IpcRequest) -> IpcResponse {
             }
         }
         IpcRequest::Pause { duration_secs } => {
-            use std::time::Instant;
-            let until = duration_secs.map(|s| Instant::now() + Duration::from_secs(s));
-            *scheduler.pause_state.lock().await = crate::scheduler::PauseState::PausedUntil(until);
+            crate::scheduler::pause_impl(&scheduler, duration_secs).await;
             let _ = app.emit("pause:changed", true);
             log::info!("ipc: pause {:?}", duration_secs);
             IpcResponse::ok(serde_json::json!({"ok": true, "paused": true}))
         }
         IpcRequest::Resume => {
-            *scheduler.pause_state.lock().await = crate::scheduler::PauseState::Running;
+            crate::scheduler::resume_impl(&scheduler).await;
             let _ = app.emit("pause:changed", false);
             log::info!("ipc: resume");
             IpcResponse::ok(serde_json::json!({"ok": true, "paused": false}))

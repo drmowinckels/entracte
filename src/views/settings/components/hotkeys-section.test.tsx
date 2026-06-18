@@ -37,6 +37,17 @@ describe("HotkeysSection", () => {
     ).toBe("");
   });
 
+  it("lists the preset-duration pause actions", () => {
+    renderSection(true, [
+      { action: "pause_30m", accelerator: "CmdOrCtrl+Alt+3" },
+    ]);
+    expect(screen.getByLabelText("Pause for 15 minutes")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Pause for 30 minutes") as HTMLInputElement).value,
+    ).toBe("CmdOrCtrl+Alt+3");
+    expect(screen.getByLabelText("Pause for 60 minutes")).toBeTruthy();
+  });
+
   it("persists an edited accelerator through update()", () => {
     const update = vi.fn();
     renderSection(true, [], update);

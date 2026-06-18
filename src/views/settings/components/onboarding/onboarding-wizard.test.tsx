@@ -12,6 +12,7 @@ function baseSettings(
     work_window_enabled: false,
     work_start_minutes: 9 * 60,
     work_end_minutes: 17 * 60,
+    work_days_mask: 0b111_1111,
     clock_format: "24h",
     show_hint: true,
     long_hint_mix: "both",
@@ -114,6 +115,25 @@ describe("OnboardingWizard", () => {
     await user.type(end, "18:00");
     await user.tab();
     expect(update).toHaveBeenCalledWith("work_end_minutes", 18 * 60);
+  });
+
+  it("hides the weekday picker until working hours are enabled", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await advanceTo(user, 2);
+    expect(screen.queryByText("On these days")).toBeNull();
+  });
+
+  it("shows the weekday picker and toggles a day when the window is enabled", async () => {
+    const user = userEvent.setup();
+    const { update } = renderWizard({
+      work_window_enabled: true,
+      work_days_mask: 0b111_1111,
+    });
+    await advanceTo(user, 2);
+    expect(screen.getByText("On these days")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Sunday" }));
+    expect(update).toHaveBeenCalledWith("work_days_mask", 0b011_1111);
   });
 
   it("choosing the solo worker option updates long_hint_mix", async () => {

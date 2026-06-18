@@ -341,7 +341,10 @@ pub fn run_command_capture(
     for (k, v) in env {
         cmd.env(k, v);
     }
-    match cmd.output_timeout(timeout) {
+    // Cap the capture one byte past the display limit so a flood is bounded
+    // at the read layer (#213) while `truncate_output` can still tell the
+    // output overran and add its marker.
+    match cmd.output_timeout_capped(timeout, MAX_TEST_OUTPUT_BYTES + 1) {
         Ok(output) => HookTestOutcome {
             ok: true,
             exit_code: output.status.code(),
@@ -930,6 +933,29 @@ mod tests {
                 run_command_capture("/bin/sh -c \"sleep 5\"", &[], Duration::from_millis(200));
             assert!(!outcome.ok);
             assert!(outcome.error.unwrap().contains("still running"));
+        }
+
+        #[test]
+        fn truncates_and_bounds_a_high_volume_command() {
+            // End-to-end smoke test that a flood still completes and is
+            // marked truncated: `yes` floods until `head` closes the pipe at
+            // 100 KiB, far past the 8 KiB display cap. The read-layer bounding
+            // itself is unit-tested in `proc::read_capped_*`.
+            let outcome = run_command_capture(
+                r#"/bin/sh -c "yes entracte | head -c 100000""#,
+                &[],
+                Duration::from_secs(5),
+            );
+            assert!(outcome.ok, "command should complete, got {outcome:?}");
+            assert!(
+                outcome.stdout.contains("…[truncated]"),
+                "expected a truncation marker"
+            );
+            let len = outcome.stdout.len();
+            assert!(
+                len <= MAX_TEST_OUTPUT_BYTES + 16,
+                "capture not bounded: {len} bytes"
+            );
         }
     }
 }

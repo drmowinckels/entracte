@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{Local, Timelike};
 use tauri::{
@@ -10,7 +10,7 @@ use tauri::{
 };
 
 use crate::scheduler::{
-    format_countdown, BreakKind, LastBreakInfo, PauseState, Scheduler, TrayCountdownSnapshot,
+    format_countdown, BreakKind, LastBreakInfo, Scheduler, TrayCountdownSnapshot,
 };
 
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../icons/trayIconTemplate.png");
@@ -225,7 +225,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     let pause_submenu = pause_submenu_for_click.clone();
                     let resume = resume_for_click.clone();
                     tauri::async_runtime::spawn(async move {
-                        *scheduler.pause_state.lock().await = PauseState::Running;
+                        crate::scheduler::resume_impl(&scheduler).await;
                         let _ = pause_submenu.set_enabled(true);
                         let _ = resume.set_enabled(false);
                         let _ = app_handle.emit("pause:changed", false);
@@ -261,8 +261,12 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 let pause_submenu = pause_submenu_for_click.clone();
                 let resume = resume_for_click.clone();
                 tauri::async_runtime::spawn(async move {
-                    let until = d.map(|s| Instant::now() + Duration::from_secs(s));
-                    *scheduler.pause_state.lock().await = PauseState::PausedUntil(until);
+                    // `d` is the inner `Option<u64>`: `None` = indefinite,
+                    // `Some(secs)` = timed. Route through the canonical
+                    // `pause_impl` so the pause persists, logs `PauseStart`,
+                    // and fires `pause_start` hooks like the Settings button
+                    // (#218).
+                    crate::scheduler::pause_impl(&scheduler, d).await;
                     let _ = pause_submenu.set_enabled(false);
                     let _ = resume.set_enabled(true);
                     let _ = app_handle.emit("pause:changed", true);

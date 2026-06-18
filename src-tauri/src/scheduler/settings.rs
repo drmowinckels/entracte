@@ -273,6 +273,55 @@ where
     })
 }
 
+/// Deserialise a `*_routine_max_difficulty` permissively: an unknown or
+/// wrong-typed value (stale, hand-edited, or from a future build) falls back
+/// to [`RoutineDifficulty::default`] rather than failing the whole profile
+/// load (#212). Shares the [`deserialize_with_fallback`] helper with the
+/// other tolerant settings enums; kept as a field-level `deserialize_with`
+/// (not a type-level `Deserialize` impl) so content packs still parse
+/// routines through the strict derived `Deserialize`.
+fn deserialize_routine_max_difficulty<'de, D>(
+    deserializer: D,
+) -> Result<RoutineDifficulty, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(deserialize_with_fallback(
+        deserializer,
+        "routine_max_difficulty",
+        RoutineDifficulty::from_disk_str,
+    ))
+}
+
+/// Deserialise a `*_routine_categories` filter list permissively: unknown
+/// entries are dropped (each with a logged warning) instead of failing the
+/// whole profile load (#212). A wholly malformed value (not an array of
+/// strings) degrades to an empty list rather than failing the load — matching
+/// the difficulty handler's tolerance. An empty result still means "all
+/// categories".
+fn deserialize_routine_categories<'de, D>(deserializer: D) -> Result<Vec<RoutineCategory>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = match Vec::<String>::deserialize(deserializer) {
+        Ok(raw) => raw,
+        Err(_) => {
+            warn!("settings: routine categories not an array of strings — falling back to all");
+            return Ok(Vec::new());
+        }
+    };
+    Ok(raw
+        .into_iter()
+        .filter_map(|s| {
+            let parsed = RoutineCategory::from_disk_str(&s);
+            if parsed.is_none() {
+                warn!("settings: dropping unknown routine category {s:?}");
+            }
+            parsed
+        })
+        .collect())
+}
+
 /// Per-break-kind audio configuration: mode + which bundled sound to play.
 /// `sound_id` is the numeric id from `src/assets/sounds/credits.json`, or
 /// the literal `"custom"` to use `custom_path` (a Supporter-pack feature).
@@ -582,13 +631,19 @@ pub struct Settings {
     /// Engine filters, applied only when the matching `*_routine` is
     /// `"random"`: the categories to draw from (empty = all) and the maximum
     /// difficulty to include.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_routine_categories")]
     pub micro_routine_categories: Vec<RoutineCategory>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_routine_categories")]
     pub long_routine_categories: Vec<RoutineCategory>,
-    #[serde(default = "default_routine_max_difficulty")]
+    #[serde(
+        default = "default_routine_max_difficulty",
+        deserialize_with = "deserialize_routine_max_difficulty"
+    )]
     pub micro_routine_max_difficulty: RoutineDifficulty,
-    #[serde(default = "default_routine_max_difficulty")]
+    #[serde(
+        default = "default_routine_max_difficulty",
+        deserialize_with = "deserialize_routine_max_difficulty"
+    )]
     pub long_routine_max_difficulty: RoutineDifficulty,
     /// User routines imported from content packs (#155), added to the bundled
     /// starters by [`super::routines::all_routines`]. Empty by default.
@@ -1864,6 +1919,75 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_routine_max_difficulty_falls_back_to_default_on_load() {
+        let json =
+            r#"{"micro_routine_max_difficulty": "garbage", "long_routine_max_difficulty": 7}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            s.micro_routine_max_difficulty,
+            default_routine_max_difficulty()
+        );
+        assert_eq!(
+            s.long_routine_max_difficulty,
+            default_routine_max_difficulty()
+        );
+    }
+
+    #[test]
+    fn known_routine_max_difficulty_deserialises_to_its_variant() {
+        let json = r#"{"micro_routine_max_difficulty": "gentle", "long_routine_max_difficulty": "moderate"}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.micro_routine_max_difficulty, RoutineDifficulty::Gentle);
+        assert_eq!(s.long_routine_max_difficulty, RoutineDifficulty::Moderate);
+    }
+
+    #[test]
+    fn unknown_routine_categories_are_dropped_keeping_the_known_ones() {
+        let json = r#"{
+            "micro_routine_categories": ["eyes", "telepathy", "mobility"],
+            "long_routine_categories": ["sky_diving"]
+        }"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            s.micro_routine_categories,
+            vec![RoutineCategory::Eyes, RoutineCategory::Mobility]
+        );
+        assert!(s.long_routine_categories.is_empty());
+    }
+
+    #[test]
+    fn one_bad_routine_enum_does_not_reset_the_whole_profile() {
+        let json = r#"{
+            "micro_interval_secs": 1234,
+            "micro_routine": "random",
+            "micro_routine_categories": ["eyes", "bogus"],
+            "micro_routine_max_difficulty": "bogus"
+        }"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.micro_interval_secs, 1234);
+        assert_eq!(s.micro_routine, "random");
+        assert_eq!(s.micro_routine_categories, vec![RoutineCategory::Eyes]);
+        assert_eq!(
+            s.micro_routine_max_difficulty,
+            default_routine_max_difficulty()
+        );
+    }
+
+    #[test]
+    fn malformed_routine_categories_fall_back_to_all_not_a_failed_load() {
+        // Not an array, and an array with a non-string element: both degrade
+        // to "all categories" rather than failing the whole profile load.
+        let not_array = r#"{"micro_interval_secs": 99, "micro_routine_categories": "eyes"}"#;
+        let s: Settings = serde_json::from_str(not_array).unwrap();
+        assert_eq!(s.micro_interval_secs, 99);
+        assert!(s.micro_routine_categories.is_empty());
+
+        let bad_element = r#"{"long_routine_categories": ["eyes", 42]}"#;
+        let s: Settings = serde_json::from_str(bad_element).unwrap();
+        assert!(s.long_routine_categories.is_empty());
+    }
+
+    #[test]
     fn rebuild_derived_parses_fixed_times_to_minutes_dropping_garbage() {
         let mut s = Settings {
             micro_fixed_times: vec!["09:00".into(), "garbage".into(), "13:30".into()],
@@ -2418,6 +2542,37 @@ mod parity_tests {
         let mut ts = ts_union_values(&src, "MicroHintMix");
         ts.extend(ts_union_values(&src, "LongHintMix"));
         assert_eq!(rust, ts, "HintMix ↔ Micro/LongHintMix value drift");
+    }
+
+    #[test]
+    fn hotkey_action_values_match_ts_union() {
+        use crate::scheduler::hotkeys::HotkeyAction::*;
+        // The bindable actions are sync'd by hand across the Rust enum, the
+        // TS union, the zod enum, and the HOTKEY_ACTIONS list; this guards the
+        // Rust ↔ TS-union leg so a new variant can't silently drift.
+        let all = [
+            Pause,
+            Pause15m,
+            Pause30m,
+            Pause60m,
+            Resume,
+            TriggerMicro,
+            TriggerLong,
+            SkipMicro,
+            SkipLong,
+            CycleProfile,
+        ];
+        // Exhaustiveness gate: a new variant fails to compile here until it's
+        // added to `all` above, so the hand-listed parity set can't omit it.
+        for a in all {
+            match a {
+                Pause | Pause15m | Pause30m | Pause60m | Resume | TriggerMicro | TriggerLong
+                | SkipMicro | SkipLong | CycleProfile => {}
+            }
+        }
+        let rust = rust_enum_values(all);
+        let ts = ts_union_values(&ts_source(), "HotkeyAction");
+        assert_eq!(rust, ts, "HotkeyAction ↔ TS union value drift");
     }
 
     #[test]

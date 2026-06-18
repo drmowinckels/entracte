@@ -9,8 +9,20 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Added
 
-- **Active hours can target specific weekdays.** The Schedule tab's **Active hours** section gains an **On these days** picker, so the work window can apply only on the days you actually work — turn off Saturday and Sunday and Entracte stays quiet while you game or relax at the weekend, no need to remember to pause it. Defaults to every day, so existing setups are unchanged on upgrade. A window that runs past midnight (e.g. 22:00–06:00) counts its early-morning hours as part of the day it started. ([#204](https://github.com/drmowinckels/entracte/issues/204))
 - **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
+
+## [0.0.8] — 2026-06-18
+
+### Added
+
+- **Active hours can target specific weekdays.** The Schedule tab's **Active hours** section gains an **On these days** picker, so the work window can apply only on the days you actually work — turn off Saturday and Sunday and Entracte stays quiet while you game or relax at the weekend, no need to remember to pause it. The first-run onboarding offers the same picker when you set your working hours, so you can skip the weekend from the start. Defaults to every day, so existing setups are unchanged on upgrade. A window that runs past midnight (e.g. 22:00–06:00) counts its early-morning hours as part of the day it started. ([#204](https://github.com/drmowinckels/entracte/issues/204))
+- **Preset-duration pause hotkeys.** The Global hotkeys section (System tab) gains bindable **Pause for 15 / 30 / 60 minutes** actions alongside the existing indefinite Pause, mapping to the same timed-pause path as `entracte pause <duration>`. ([#211](https://github.com/drmowinckels/entracte/issues/211))
+
+### Fixed
+
+- **A stale routine filter no longer resets your whole profile.** The guided-routine **category** and **maximum difficulty** filters are stored by name; if `settings.json` carried a value an older or hand-edited build didn't recognise, the entire profile failed to load and silently reverted to defaults. Unknown categories are now dropped from the filter list and an unknown maximum difficulty falls back to its default, so the rest of your settings load untouched. Content packs stay strict — an unrecognised value there is still rejected as a malformed pack. ([#212](https://github.com/drmowinckels/entracte/issues/212))
+- **The hook Test button can't be flooded into hogging memory.** Testing an event-hook command captures its output to show you stdout/stderr; a command that spewed output could previously buffer all of it in memory before it was trimmed for display. The capture is now bounded as it's read — the command still runs to completion and you still see its (truncated) output, but a runaway never balloons memory. ([#213](https://github.com/drmowinckels/entracte/issues/213))
+- **Pauses from the tray, a hotkey, or the CLI now stick and are counted.** Only a pause started from the Preferences window used to be saved to disk, recorded in your stats, and able to trigger `pause_start` automation hooks — the tray menu, global hotkeys, and `entracte pause` quietly skipped all three, so such a pause vanished on restart, never showed up in pause stats, and fired no hooks. All four entry points now go through the same path, so a pause behaves identically however you start it. ([#218](https://github.com/drmowinckels/entracte/issues/218))
 
 ## [0.0.7] — 2026-06-15
 

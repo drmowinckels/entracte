@@ -41,14 +41,35 @@ pub enum RoutineCategory {
     DeskYoga,
 }
 
+impl RoutineCategory {
+    /// Parse the on-disk (snake_case) string; `None` for an unknown value so
+    /// a stale, hand-edited, or future category can be dropped from a
+    /// settings filter list rather than failing the whole profile load
+    /// (#212). Content packs parse routines through the strict derived
+    /// `Deserialize`, so a bad category there is still rejected.
+    pub(crate) fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "eyes" => Some(Self::Eyes),
+            "mobility" => Some(Self::Mobility),
+            "breathing" => Some(Self::Breathing),
+            "desk_yoga" => Some(Self::DeskYoga),
+            _ => None,
+        }
+    }
+}
+
 /// How demanding a routine is. Ordered `Gentle < Moderate < Active`; the
 /// per-kind `*_routine_max_difficulty` filter includes everything up to and
-/// including the chosen level.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+/// including the chosen level. `Default` is `Active` (the most permissive
+/// filter) so a stale/unknown value can fall back through the shared
+/// `deserialize_with_fallback` helper, matching the other tolerant settings
+/// enums.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RoutineDifficulty {
     Gentle,
     Moderate,
+    #[default]
     Active,
 }
 
@@ -59,6 +80,20 @@ impl RoutineDifficulty {
             Self::Gentle => 1,
             Self::Moderate => 2,
             Self::Active => 3,
+        }
+    }
+
+    /// Parse the on-disk (lowercase) string; `None` for an unknown value so a
+    /// stale `*_routine_max_difficulty` falls back to the default instead of
+    /// failing the whole profile load (#212). Content packs parse routines
+    /// through the strict derived `Deserialize`, so a bad difficulty there is
+    /// still rejected.
+    pub(crate) fn from_disk_str(raw: &str) -> Option<Self> {
+        match raw {
+            "gentle" => Some(Self::Gentle),
+            "moderate" => Some(Self::Moderate),
+            "active" => Some(Self::Active),
+            _ => None,
         }
     }
 }
@@ -377,6 +412,63 @@ pub async fn get_routines(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routine_category_from_disk_str_round_trips_every_variant() {
+        use RoutineCategory::*;
+        for c in [Eyes, Mobility, Breathing, DeskYoga] {
+            // Exhaustive match: a new variant fails to compile here until it
+            // gains a `from_disk_str` arm, guarding against one silently
+            // parsing to `None` through that fn's `_` arm. Also pins the disk
+            // string to the serde rename in both directions.
+            let disk = match c {
+                Eyes => "eyes",
+                Mobility => "mobility",
+                Breathing => "breathing",
+                DeskYoga => "desk_yoga",
+            };
+            assert_eq!(serde_json::to_value(c).unwrap(), serde_json::json!(disk));
+            assert_eq!(RoutineCategory::from_disk_str(disk), Some(c));
+        }
+    }
+
+    #[test]
+    fn routine_category_from_disk_str_rejects_unknown() {
+        assert_eq!(RoutineCategory::from_disk_str("telepathy"), None);
+        assert_eq!(RoutineCategory::from_disk_str("Eyes"), None);
+        assert_eq!(RoutineCategory::from_disk_str(""), None);
+    }
+
+    #[test]
+    fn routine_difficulty_from_disk_str_round_trips_every_variant() {
+        use RoutineDifficulty::*;
+        for d in [Gentle, Moderate, Active] {
+            // Exhaustive match: see the category test above — a new variant
+            // can't compile without a `from_disk_str` arm and a serde-rename
+            // cross-check.
+            let disk = match d {
+                Gentle => "gentle",
+                Moderate => "moderate",
+                Active => "active",
+            };
+            assert_eq!(serde_json::to_value(d).unwrap(), serde_json::json!(disk));
+            assert_eq!(RoutineDifficulty::from_disk_str(disk), Some(d));
+        }
+    }
+
+    #[test]
+    fn routine_difficulty_from_disk_str_rejects_unknown() {
+        assert_eq!(RoutineDifficulty::from_disk_str("extreme"), None);
+        assert_eq!(RoutineDifficulty::from_disk_str("Gentle"), None);
+        assert_eq!(RoutineDifficulty::from_disk_str(""), None);
+    }
+
+    #[test]
+    fn routine_difficulty_defaults_to_active() {
+        // The tolerant settings deserializer falls back through this default,
+        // so it must stay the most permissive level.
+        assert_eq!(RoutineDifficulty::default(), RoutineDifficulty::Active);
+    }
 
     #[test]
     fn starter_routines_have_unique_nonempty_ids_and_steps() {
