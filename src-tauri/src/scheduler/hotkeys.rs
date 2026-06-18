@@ -136,23 +136,20 @@ pub async fn execute_hotkey_action<R: Runtime>(
     scheduler: &Scheduler,
     action: HotkeyAction,
 ) {
-    use super::PauseState;
     match action {
         HotkeyAction::Pause
         | HotkeyAction::Pause15m
         | HotkeyAction::Pause30m
         | HotkeyAction::Pause60m => {
-            // `Some(None)` = indefinite, `Some(Some(secs))` = timed. Mirrors
-            // the IPC `Pause { duration_secs }` write.
-            let until = action
-                .pause_duration_secs()
-                .flatten()
-                .map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
-            *scheduler.pause_state.lock().await = PauseState::PausedUntil(until);
+            // `flatten()`: outer `Some` = a pause action, inner `Option<u64>`
+            // = indefinite (`None`) vs timed. Route through the canonical
+            // `pause_impl` so the pause persists, logs `PauseStart`, and fires
+            // `pause_start` hooks like the Settings button (#218).
+            super::pause_impl(scheduler, action.pause_duration_secs().flatten()).await;
             let _ = app.emit("pause:changed", true);
         }
         HotkeyAction::Resume => {
-            *scheduler.pause_state.lock().await = PauseState::Running;
+            super::resume_impl(scheduler).await;
             let _ = app.emit("pause:changed", false);
         }
         HotkeyAction::TriggerMicro => {
@@ -358,6 +355,27 @@ mod tests {
                 *sched.pause_state.lock().await,
                 PauseState::Running
             ));
+        }
+
+        #[tokio::test]
+        async fn pause_routes_through_pause_impl_and_persists() {
+            // Routing through `pause_impl` persists the pause to disk (and
+            // logs `PauseStart` + fires hooks — both covered in breaks.rs).
+            // The previous direct `pause_state` write did none of that, so a
+            // persisted pause file is proof the hotkey now takes the canonical
+            // path (#218).
+            let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+            execute_hotkey_action(app.handle(), &sched, HotkeyAction::Pause30m).await;
+            let snap = crate::pause_store::load(&sched.pause_path);
+            assert!(snap.paused, "hotkey pause should persist as paused");
+            assert!(
+                snap.until_epoch_secs.is_some(),
+                "timed pause has a deadline"
+            );
+
+            execute_hotkey_action(app.handle(), &sched, HotkeyAction::Resume).await;
+            let snap = crate::pause_store::load(&sched.pause_path);
+            assert!(!snap.paused, "hotkey resume should persist as running");
         }
 
         #[tokio::test]
