@@ -2546,7 +2546,7 @@ mod parity_tests {
 
     #[test]
     fn hotkey_action_values_match_ts_union() {
-        use crate::scheduler::hotkeys::HotkeyAction::{self, *};
+        use crate::scheduler::hotkeys::HotkeyAction::*;
         // The bindable actions are sync'd by hand across the Rust enum, the
         // TS union, the zod enum, and the HOTKEY_ACTIONS list; this guards the
         // Rust ↔ TS-union leg so a new variant can't silently drift.
@@ -2570,7 +2570,7 @@ mod parity_tests {
                 | SkipMicro | SkipLong | CycleProfile => {}
             }
         }
-        let rust = rust_enum_values::<HotkeyAction, 10>(all);
+        let rust = rust_enum_values(all);
         let ts = ts_union_values(&ts_source(), "HotkeyAction");
         assert_eq!(rust, ts, "HotkeyAction ↔ TS union value drift");
     }
