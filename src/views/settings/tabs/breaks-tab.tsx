@@ -28,6 +28,12 @@ import type {
 } from "../types";
 import { linesToList, listToLines } from "../utils";
 
+// Persist the chore draft this long after the last keystroke (#225). Short
+// enough that a list jotted at the morning prompt is cached well before the
+// laptop sleeps or shuts down, long enough not to fire a `set_chores` on every
+// keystroke.
+const CHORES_AUTOSAVE_DELAY_MS = 800;
+
 export function BreaksTab({
   settings,
   update,
@@ -57,6 +63,26 @@ export function BreaksTab({
       choresRef.current?.focus();
     }
   }, [focusChoresNonce]);
+  // Cache chores as they're typed, not only on blur (#225). The morning prompt
+  // focuses this textarea; a user who jots chores then closes the window or
+  // sleeps the laptop without clicking away would otherwise lose them — and
+  // since the morning prompt already persisted today's `prompted_date`, they'd
+  // get no re-prompt the next day either. Persist a short beat after typing
+  // stops, gated on a real change so the initial load and a re-seed from the
+  // saved (sanitized) list never trigger a redundant save.
+  useEffect(() => {
+    if (!chores) return;
+    const current = linesToList(choreLines);
+    const saved = chores.items;
+    const unchanged =
+      current.length === saved.length &&
+      current.every((item, i) => item === saved[i]);
+    if (unchanged) return;
+    const timer = setTimeout(() => {
+      void saveChores(current);
+    }, CHORES_AUTOSAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [choreLines, chores, saveChores]);
   // Local drafts re-seed when the active profile swaps the setting out.
   const [microPhysical, setMicroPhysical] = useLocalDraft(
     () => listToLines(settings.micro_physical_hints),

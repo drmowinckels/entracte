@@ -11,6 +11,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 - **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
 
+### Fixed
+
+- **Chores you've jotted are no longer lost if you don't click away.** The chore list was only saved when the textarea lost focus, so chores typed at the morning prompt could vanish if you closed the window or your laptop slept before clicking elsewhere — and because the morning prompt had already marked itself done for the day, you'd get neither your list back nor a fresh prompt. The list now saves itself a moment after you stop typing, so it's cached for the day and survives a restart. ([#225](https://github.com/drmowinckels/entracte/issues/225))
+
 ## [0.0.8] — 2026-06-18
 
 ### Added
