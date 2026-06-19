@@ -77,11 +77,25 @@ pub static OVERLAY_ACK: OverlayAck = OverlayAck::new();
 /// `get_current_break` IPC round-trips, and first paint all land well under a
 /// second even on a loaded machine — so a slow-but-live overlay is never
 /// killed, yet short enough that a genuine freeze self-clears quickly.
+///
+/// On the Windows test build both users — the `#[cfg(not(test))]` watchdog
+/// spawn and the `abort_stranded_break` rig test (excluded on Windows, where
+/// the `tauri` test feature can't boot a mock app) — are compiled out, so this
+/// reads as dead there; the real build and other-OS test builds keep it live.
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub const RENDER_GRACE_SECS: u64 = 5;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_matches_a_fresh_unfired_ack() {
+        // `Default` mirrors `new()` (kept for clippy's `new_without_default`);
+        // a fresh ack has fired nothing, so no epoch is stranded yet.
+        let ack = OverlayAck::default();
+        assert!(!ack.is_stranded(1));
+    }
 
     #[test]
     fn first_armed_break_is_epoch_one() {

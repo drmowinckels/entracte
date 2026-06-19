@@ -482,6 +482,12 @@ pub(crate) fn hide_overlay_windows<R: Runtime>(app: &AppHandle<R>) {
 /// every overlay window, emit `break:end`) but records **no** stats: an
 /// invisible break was never taken or dismissed. Scheduler-free so the
 /// watchdog task can run it from cloned `Arc`s without holding `&Scheduler`.
+///
+/// On the Windows test build the only callers — the `#[cfg(not(test))]`
+/// watchdog spawn and the rig test below (excluded on Windows, where the
+/// `tauri` test feature can't boot a mock app) — are both compiled out, so it
+/// reads as dead there only; the real build keeps it live.
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) fn abort_stranded_break<R: Runtime>(
     app: &AppHandle<R>,
     current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
@@ -499,6 +505,12 @@ pub(crate) fn abort_stranded_break<R: Runtime>(
 
 /// Spawn the grace-period task that aborts a never-rendered break. Captures
 /// cloned `Arc`s + `AppHandle` so it outlives `fire_break`'s borrows.
+///
+/// The teardown is marshalled onto the main thread: `abort_stranded_break`
+/// iterates and hides webview windows, and on X11/GTK those calls must not run
+/// off the GUI thread (a worker-thread window op trips
+/// `xcb_xlib_threads_sequence_lost`). `run_on_main_thread` serialises it onto
+/// the event loop, mirroring the tray's status-title update.
 #[cfg(not(test))]
 fn spawn_render_watchdog<R: Runtime>(
     app: &AppHandle<R>,
@@ -513,7 +525,10 @@ fn spawn_render_watchdog<R: Runtime>(
         ))
         .await;
         if overlay_watchdog::OVERLAY_ACK.is_stranded(epoch) {
-            abort_stranded_break(&app, &current_break);
+            let app_main = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                abort_stranded_break(&app_main, &current_break);
+            });
         }
     });
 }

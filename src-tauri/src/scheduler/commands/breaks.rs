@@ -1712,6 +1712,15 @@ mod rig_smoke_tests {
         // never rendered is cleared and a `break:end` emitted, but NO stats
         // are recorded — an invisible break was never taken or dismissed.
         let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        // A live "overlay-" window so the teardown's hide path actually runs.
+        let _overlay = tauri::WebviewWindowBuilder::new(
+            &app,
+            "overlay-0",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .visible(false)
+        .build()
+        .expect("mock overlay window builds");
         *crate::scheduler::lock_current_break(&sched.current_break) = Some(BreakEvent {
             kind: BreakKind::Micro,
             duration_secs: 30,
