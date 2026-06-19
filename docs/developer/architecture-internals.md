@@ -176,18 +176,22 @@ If a new code path needs an atomic read-modify-write across two pieces of state 
 
 The backend → renderer / tray surface is just Tauri events. The renderer subscribes via `@tauri-apps/api/event#listen`:
 
-| Event                  | Payload                        | Fired by                                                                 |
-| ---------------------- | ------------------------------ | ------------------------------------------------------------------------ |
-| `break:start`          | `BreakEvent`                   | `overlay::fire_break`                                                    |
-| `break:end`            | `()`                           | `commands::breaks::{end_break, postpone_break}`                          |
-| `pause:changed`        | `bool` (paused?)               | `commands::breaks::{pause, resume}` + run-loop on auto-resume            |
-| `stats:changed`        | `BreakStats`                   | `end_break`, `skip_next_from_cli`, `reset_break_stats`                   |
-| `last_break:changed`   | `LastBreakInfo`                | `end_break`, `postpone_break`, `skip_next_from_cli`, `resume_last_break` |
-| `profile:changed`      | `String` (active profile name) | every profile command                                                    |
-| `screen_time:reminder` | `u64` (budget minutes)         | run-loop when budget is crossed                                          |
-| `stats:cleared`        | `()`                           | `clear_event_log`                                                        |
+| Event                  | Payload                        | Fired by                                                                         |
+| ---------------------- | ------------------------------ | -------------------------------------------------------------------------------- |
+| `break:start`          | `BreakEvent`                   | `overlay::fire_break`                                                            |
+| `break:end`            | `()`                           | `commands::breaks::{end_break, postpone_break}`, `overlay::abort_stranded_break` |
+| `pause:changed`        | `bool` (paused?)               | `commands::breaks::{pause, resume}` + run-loop on auto-resume                    |
+| `stats:changed`        | `BreakStats`                   | `end_break`, `skip_next_from_cli`, `reset_break_stats`                           |
+| `last_break:changed`   | `LastBreakInfo`                | `end_break`, `postpone_break`, `skip_next_from_cli`, `resume_last_break`         |
+| `profile:changed`      | `String` (active profile name) | every profile command                                                            |
+| `screen_time:reminder` | `u64` (budget minutes)         | run-loop when budget is crossed                                                  |
+| `stats:cleared`        | `()`                           | `clear_event_log`                                                                |
 
 `get_current_break` exists so the overlay can rehydrate after a window reload (it doesn't get the historic `break:start`).
+
+### Overlay render-readiness watchdog (#196 / #226)
+
+`fire_break` pauses media, shows an `always_on_top` window, and grabs focus _before_ the overlay's webview has painted. If that webview never renders — its content process crashes (macOS / WKWebView) or the surface never realises (Linux) — the break is invisible but active: the desktop is frozen behind it with no way to dismiss. To bound that failure, `fire_break` arms a monotonic epoch in [`scheduler::overlay_watchdog`](https://github.com/drmowinckels/entracte/blob/main/src-tauri/src/scheduler/overlay_watchdog.rs) and spawns a grace-period task (`RENDER_GRACE_SECS`). The overlay calls `notify_overlay_rendered` as soon as it accepts a break to render — any successful IPC proves the webview is alive — which acks the epoch. If the captured epoch is still current and unacked when the grace elapses, the task calls `overlay::abort_stranded_break`: clear `current_break`, resume media, hide the overlay windows, emit `break:end` — recording **no** stats, since an invisible break was never taken or dismissed. A newer break (higher epoch) makes an older watchdog inert, and `end_break`/`postpone_break` ack defensively so a late watchdog can't tear down an already-ended break. The spawn is `#[cfg(not(test))]` so unit tests don't leak timer tasks; the teardown and epoch logic are tested directly.
 
 ## Hooks (the trust boundary)
 

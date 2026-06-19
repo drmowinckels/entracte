@@ -11,6 +11,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 - **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
 
+### Fixed
+
+- **A break that can't draw no longer freezes your desktop.** When a break starts, Entracte covers the screen, takes focus, and pauses media before the overlay has rendered anything. If that overlay never appeared — its renderer process crashed (seen on macOS) or the window never painted (seen on Linux) — you were left with an _invisible but active_ break: clicks blocked, media paused, nothing on screen to dismiss, and a force-quit or restart the only way out. Entracte now waits for the overlay to confirm it has rendered; if no overlay reports in within a few seconds, the break is torn down automatically — focus released, media resumed, the screen yours again — so a broken overlay fails safe instead of locking you out. ([#196](https://github.com/drmowinckels/entracte/issues/196), [#226](https://github.com/drmowinckels/entracte/issues/226))
+
 ## [0.0.8] — 2026-06-18
 
 ### Added

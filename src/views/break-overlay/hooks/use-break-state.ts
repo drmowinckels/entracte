@@ -101,6 +101,12 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
       setFinished(false);
       setActive(payload);
       setRemaining(payload.duration_secs);
+      // Tell the backend this overlay is alive and has accepted a break to
+      // render: any successful IPC proves the webview is executing. This acks
+      // the render-readiness watchdog (#196/#226) so a healthy break is never
+      // torn down. Fire-and-forget — a missed ack only risks the watchdog
+      // firing, which is the safe direction.
+      invokeFn("notify_overlay_rendered").catch(() => {});
       try {
         const raw = await invokeFn("get_postpone_state", {
           kind: payload.kind,
