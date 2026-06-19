@@ -47,13 +47,15 @@ export const hotkeySchema = z.object({
   accelerator: z.string(),
 });
 
-const routineCategorySchema = z.enum([
+// Exported so the routine enum-parity test can check these against the
+// picker's runtime lists (mirrors the hotkey zod↔list guard in hotkeys.test).
+export const routineCategorySchema = z.enum([
   "eyes",
   "mobility",
   "breathing",
   "desk_yoga",
 ]);
-const routineDifficultySchema = z.enum(["gentle", "moderate", "active"]);
+export const routineDifficultySchema = z.enum(["gentle", "moderate", "active"]);
 const routineSchema = z.object({
   id: z.string(),
   label: z.string(),
