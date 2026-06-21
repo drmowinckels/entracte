@@ -255,11 +255,13 @@ fn platform_resume(token: &ResumeToken) {
 /// Decide whether the macOS/Windows blind Play/Pause toggle may fire on
 /// break start. The toggle has no separate "pause" key, so sending it when
 /// nothing is playing would *start* media the user had paused (issue #104).
-/// We therefore only allow it when a display-wake assertion says something
-/// is likely playing. Pure so it's unit-tested without FFI on every OS.
+/// We therefore only allow it when the platform's "is media actually
+/// playing?" probe says yes — real audio-device activity on macOS (#233), a
+/// display-wake request on Windows. Pure so it's unit-tested without FFI on
+/// every OS.
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-fn media_key_pause_allowed(assertion_active: bool) -> bool {
-    assertion_active
+fn media_key_pause_allowed(media_likely_playing: bool) -> bool {
+    media_likely_playing
 }
 
 /// Decide whether the resume toggle may fire on break end. Only reverse a
@@ -273,7 +275,13 @@ fn media_key_resume_allowed(token: &ResumeToken) -> bool {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn platform_pause() -> ResumeToken {
-    if !media_key_pause_allowed(crate::video::assertion_active()) {
+    // macOS: a real audio-output-active probe; Windows: the display-wake
+    // request (its blind-toggle proxy is unchanged here — tracked in #234).
+    #[cfg(target_os = "macos")]
+    let media_likely_playing = audio_probe::output_active();
+    #[cfg(target_os = "windows")]
+    let media_likely_playing = crate::video::assertion_active();
+    if !media_key_pause_allowed(media_likely_playing) {
         return ResumeToken::Noop;
     }
     if media_key::send_play_pause() {
@@ -384,6 +392,76 @@ mod media_key {
         };
         CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&cg_event));
         true
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod audio_probe {
+    use std::ffi::c_void;
+    use std::ptr::NonNull;
+
+    use objc2_core_audio::{
+        kAudioDevicePropertyDeviceIsRunningSomewhere, kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+        AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress,
+    };
+
+    fn global_address(selector: u32) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress {
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        }
+    }
+
+    // Read one fixed-size `u32` property of `object` into `out`. Returns
+    // false on any non-zero OSStatus so a probe failure degrades to "not
+    // playing" — never a blind toggle on a guess.
+    unsafe fn get_u32(object: AudioObjectID, selector: u32, out: &mut u32) -> bool {
+        let address = global_address(selector);
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let status = AudioObjectGetPropertyData(
+            object,
+            NonNull::from(&address),
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut size),
+            NonNull::from(&mut *out).cast::<c_void>(),
+        );
+        status == 0
+    }
+
+    /// True when the system's default output device is actively running in at
+    /// least one process — i.e. audio is *really playing right now*, not merely
+    /// "something is keeping the display awake". Paused media does no device
+    /// I/O, so this reads false and the blind Play/Pause key is never sent,
+    /// which is what stops a break from *starting* media the user had paused
+    /// (#233). A CoreAudio property read, far cheaper than the `pmset` fork the
+    /// display-assertion proxy used.
+    pub(super) fn output_active() -> bool {
+        // SAFETY: each call reads a single `u32` property into a stack slot
+        // with the matching size; `kAudioObjectSystemObject` is the documented
+        // root object and the default-output id is validated before reuse.
+        unsafe {
+            let mut device: AudioObjectID = 0;
+            if !get_u32(
+                kAudioObjectSystemObject as AudioObjectID,
+                kAudioHardwarePropertyDefaultOutputDevice,
+                &mut device,
+            ) || device == 0
+            {
+                return false;
+            }
+            let mut running: u32 = 0;
+            if !get_u32(
+                device,
+                kAudioDevicePropertyDeviceIsRunningSomewhere,
+                &mut running,
+            ) {
+                return false;
+            }
+            running != 0
+        }
     }
 }
 
@@ -674,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn media_key_pause_allowed_only_when_assertion_active() {
+    fn media_key_pause_allowed_only_when_media_likely_playing() {
         assert!(media_key_pause_allowed(true));
         assert!(!media_key_pause_allowed(false));
     }

@@ -11,6 +11,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 - **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
 
+### Fixed
+
+- **A break no longer starts media you'd paused (macOS).** To pause your music or video for a break, Entracte taps the system Play/Pause key — but that key is a blind toggle, so it only taps when it thinks something is playing. It used to judge that from whether anything was keeping the display awake, which a paused video tab or a video-call app can do on its own — so if you'd paused your media before a break, Entracte could **start** it, play it through the break, then pause it again at the end. It now checks whether audio is actually coming out of your speakers right now, so paused media stays paused. ([#233](https://github.com/drmowinckels/entracte/issues/233))
+
 ## [0.0.8] — 2026-06-18
 
 ### Added
