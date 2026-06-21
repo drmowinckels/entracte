@@ -1,59 +1,39 @@
 import { describe, expect, it } from "vitest";
-import {
-  breakEventSchema,
-  overlaySettingsSchema,
-  postponeStateSchema,
-} from "./schemas";
+import { isBreakEvent, toOverlaySettings, toPostponeState } from "./schemas";
 import { DEFAULT_OVERLAY_SETTINGS } from "./types";
 
-describe("overlaySettingsSchema", () => {
-  it("accepts the default overlay settings", () => {
-    expect(
-      overlaySettingsSchema.safeParse(DEFAULT_OVERLAY_SETTINGS).success,
-    ).toBe(true);
+describe("toOverlaySettings", () => {
+  it("returns the overlay settings for the defaults", () => {
+    expect(toOverlaySettings(DEFAULT_OVERLAY_SETTINGS)).toMatchObject(
+      DEFAULT_OVERLAY_SETTINGS,
+    );
   });
 
-  it("strips the non-overlay fields from a full Settings payload", () => {
-    // get_settings returns the whole Settings object; only the overlay
-    // subset should survive validation.
-    const fullSettings = {
+  it("fills missing fields from defaults", () => {
+    // A partial payload still yields a complete overlay-settings object.
+    const got = toOverlaySettings({ overlay_opacity: 0.5 });
+    expect(got?.overlay_opacity).toBe(0.5);
+    expect(got?.clock_format).toBe(DEFAULT_OVERLAY_SETTINGS.clock_format);
+  });
+
+  it("keeps the overlay fields from a full Settings payload", () => {
+    // get_settings returns the whole Settings object; the overlay only reads
+    // the overlay subset, so extra fields are harmless and need no stripping.
+    const got = toOverlaySettings({
       ...DEFAULT_OVERLAY_SETTINGS,
       micro_interval_secs: 1200,
-      long_interval_secs: 3000,
       hooks_enabled: false,
-      work_start_minutes: 540,
-    };
-    const parsed = overlaySettingsSchema.safeParse(fullSettings);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data).not.toHaveProperty("micro_interval_secs");
-      expect(parsed.data).not.toHaveProperty("hooks_enabled");
-      expect(parsed.data.overlay_opacity).toBe(
-        DEFAULT_OVERLAY_SETTINGS.overlay_opacity,
-      );
-    }
+    });
+    expect(got?.overlay_opacity).toBe(DEFAULT_OVERLAY_SETTINGS.overlay_opacity);
   });
 
-  it("accepts sound config that includes custom_path", () => {
-    const withCustom = {
-      ...DEFAULT_OVERLAY_SETTINGS,
-      micro_sound: { mode: "ambient", sound_id: "custom", custom_path: "/x" },
-    };
-    expect(overlaySettingsSchema.safeParse(withCustom).success).toBe(true);
-  });
-
-  it("rejects a wrong field type", () => {
-    const bad = { ...DEFAULT_OVERLAY_SETTINGS, overlay_opacity: "lots" };
-    expect(overlaySettingsSchema.safeParse(bad).success).toBe(false);
-  });
-
-  it("rejects an out-of-range clock_format", () => {
-    const bad = { ...DEFAULT_OVERLAY_SETTINGS, clock_format: "36h" };
-    expect(overlaySettingsSchema.safeParse(bad).success).toBe(false);
+  it("returns null for a non-object", () => {
+    expect(toOverlaySettings(null)).toBeNull();
+    expect(toOverlaySettings("nope")).toBeNull();
   });
 });
 
-describe("breakEventSchema", () => {
+describe("isBreakEvent", () => {
   const valid = {
     kind: "long",
     duration_secs: 300,
@@ -67,30 +47,40 @@ describe("breakEventSchema", () => {
   };
 
   it("accepts a valid break event", () => {
-    expect(breakEventSchema.safeParse(valid).success).toBe(true);
+    expect(isBreakEvent(valid)).toBe(true);
   });
 
   it("rejects a non-numeric duration", () => {
-    expect(
-      breakEventSchema.safeParse({ ...valid, duration_secs: "soon" }).success,
-    ).toBe(false);
+    expect(isBreakEvent({ ...valid, duration_secs: "soon" })).toBe(false);
   });
 
   it("rejects an unknown kind", () => {
-    expect(
-      breakEventSchema.safeParse({ ...valid, kind: "siesta" }).success,
-    ).toBe(false);
+    expect(isBreakEvent({ ...valid, kind: "siesta" })).toBe(false);
+  });
+
+  it("rejects a payload without a hints array", () => {
+    expect(isBreakEvent({ ...valid, hints: undefined })).toBe(false);
+  });
+
+  it("rejects a non-object", () => {
+    expect(isBreakEvent(null)).toBe(false);
   });
 });
 
-describe("postponeStateSchema", () => {
+describe("toPostponeState", () => {
   it("accepts a valid postpone state", () => {
-    expect(
-      postponeStateSchema.safeParse({ count: 1, max: 3, remaining: 2 }).success,
-    ).toBe(true);
+    expect(toPostponeState({ count: 1, max: 3, remaining: 2 })).toEqual({
+      count: 1,
+      max: 3,
+      remaining: 2,
+    });
   });
 
-  it("rejects missing fields", () => {
-    expect(postponeStateSchema.safeParse({ count: 1 }).success).toBe(false);
+  it("returns null for missing fields", () => {
+    expect(toPostponeState({ count: 1 })).toBeNull();
+  });
+
+  it("returns null for a non-object", () => {
+    expect(toPostponeState(null)).toBeNull();
   });
 });

@@ -9,11 +9,7 @@ import {
   type OverlaySettings,
   type PostponeState,
 } from "../types";
-import {
-  breakEventSchema,
-  overlaySettingsSchema,
-  postponeStateSchema,
-} from "../schemas";
+import { isBreakEvent, toOverlaySettings, toPostponeState } from "../schemas";
 
 function resolveTheme(setting: string, previous: string): string {
   if (setting === "rotate") return pickRotationTheme(previous);
@@ -67,12 +63,13 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
   useEffect(() => {
     let cancelled = false;
     const applyBreak = async (rawPayload: unknown) => {
-      // The payload arrives untrusted (a backend event or get_current_break
-      // response). Validate before driving the overlay; a malformed one is
-      // dropped rather than rendered.
-      const parsedPayload = breakEventSchema.safeParse(rawPayload);
-      if (!parsedPayload.success || cancelled) return;
-      const payload = parsedPayload.data;
+      // The payload comes from this app's own backend. A heavyweight zod parse
+      // here reliably terminates the fragile cold overlay webview content
+      // process (#196 macOS / #226 Linux), so validate with cheap field checks
+      // instead (`isBreakEvent`) and drop a malformed payload rather than
+      // render it.
+      if (cancelled || !isBreakEvent(rawPayload)) return;
+      const payload: BreakEvent = rawPayload;
 
       // Flush any chime still in flight from a previous break before the
       // new overlay takes over, so a deferred end-sound can't play here.
@@ -80,15 +77,15 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
       try {
         const raw = await invokeFn("get_settings");
         if (cancelled) return;
-        // get_settings returns the full Settings; the schema validates and
-        // keeps only the overlay-relevant subset.
-        const parsed = overlaySettingsSchema.safeParse(raw);
-        if (parsed.success) {
-          const next: OverlaySettings = parsed.data;
+        // get_settings returns the full Settings from our own backend; trust
+        // its shape and fill any gaps from defaults (`toOverlaySettings`)
+        // rather than zod-parsing it, which crashes the overlay webview (#196).
+        const next = toOverlaySettings(raw);
+        if (next) {
           setAppearance(next);
           setResolvedTheme((prev) => resolveTheme(next.overlay_color, prev));
         }
-        // on parse failure keep the previous (or default) appearance
+        // on a missing/odd response keep the previous (or default) appearance
       } catch {
         // keep previous settings if the IPC fetch fails
       }
@@ -111,8 +108,7 @@ export function useBreakState(deps: BreakStateDeps = {}): BreakStateApi {
         const raw = await invokeFn("get_postpone_state", {
           kind: payload.kind,
         });
-        const parsed = postponeStateSchema.safeParse(raw);
-        if (!cancelled) setPostponeState(parsed.success ? parsed.data : null);
+        if (!cancelled) setPostponeState(toPostponeState(raw));
       } catch {
         if (!cancelled) setPostponeState(null);
       }

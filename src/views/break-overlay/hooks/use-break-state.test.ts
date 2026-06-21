@@ -230,10 +230,10 @@ describe("useBreakState", () => {
     expect(result.current.remaining).toBe(0);
   });
 
-  it("keeps default appearance when get_settings is malformed", async () => {
+  it("keeps default appearance when get_settings is missing overlay fields", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_current_break") return null;
-      // Missing the overlay fields entirely — validation fails, fall back.
+      // Missing the overlay fields entirely — each is filled from defaults.
       if (cmd === "get_settings") return { unexpected: true };
       if (cmd === "get_postpone_state")
         return { count: 0, max: 3, remaining: 3 };
@@ -252,9 +252,9 @@ describe("useBreakState", () => {
     await act(async () => {
       emit("break:start", sampleBreak);
     });
-    // A valid break still shows; appearance stays at the safe default.
+    // A valid break still shows; every overlay field stays at the safe default.
     await waitFor(() => expect(result.current.active).not.toBeNull());
-    expect(result.current.appearance).toEqual(DEFAULT_OVERLAY_SETTINGS);
+    expect(result.current.appearance).toMatchObject(DEFAULT_OVERLAY_SETTINGS);
   });
 
   it("falls back gracefully when the settings/postpone fetches reject", async () => {
