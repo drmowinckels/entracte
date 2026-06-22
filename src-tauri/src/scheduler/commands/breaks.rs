@@ -1,11 +1,12 @@
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::hooks::{self, HookContext, HookEvent};
 use crate::stats::{EventPayload, Outcome, SkipSource};
 
-use super::super::overlay::{deliver_break, fire_break};
+use super::super::overlay::{deliver_break, fire_break, hide_overlay_windows};
+use super::super::overlay_watchdog::OVERLAY_ACK;
 use super::super::pause::{persist_pause, PauseInfo, PauseState};
 use super::super::settings::{
     delivery_for, effective_long_hints, effective_micro_hints, is_windowed_mode,
@@ -210,6 +211,15 @@ pub async fn trigger_test_break<R: Runtime>(
     Ok(())
 }
 
+/// Called by the break overlay the moment it has rendered a break — any
+/// successful IPC from the overlay proves its webview is alive and executing.
+/// Acks the render-readiness watchdog (#196 / #226) so a healthy break is
+/// never torn down. No scheduler state: just the process-wide ack.
+#[tauri::command]
+pub fn notify_overlay_rendered() {
+    OVERLAY_ACK.ack();
+}
+
 /// Conclude the currently-active break. `reason` distinguishes
 /// `"completed"` (taken in full), `"dismissed"` (user closed it
 /// early), and `"postponed"` (countdown wasn't honoured). Updates the
@@ -269,14 +279,14 @@ pub async fn end_break<R: Runtime>(
     }
 
     *super::super::lock_current_break(&scheduler.current_break) = None;
+    // Defensively disarm the render watchdog (#196/#226): a normal end means
+    // the overlay was up, but raising the ack here guarantees a late watchdog
+    // can never tear down an already-ended break.
+    OVERLAY_ACK.ack();
     // Resume any media `fire_break` paused for this break (#77). No-op
     // unless something was paused.
     crate::media::on_break_end();
-    for (label, window) in app.webview_windows() {
-        if label.starts_with("overlay-") {
-            let _ = window.hide();
-        }
-    }
+    hide_overlay_windows(&app);
     let _ = app.emit("break:end", ());
     let stats = scheduler.stats.lock().await.clone();
     let _ = app.emit("stats:changed", &stats);
@@ -296,11 +306,8 @@ pub async fn postpone_break<R: Runtime>(
     kind: BreakKind,
 ) -> Result<(), String> {
     postpone_break_impl(scheduler.inner(), kind).await?;
-    for (label, window) in app.webview_windows() {
-        if label.starts_with("overlay-") {
-            let _ = window.hide();
-        }
-    }
+    OVERLAY_ACK.ack();
+    hide_overlay_windows(&app);
     let _ = app.emit("break:end", ());
     let _ = app.emit("last_break:changed", LastBreakInfo { kind: Some(kind) });
     Ok(())
@@ -1384,7 +1391,7 @@ mod rig_smoke_tests {
     use crate::test_support::mock_app_with_scheduler;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use tauri::Listener;
+    use tauri::{Listener, Manager};
 
     #[tokio::test]
     async fn pause_command_via_rig_emits_pause_changed() {
@@ -1697,5 +1704,82 @@ mod rig_smoke_tests {
             .await
             .expect_err("nothing to resume");
         assert_eq!(err, "no break to resume");
+    }
+
+    #[tokio::test]
+    async fn abort_stranded_break_clears_break_and_records_no_stats() {
+        // The render watchdog's teardown (#196/#226): a break whose overlay
+        // never rendered is cleared and a `break:end` emitted, but NO stats
+        // are recorded — an invisible break was never taken or dismissed.
+        let (_dir, app, sched) = mock_app_with_scheduler(Settings::default());
+        // A live "overlay-" window so the teardown's hide path actually runs.
+        let _overlay = tauri::WebviewWindowBuilder::new(
+            &app,
+            "overlay-0",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .visible(false)
+        .build()
+        .expect("mock overlay window builds");
+        *crate::scheduler::lock_current_break(&sched.current_break) = Some(BreakEvent {
+            kind: BreakKind::Micro,
+            duration_secs: 30,
+            enforceable: false,
+            manual_finish: false,
+            postpone_available: true,
+            skip_available: true,
+            hints: vec![],
+            hint_rotate_seconds: 0,
+            health_intensity: 0.0,
+            routine_steps: vec![],
+            routine_pacing: None,
+            routine_max_step_secs: None,
+            routine_breath: None,
+            chore_prompt: None,
+        });
+
+        let ended = Arc::new(AtomicUsize::new(0));
+        {
+            let ended = ended.clone();
+            app.listen("break:end", move |_| {
+                ended.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        let stats_before = sched.stats.lock().await.clone();
+
+        crate::scheduler::overlay::abort_stranded_break(app.handle(), &sched.current_break);
+
+        assert!(
+            crate::scheduler::lock_current_break(&sched.current_break).is_none(),
+            "stranded teardown clears the current break",
+        );
+        let stats_after = sched.stats.lock().await.clone();
+        assert_eq!(
+            (
+                stats_after.taken,
+                stats_after.skipped,
+                stats_after.postponed
+            ),
+            (
+                stats_before.taken,
+                stats_before.skipped,
+                stats_before.postponed
+            ),
+            "an invisible break records no taken/dismissed/postponed",
+        );
+        assert_eq!(ended.load(Ordering::SeqCst), 1, "break:end is emitted");
+    }
+
+    #[test]
+    fn notify_overlay_rendered_acks_the_render_watchdog() {
+        // The overlay's readiness ping disarms the watchdog so a healthy break
+        // is never torn down. Asserts only the post-ack state, which holds
+        // regardless of any concurrent test arming a newer epoch.
+        let epoch = OVERLAY_ACK.arm();
+        notify_overlay_rendered();
+        assert!(
+            !OVERLAY_ACK.is_stranded(epoch),
+            "an acked break is not stranded",
+        );
     }
 }

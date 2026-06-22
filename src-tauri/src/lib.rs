@@ -157,6 +157,7 @@ pub fn run() {
             scheduler::get_pause_info,
             scheduler::end_break,
             scheduler::trigger_test_break,
+            scheduler::notify_overlay_rendered,
             scheduler::postpone_break,
             scheduler::skip_next_break,
             scheduler::get_postpone_state,
