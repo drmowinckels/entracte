@@ -6,6 +6,7 @@ mod exports;
 mod hotkeys;
 pub(crate) mod idle;
 mod overlay;
+pub(crate) mod overlay_watchdog;
 mod pause;
 mod routines;
 mod run_loop;
