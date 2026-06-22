@@ -2,11 +2,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { RoutinePicker } from "./routine-picker";
+import { CATEGORIES, DIFFICULTIES, RoutinePicker } from "./routine-picker";
+import {
+  routineCategorySchema,
+  routineDifficultySchema,
+} from "../hooks/use-settings";
 import type { Routine } from "../hooks/use-routines";
 import type { SchedulerSettings } from "../types";
 
 afterEach(cleanup);
+
+describe("routine enum parity (picker ↔ zod)", () => {
+  // The Rust enum ↔ TS union leg is guarded in settings.rs
+  // (`routine_category_values_match_ts_union` /
+  // `routine_difficulty_values_match_ts_union`); this guards the two TS runtime
+  // lists — the picker options and the zod enums — against drifting apart,
+  // mirroring the hotkey action-parity test.
+  it("the category picker and the zod category enum list the same values", () => {
+    expect(new Set(CATEGORIES.map((c) => c.id))).toEqual(
+      new Set(routineCategorySchema.options),
+    );
+  });
+
+  it("the difficulty picker and the zod difficulty enum list the same values", () => {
+    expect(new Set(DIFFICULTIES.map((d) => d.id))).toEqual(
+      new Set(routineDifficultySchema.options),
+    );
+  });
+});
 
 const ROUTINES: Routine[] = [
   {

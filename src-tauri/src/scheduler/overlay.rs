@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 #[cfg(not(test))]
 use tauri_plugin_notification::NotificationExt;
 
+use super::overlay_watchdog;
 use super::settings::MonitorPlacement;
 use super::types::{BreakDelivery, BreakEvent, BreakKind, MonitorRect};
 
@@ -452,6 +453,97 @@ pub fn fire_break<R: Runtime>(
     // The payload was already stashed in `current_break` above, so the cold-
     // mount path returns the correct data without any handshake.
     let _ = app.emit("break:start", &payload);
+
+    // Arm the render-readiness watchdog (#196 / #226). The overlay acks via
+    // `notify_overlay_rendered` once it paints; if no ack lands within the
+    // grace period the break is torn down, so a dead webview can't leave the
+    // desktop frozen behind an invisible, focus-grabbing, media-pausing
+    // overlay. This also covers the `shown == 0` case logged above: nothing
+    // rendered, so the watchdog resumes media and clears the break rather than
+    // leaving it stranded.
+    let epoch = overlay_watchdog::OVERLAY_ACK.arm();
+    spawn_render_watchdog(app, current_break, epoch);
+}
+
+/// Hide every break overlay window. Shared by the break-teardown paths
+/// (`end_break`, `postpone_break`, and the render watchdog) so the
+/// `"overlay-"` label convention lives in exactly one place.
+pub(crate) fn hide_overlay_windows<R: Runtime>(app: &AppHandle<R>) {
+    for (label, window) in app.webview_windows() {
+        if label.starts_with("overlay-") {
+            let _ = window.hide();
+        }
+    }
+}
+
+/// Tear down a break whose overlay never reported rendering — the #196/#226
+/// watchdog firing, or the `shown == 0` no-overlay case. Mirrors the cleanup
+/// half of `end_break` (clear the current break, resume any paused media, hide
+/// every overlay window, emit `break:end`) but records **no** stats: an
+/// invisible break was never taken or dismissed. Scheduler-free so the
+/// watchdog task can run it from cloned `Arc`s without holding `&Scheduler`.
+///
+/// On the Windows test build the only callers — the `#[cfg(not(test))]`
+/// watchdog spawn and the rig test below (excluded on Windows, where the
+/// `tauri` test feature can't boot a mock app) — are both compiled out, so it
+/// reads as dead there only; the real build keeps it live.
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
+pub(crate) fn abort_stranded_break<R: Runtime>(
+    app: &AppHandle<R>,
+    current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
+) {
+    log::warn!(
+        "overlay: break overlay never reported rendering within {}s — tearing the break down to \
+         release the desktop (media + focus). See #196 (macOS WKWebView) / #226 (Linux).",
+        overlay_watchdog::RENDER_GRACE_SECS
+    );
+    *super::lock_current_break(current_break) = None;
+    crate::media::on_break_end();
+    hide_overlay_windows(app);
+    let _ = app.emit("break:end", ());
+}
+
+/// Spawn the grace-period task that aborts a never-rendered break. Captures
+/// cloned `Arc`s + `AppHandle` so it outlives `fire_break`'s borrows.
+///
+/// The teardown is marshalled onto the main thread: `abort_stranded_break`
+/// iterates and hides webview windows, and on X11/GTK those calls must not run
+/// off the GUI thread (a worker-thread window op trips
+/// `xcb_xlib_threads_sequence_lost`). `run_on_main_thread` serialises it onto
+/// the event loop, mirroring the tray's status-title update.
+#[cfg(not(test))]
+fn spawn_render_watchdog<R: Runtime>(
+    app: &AppHandle<R>,
+    current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
+    epoch: u64,
+) {
+    let app = app.clone();
+    let current_break = current_break.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(
+            overlay_watchdog::RENDER_GRACE_SECS,
+        ))
+        .await;
+        if overlay_watchdog::OVERLAY_ACK.is_stranded(epoch) {
+            let app_main = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                abort_stranded_break(&app_main, &current_break);
+            });
+        }
+    });
+}
+
+// Tests drive `fire_break` synchronously and assert on its immediate effects;
+// a real multi-second watchdog task would outlive the test and fire against a
+// torn-down mock app. `arm()` above still runs (a cheap atomic bump), so the
+// epoch bookkeeping is exercised; only the timer task is suppressed here. The
+// teardown itself is covered directly via `abort_stranded_break`.
+#[cfg(test)]
+fn spawn_render_watchdog<R: Runtime>(
+    _app: &AppHandle<R>,
+    _current_break: &Arc<std::sync::Mutex<Option<BreakEvent>>>,
+    _epoch: u64,
+) {
 }
 
 #[cfg(test)]

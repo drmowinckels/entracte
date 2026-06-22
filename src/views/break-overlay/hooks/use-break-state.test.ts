@@ -62,6 +62,51 @@ describe("useBreakState", () => {
     });
   });
 
+  it("acks notify_overlay_rendered once a break is applied (#196/#226 watchdog)", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
+      if (cmd === "get_current_break") return sampleBreak;
+      if (cmd === "get_postpone_state")
+        return { count: 0, max: 3, remaining: 3 };
+      return null;
+    });
+    const { listen } = makeListener();
+    const { result } = renderHook(() =>
+      useBreakState({
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
+      }),
+    );
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    expect(invoke).toHaveBeenCalledWith("notify_overlay_rendered");
+  });
+
+  it("does not ack when the break:start payload is malformed", async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === "get_current_break") return null;
+      if (cmd === "get_settings") return DEFAULT_OVERLAY_SETTINGS;
+      return null;
+    });
+    const { listen, emit } = makeListener();
+    renderHook(() =>
+      useBreakState({
+        invoke:
+          invoke as unknown as typeof import("@tauri-apps/api/core").invoke,
+        listen:
+          listen as unknown as typeof import("@tauri-apps/api/event").listen,
+      }),
+    );
+    await waitFor(() => expect(listen).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      emit("break:start", { kind: "micro", duration_secs: "soon" });
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    // A dropped payload never renders, so it must not ack the watchdog.
+    expect(invoke).not.toHaveBeenCalledWith("notify_overlay_rendered");
+  });
+
   it("starts a break when a break:start event arrives", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_current_break") return null;
@@ -185,10 +230,10 @@ describe("useBreakState", () => {
     expect(result.current.remaining).toBe(0);
   });
 
-  it("keeps default appearance when get_settings is malformed", async () => {
+  it("keeps default appearance when get_settings is missing overlay fields", async () => {
     const invoke = vi.fn(async (cmd: string) => {
       if (cmd === "get_current_break") return null;
-      // Missing the overlay fields entirely — validation fails, fall back.
+      // Missing the overlay fields entirely — each is filled from defaults.
       if (cmd === "get_settings") return { unexpected: true };
       if (cmd === "get_postpone_state")
         return { count: 0, max: 3, remaining: 3 };
@@ -207,9 +252,9 @@ describe("useBreakState", () => {
     await act(async () => {
       emit("break:start", sampleBreak);
     });
-    // A valid break still shows; appearance stays at the safe default.
+    // A valid break still shows; every overlay field stays at the safe default.
     await waitFor(() => expect(result.current.active).not.toBeNull());
-    expect(result.current.appearance).toEqual(DEFAULT_OVERLAY_SETTINGS);
+    expect(result.current.appearance).toMatchObject(DEFAULT_OVERLAY_SETTINGS);
   });
 
   it("falls back gracefully when the settings/postpone fetches reject", async () => {

@@ -35,18 +35,19 @@ Renderer code calls these with `invoke<ReturnType>("command_name", { args })`. C
 
 ### Breaks
 
-| Command               | Args                                                 | Returns         | Notes                                                                               |
-| --------------------- | ---------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------- |
-| `pause`               | `duration_secs?: number`                             | `()`            | Indefinite when omitted. Fires `pause_start` hooks + `pause:changed`.               |
-| `resume`              | –                                                    | `()`            | Fires `pause_end` hooks + `pause:changed`.                                          |
-| `get_pause_info`      | –                                                    | `PauseInfo`     | `remaining_secs` ticks live for timed pauses.                                       |
-| `end_break`           | `reason?: "completed" \| "dismissed" \| "postponed"` | `()`            | Default `"completed"`. Updates session counters, fires `break_end` hooks.           |
-| `trigger_test_break`  | `kind: BreakKind, duration_secs: number`             | `()`            | Bypasses suppressions. Used by the "Test now" buttons.                              |
-| `postpone_break`      | `kind: BreakKind`                                    | `()`            | Errors when `strict_mode` / `postpone_enabled = false` or the per-break cap is hit. |
-| `skip_next_break`     | `kind: BreakKind`                                    | `()`            | Errors when `strict_mode` is on.                                                    |
-| `get_postpone_state`  | `kind: BreakKind`                                    | `PostponeState` | `{ count, max, remaining }`.                                                        |
-| `get_last_break_info` | –                                                    | `LastBreakInfo` | Drives the tray's "Resume last skipped" item.                                       |
-| `resume_last_break`   | –                                                    | `()`            | Re-fires the last skipped/postponed break with current settings.                    |
+| Command                   | Args                                                 | Returns         | Notes                                                                                        |
+| ------------------------- | ---------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------- |
+| `pause`                   | `duration_secs?: number`                             | `()`            | Indefinite when omitted. Fires `pause_start` hooks + `pause:changed`.                        |
+| `resume`                  | –                                                    | `()`            | Fires `pause_end` hooks + `pause:changed`.                                                   |
+| `get_pause_info`          | –                                                    | `PauseInfo`     | `remaining_secs` ticks live for timed pauses.                                                |
+| `end_break`               | `reason?: "completed" \| "dismissed" \| "postponed"` | `()`            | Default `"completed"`. Updates session counters, fires `break_end` hooks.                    |
+| `trigger_test_break`      | `kind: BreakKind, duration_secs: number`             | `()`            | Bypasses suppressions. Used by the "Test now" buttons.                                       |
+| `notify_overlay_rendered` | –                                                    | `()`            | Overlay → backend ack that it has rendered a break; disarms the render watchdog (#196/#226). |
+| `postpone_break`          | `kind: BreakKind`                                    | `()`            | Errors when `strict_mode` / `postpone_enabled = false` or the per-break cap is hit.          |
+| `skip_next_break`         | `kind: BreakKind`                                    | `()`            | Errors when `strict_mode` is on.                                                             |
+| `get_postpone_state`      | `kind: BreakKind`                                    | `PostponeState` | `{ count, max, remaining }`.                                                                 |
+| `get_last_break_info`     | –                                                    | `LastBreakInfo` | Drives the tray's "Resume last skipped" item.                                                |
+| `resume_last_break`       | –                                                    | `()`            | Re-fires the last skipped/postponed break with current settings.                             |
 
 ### Stats
 
@@ -75,16 +76,16 @@ Renderer code calls these with `invoke<ReturnType>("command_name", { args })`. C
 
 The backend emits these via `app.emit`. The renderer subscribes with `listen<Payload>("event:name", handler)` from `@tauri-apps/api/event`.
 
-| Event                  | Payload                   | Fired by                                                                 |
-| ---------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| `break:start`          | `BreakEvent`              | `overlay::fire_break`                                                    |
-| `break:end`            | `()`                      | `end_break`, `postpone_break`                                            |
-| `pause:changed`        | `boolean`                 | `pause`, `resume`, tray pause buttons, run-loop on auto-resume           |
-| `stats:changed`        | `BreakStats`              | `end_break`, `skip_next_from_cli`, `reset_break_stats`                   |
-| `last_break:changed`   | `LastBreakInfo`           | `end_break`, `postpone_break`, `skip_next_from_cli`, `resume_last_break` |
-| `profile:changed`      | `string`                  | every profile-mutating command                                           |
-| `screen_time:reminder` | `number` (budget minutes) | run-loop when the daily budget is crossed                                |
-| `stats:cleared`        | `()`                      | `clear_event_log`                                                        |
+| Event                  | Payload                   | Fired by                                                                  |
+| ---------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `break:start`          | `BreakEvent`              | `overlay::fire_break`                                                     |
+| `break:end`            | `()`                      | `end_break`, `postpone_break`, `overlay::abort_stranded_break` (watchdog) |
+| `pause:changed`        | `boolean`                 | `pause`, `resume`, tray pause buttons, run-loop on auto-resume            |
+| `stats:changed`        | `BreakStats`              | `end_break`, `skip_next_from_cli`, `reset_break_stats`                    |
+| `last_break:changed`   | `LastBreakInfo`           | `end_break`, `postpone_break`, `skip_next_from_cli`, `resume_last_break`  |
+| `profile:changed`      | `string`                  | every profile-mutating command                                            |
+| `screen_time:reminder` | `number` (budget minutes) | run-loop when the daily budget is crossed                                 |
+| `stats:cleared`        | `()`                      | `clear_event_log`                                                         |
 
 ## Local IPC
 

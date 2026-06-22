@@ -214,6 +214,57 @@ describe("BreaksTab break ideas", () => {
       }),
     );
   });
+
+  it("autosaves typed chores after a pause, without a blur (#225)", async () => {
+    // Reproduces the lost-chores path: chores jotted at the morning prompt
+    // must persist even if the window closes / the laptop sleeps before the
+    // textarea loses focus. No blur is fired here.
+    const emptyToday = {
+      date: "2026-06-19",
+      items: [] as string[],
+      rotation: 0,
+      prompted_date: "",
+    };
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_chores") return emptyToday;
+      if (cmd === "set_chores")
+        return { ...emptyToday, items: ["Mow the lawn"] };
+      return undefined;
+    });
+    renderTab(false);
+    const textarea = await screen.findByPlaceholderText(/Water the plants/);
+    // Let the get_chores load settle so the autosave has a baseline to diff.
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("get_chores"));
+    fireEvent.change(textarea, { target: { value: "Mow the lawn" } });
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("set_chores", {
+        items: ["Mow the lawn"],
+      }),
+    );
+  });
+
+  it("does not autosave the chore list it just loaded (#225)", async () => {
+    // A pure load (no edit) must not trigger a write — the re-seed of the
+    // draft from the saved list is not a user change.
+    const today = {
+      date: "2026-06-19",
+      items: ["Water the plants"],
+      rotation: 0,
+      prompted_date: "",
+    };
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_chores") return today;
+      return undefined;
+    });
+    renderTab(false);
+    await screen.findByDisplayValue("Water the plants");
+    // Wait past the 800ms autosave debounce to prove nothing is written.
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "set_chores",
+      expect.anything(),
+    );
+  });
 });
 
 /** The checkbox owned by the CheckboxRow whose label text matches. */
