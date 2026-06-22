@@ -184,7 +184,11 @@ export default function Settings() {
               tabIndex={0}
               hidden={tab !== "about"}
             >
-              <AboutTab supporter={supporter} />
+              <AboutTab
+                supporter={supporter}
+                settings={settings}
+                updateSetting={update}
+              />
             </div>
           </>
         )}

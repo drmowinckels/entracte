@@ -112,6 +112,7 @@ export const schedulerSettingsSchema = z.object({
   micro_manual_finish: z.boolean(),
   long_manual_finish: z.boolean(),
   autostart_enabled: z.boolean(),
+  auto_check_updates: z.boolean(),
   micro_sound: breakSoundSchema,
   long_sound: breakSoundSchema,
   sound_volume: z.number(),

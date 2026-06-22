@@ -598,6 +598,10 @@ pub struct Settings {
     pub micro_manual_finish: bool,
     pub long_manual_finish: bool,
     pub autostart_enabled: bool,
+    /// Opt-in: on launch, silently check the updater endpoint once and post a
+    /// desktop notification if a newer build is available. Defaults on; the
+    /// About tab exposes the toggle and the manual "Check for updates" button.
+    pub auto_check_updates: bool,
     #[serde(default)]
     pub micro_sound: BreakSound,
     #[serde(default)]
@@ -761,6 +765,7 @@ impl Default for Settings {
             micro_manual_finish: false,
             long_manual_finish: false,
             autostart_enabled: false,
+            auto_check_updates: true,
             micro_sound: BreakSound::end_chime("337048"),
             long_sound: BreakSound::end_chime("337048"),
             sound_volume: 0.5,
