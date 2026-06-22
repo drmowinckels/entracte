@@ -3,6 +3,7 @@ import {
   breathProgress,
   breathPhaseLabel,
   breathScale,
+  breathRingScale,
   breathLabel,
   breathAriaLabel,
   breathPhaseCue,
@@ -94,6 +95,36 @@ describe("breathScale", () => {
   it("is a fixed mid scale under reduced motion", () => {
     expect(breathScale(0, true)).toBe(0.85);
     expect(breathScale(1, true)).toBe(0.85);
+  });
+});
+
+describe("breathRingScale — leads the label by one tick", () => {
+  it("targets the next tick's fullness so the 1s ring transition tracks real time", () => {
+    // At elapsed N the ring eases over [N, N+1] toward the value it should
+    // hold at N+1, so it shows fullness(N)→fullness(N+1) — in lockstep with
+    // the labels — instead of trailing a second behind.
+    for (const e of [0, 1, 2, 3, 4, 8, 12, 15]) {
+      expect(breathRingScale(BOX, e, false)).toBeCloseTo(
+        breathScale(breathProgress(BOX, e + 1)!.fullness, false),
+      );
+    }
+  });
+
+  it("reaches full inhale exactly as the hold phase begins", () => {
+    // Last inhale second (elapsed 3) targets the hold's full ring (1.0),
+    // arriving at the inhale→hold boundary rather than a second late.
+    expect(breathRingScale(BOX, 3, false)).toBeCloseTo(breathScale(1, false));
+    expect(breathProgress(BOX, 3)?.fullness).toBe(0.75); // label still mid-inhale
+  });
+
+  it("ignores the lead under reduced motion (static ring)", () => {
+    expect(breathRingScale(BOX, 0, true)).toBe(0.85);
+    expect(breathRingScale(BOX, 7, true)).toBe(0.85);
+  });
+
+  it("holds at exhaled for a degenerate all-zero pattern", () => {
+    const zero: BreathPattern = { inhale: 0, hold: 0, exhale: 0, hold_out: 0 };
+    expect(breathRingScale(zero, 5, false)).toBeCloseTo(breathScale(0, false));
   });
 });
 

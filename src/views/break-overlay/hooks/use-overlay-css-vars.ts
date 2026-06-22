@@ -7,7 +7,7 @@ import {
   rgbFor,
   systemPrefersReducedMotion,
 } from "../visual";
-import { breathProgress, breathScale } from "../breath";
+import { breathRingScale } from "../breath";
 import type { BreakEvent, OverlaySettings } from "../types";
 
 export type OverlayCssVarsRefs = {
@@ -76,11 +76,12 @@ export function useOverlayCssVars(
     const el = rootRef.current;
     if (!el || !active) return;
     const breath = active.routine_breath;
-    const prog = breath
-      ? breathProgress(breath, active.duration_secs - remaining)
-      : null;
-    const value = prog
-      ? breathScale(prog.fullness, systemPrefersReducedMotion()).toFixed(3)
+    const value = breath
+      ? breathRingScale(
+          breath,
+          active.duration_secs - remaining,
+          systemPrefersReducedMotion(),
+        ).toFixed(3)
       : "1";
     el.style.setProperty("--breath-scale", value);
   }, [active, remaining]);
