@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import type { PlatformCapabilities } from "../../../lib/platform";
 import type { UseSupporter } from "../hooks/use-supporter";
 import type { UseUpdateCheck } from "../hooks/use-update-check";
-import type { UpdateInfo, SupporterStatus } from "../types";
+import type { UpdateInfo, SupporterStatus, SchedulerSettings } from "../types";
 
 const invokeMock = vi.fn();
 const openUrlMock = vi.fn();
@@ -103,14 +103,26 @@ describe("AboutTab — Windows SmartScreen advisory", () => {
   it("shows the SmartScreen warning paragraph only when installerUnsignedWarning is set AND an update is available", () => {
     currentCaps = { ...currentCaps, installerUnsignedWarning: true };
     mockUpdate = { ...mockUpdate, info: updateAvailable };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     expect(screen.getByText(/SmartScreen will warn/i)).toBeTruthy();
   });
 
   it("hides the SmartScreen warning when the installer is signed even with an update available", () => {
     currentCaps = { ...currentCaps, installerUnsignedWarning: false };
     mockUpdate = { ...mockUpdate, info: updateAvailable };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     expect(screen.queryByText(/SmartScreen will warn/i)).toBeNull();
   });
 
@@ -125,7 +137,13 @@ describe("AboutTab — Windows SmartScreen advisory", () => {
         release_url: null,
       },
     };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     expect(screen.queryByText(/SmartScreen will warn/i)).toBeNull();
     expect(screen.getByText(/latest version/i)).toBeTruthy();
   });
@@ -135,7 +153,13 @@ describe("AboutTab — update banner", () => {
   it("renders the release-page deep link when has_update is true and release_url is set", async () => {
     const user = userEvent.setup();
     mockUpdate = { ...mockUpdate, info: updateAvailable };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     const btn = screen.getByRole("button", { name: /open release page/i });
     await user.click(btn);
     expect(openUrlMock).toHaveBeenCalledWith(updateAvailable.release_url);
@@ -146,7 +170,13 @@ describe("AboutTab — update banner", () => {
       ...mockUpdate,
       info: { ...updateAvailable, release_url: null },
     };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     expect(
       screen.queryByRole("button", { name: /open release page/i }),
     ).toBeNull();
@@ -156,7 +186,13 @@ describe("AboutTab — update banner", () => {
     const user = userEvent.setup();
     const check = vi.fn(async () => undefined);
     mockUpdate = { ...mockUpdate, check };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     await user.click(
       screen.getByRole("button", { name: /check for updates/i }),
     );
@@ -165,7 +201,13 @@ describe("AboutTab — update banner", () => {
 
   it("disables and relabels the check button while checking", () => {
     mockUpdate = { ...mockUpdate, checking: true };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     const btn = screen.getByRole("button", {
       name: /checking/i,
     }) as HTMLButtonElement;
@@ -174,7 +216,13 @@ describe("AboutTab — update banner", () => {
 
   it("surfaces the error string when the check fails", () => {
     mockUpdate = { ...mockUpdate, error: "network unreachable" };
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     expect(screen.getByText(/Check failed: network unreachable/)).toBeTruthy();
   });
 });
@@ -184,7 +232,13 @@ describe("AboutTab — diagnostics & author links", () => {
     const user = userEvent.setup();
     invokeMock.mockResolvedValue("diagnostics-report-body");
     writeToClipboardMock.mockResolvedValue(true);
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     await user.click(
       screen.getByRole("button", { name: /copy diagnostics report/i }),
     );
@@ -196,7 +250,13 @@ describe("AboutTab — diagnostics & author links", () => {
     const user = userEvent.setup();
     invokeMock.mockResolvedValue("diagnostics-report-body");
     writeToClipboardMock.mockResolvedValue(false);
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     await user.click(
       screen.getByRole("button", { name: /copy diagnostics report/i }),
     );
@@ -205,7 +265,13 @@ describe("AboutTab — diagnostics & author links", () => {
 
   it("opens the buy-me-a-coffee link", async () => {
     const user = userEvent.setup();
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     await user.click(screen.getByRole("button", { name: /buy me a coffee/i }));
     expect(openUrlMock).toHaveBeenCalledWith(
       "https://buymeacoffee.com/drmowinckels",
@@ -214,8 +280,52 @@ describe("AboutTab — diagnostics & author links", () => {
 
   it("opens the Cairn companion-app link", async () => {
     const user = userEvent.setup();
-    render(<AboutTab supporter={supporterStub()} />);
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
     await user.click(screen.getByRole("button", { name: /try cairn/i }));
     expect(openUrlMock).toHaveBeenCalledWith("https://cairn.drmowinckels.io/");
+  });
+});
+
+describe("AboutTab — automatic update-check toggle", () => {
+  // The toggle only reads `auto_check_updates`, so a partial settings cast is
+  // enough to drive it without standing up the whole SchedulerSettings shape.
+  const settingsWith = (autoCheck: boolean): SchedulerSettings =>
+    ({ auto_check_updates: autoCheck }) as unknown as SchedulerSettings;
+
+  it("is hidden until settings have loaded", () => {
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByLabelText(/automatically check for updates/i),
+    ).toBeNull();
+  });
+
+  it("reflects the current setting and writes the toggle through", async () => {
+    const user = userEvent.setup();
+    const updateSetting = vi.fn();
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={settingsWith(true)}
+        updateSetting={updateSetting}
+      />,
+    );
+    const box = screen.getByLabelText(
+      /automatically check for updates/i,
+    ) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await user.click(box);
+    expect(updateSetting).toHaveBeenCalledWith("auto_check_updates", false);
   });
 });

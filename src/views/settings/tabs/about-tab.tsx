@@ -4,6 +4,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import { useUpdateCheck } from "../hooks/use-update-check";
 import type { UseSupporter } from "../hooks/use-supporter";
+import type { UseSettings } from "../hooks/use-settings";
+import type { SchedulerSettings } from "../types";
 import { usePlatformCapabilities } from "../../../lib/platform";
 import { writeToClipboard } from "../utils";
 
@@ -11,7 +13,15 @@ const TOAST_MS = 3000;
 const SUPPORTER_CHECKOUT_URL =
   "https://shop.drmowinckels.io/checkout/buy/40af6bbf-154c-4321-948e-3329b1176319";
 
-export function AboutTab({ supporter }: { supporter: UseSupporter }) {
+export function AboutTab({
+  supporter,
+  settings,
+  updateSetting,
+}: {
+  supporter: UseSupporter;
+  settings: SchedulerSettings | null;
+  updateSetting: UseSettings["update"];
+}) {
   const [version, setVersion] = useState("");
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
   const [licenseInput, setLicenseInput] = useState("");
@@ -68,6 +78,18 @@ export function AboutTab({ supporter }: { supporter: UseSupporter }) {
         <p className="about-meta">Version {version || "—"}</p>
         <p className="about-meta">Cross-platform break reminder.</p>
         <p className="about-meta">Apache 2.0 licensed.</p>
+        {settings && (
+          <label className="about-meta about-auto-check">
+            <input
+              type="checkbox"
+              checked={settings.auto_check_updates}
+              onChange={(e) =>
+                updateSetting("auto_check_updates", e.target.checked)
+              }
+            />{" "}
+            Automatically check for updates on launch
+          </label>
+        )}
         {update.info && update.info.has_update && update.info.release_url && (
           <>
             <p className="about-meta">

@@ -75,9 +75,78 @@ pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
     Ok(build_update_info(current, payload))
 }
 
+/// Title + body for the "update available" desktop notification, or `None`
+/// when there's nothing to announce (already on the latest build). Pure so the
+/// copy and the no-update guard are unit-tested without a live updater or the
+/// notification plugin.
+pub fn update_notification(info: &UpdateInfo) -> Option<(String, String)> {
+    if !info.has_update {
+        return None;
+    }
+    Some((
+        "Update available".to_string(),
+        format!(
+            "Entracte {} is available (you have {}). Open Preferences \u{2192} About to update.",
+            info.latest, info.current
+        ),
+    ))
+}
+
+/// Opt-in startup auto-check (the `auto_check_updates` setting). Checks the
+/// updater endpoint once in the background and posts a non-intrusive desktop
+/// notification if a newer build is available. Silent on no-update and on any
+/// error — being offline must never nag — and never blocks startup. Split on
+/// `cfg(test)` (mirrors `overlay::spawn_render_watchdog`) so the test/coverage
+/// build neither spawns a task nor fires a real OS notification; the decision
+/// logic lives in the pure, tested `update_notification`.
+#[cfg(not(test))]
+pub fn spawn_startup_check(app: AppHandle, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        match check_for_update(app.clone()).await {
+            Ok(info) => {
+                if let Some((title, body)) = update_notification(&info) {
+                    use tauri_plugin_notification::NotificationExt;
+                    let _ = app.notification().builder().title(title).body(body).show();
+                }
+            }
+            Err(e) => log::debug!("updater: startup check skipped: {e}"),
+        }
+    });
+}
+
+#[cfg(test)]
+pub fn spawn_startup_check(_app: AppHandle, _enabled: bool) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notification_announces_an_available_update_with_both_versions() {
+        let info = build_update_info(
+            "0.0.8".to_string(),
+            Some(UpdatePayload {
+                version: "0.0.9".to_string(),
+                current_version: "0.0.8".to_string(),
+            }),
+        );
+        let (title, body) = update_notification(&info).expect("an update should be announced");
+        assert!(title.contains("Update"));
+        assert!(body.contains("0.0.9"), "body names the new version: {body}");
+        assert!(
+            body.contains("0.0.8"),
+            "body names the current version: {body}"
+        );
+    }
+
+    #[test]
+    fn no_notification_when_already_on_the_latest_build() {
+        let info = build_update_info("0.0.8".to_string(), None);
+        assert!(update_notification(&info).is_none());
+    }
 
     #[test]
     fn no_update_clones_running_version_into_both_current_and_latest() {

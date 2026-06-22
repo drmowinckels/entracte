@@ -261,6 +261,9 @@ pub fn run() {
 
             if let Some(settings) = initial_settings {
                 scheduler::apply_hotkeys(app.handle(), &settings);
+                // Opt-in: silently check for a newer build once at launch and
+                // post a non-intrusive notification if one is available (#238).
+                updater::spawn_startup_check(app.handle().clone(), settings.auto_check_updates);
             }
 
             app.manage(audio::AudioPlayer::spawn());

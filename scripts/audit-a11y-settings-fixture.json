@@ -48,6 +48,7 @@
   "micro_manual_finish": false,
   "long_manual_finish": false,
   "autostart_enabled": false,
+  "auto_check_updates": true,
   "micro_sound": { "mode": "end_chime", "sound_id": "337048" },
   "long_sound": { "mode": "ambient", "sound_id": "851196" },
   "sound_volume": 0.5,

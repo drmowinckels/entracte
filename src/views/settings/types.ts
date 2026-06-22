@@ -166,6 +166,7 @@ export type SchedulerSettings = {
   micro_manual_finish: boolean;
   long_manual_finish: boolean;
   autostart_enabled: boolean;
+  auto_check_updates: boolean;
   micro_sound: BreakSound;
   long_sound: BreakSound;
   sound_volume: number;

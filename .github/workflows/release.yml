@@ -119,10 +119,12 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Entracte ${{ github.ref_name }}"
           releaseDraft: true
-          # 0.0.X tags are betas; 0.1.X and later are stable. Flip the
-          # github_release `prerelease` flag based on the tag prefix
-          # so beta releases don't accidentally surface as "latest".
-          prerelease: ${{ startsWith(github.ref_name, 'v0.0.') }}
+          # Publish every release as a normal (non-prerelease) release. The
+          # in-app updater checks `releases/latest/download/latest.json`, and
+          # GitHub's `/latest/` skips pre-releases — so marking 0.0.x betas as
+          # pre-release left the update check unable to resolve any manifest
+          # (#238). The 0.0.x version number itself signals the beta line.
+          prerelease: false
           args: ${{ matrix.args }}
 
       # tauri-action notarises and staples the inner `.app`, but leaves the
