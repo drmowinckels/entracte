@@ -2445,17 +2445,22 @@ mod parity_tests {
     }
 
     // -- Enum *value* parity. The field-name test above proves the keys
-    //    line up; this proves the typed enums (`BreakMode`,
-    //    `ScheduleMode`, `HintMix`) serialise to exactly the string
-    //    literals the TS unions accept. A new Rust variant with no TS
-    //    counterpart (or vice versa) fails here at unit-test time rather
-    //    than as a runtime Zod rejection.
+    //    line up; this proves the typed on-disk enums (`BreakMode`,
+    //    `ScheduleMode`, `HintMix`, `HotkeyAction`, `RoutineCategory`,
+    //    `RoutineDifficulty`) serialise to exactly the string literals the TS
+    //    unions accept. Each parity array is built with `all_variants!`, whose
+    //    compile-time exhaustiveness gate makes a new Rust variant fail to
+    //    *compile* until it's listed — so a missing TS counterpart (or vice
+    //    versa) surfaces at unit-test time rather than as a runtime Zod
+    //    rejection.
 
     use super::{BreakMode, HintMix, ScheduleMode};
+    use crate::scheduler::routines::{RoutineCategory, RoutineDifficulty};
 
-    /// All on-disk strings a Rust enum can serialise to. Drives the
-    /// value-parity check from the Rust side without hand-maintaining a
-    /// list — add a variant and it shows up automatically.
+    /// All on-disk strings a Rust enum can serialise to. The caller passes the
+    /// full variant array — built with [`all_variants!`], which also gates
+    /// completeness at compile time — and this maps each through serde to its
+    /// wire string.
     fn rust_enum_values<T, const N: usize>(variants: [T; N]) -> BTreeSet<String>
     where
         T: serde::Serialize,
@@ -2504,24 +2509,34 @@ mod parity_tests {
         std::fs::read_to_string(&path).expect("read TS settings types")
     }
 
+    /// Build the full variant array for a fieldless enum **and** an
+    /// exhaustiveness gate from a single list. The `match` below covers
+    /// exactly the listed variants, so adding a variant to the enum without
+    /// listing it here fails to compile — the parity array can never silently
+    /// omit one. Replaces the array + hand-written match the hotkey gate used
+    /// to spell out per call site (#222 → #223).
+    macro_rules! all_variants {
+        ($ty:ident: $($variant:ident),+ $(,)?) => {{
+            let all = [$($ty::$variant),+];
+            for v in &all {
+                match v {
+                    $($ty::$variant => {}),+
+                }
+            }
+            all
+        }};
+    }
+
     #[test]
     fn break_mode_values_match_ts_union() {
-        let rust = rust_enum_values([
-            BreakMode::Overlay,
-            BreakMode::Windowed,
-            BreakMode::Notification,
-        ]);
+        let rust = rust_enum_values(all_variants!(BreakMode: Overlay, Windowed, Notification));
         let ts = ts_union_values(&ts_source(), "BreakDeliveryMode");
         assert_eq!(rust, ts, "BreakMode ↔ BreakDeliveryMode value drift");
     }
 
     #[test]
     fn schedule_mode_values_match_ts_union() {
-        let rust = rust_enum_values([
-            ScheduleMode::Interval,
-            ScheduleMode::Fixed,
-            ScheduleMode::Both,
-        ]);
+        let rust = rust_enum_values(all_variants!(ScheduleMode: Interval, Fixed, Both));
         let ts = ts_union_values(&ts_source(), "ScheduleMode");
         assert_eq!(rust, ts, "ScheduleMode value drift");
     }
@@ -2531,13 +2546,8 @@ mod parity_tests {
         // HintMix is one Rust enum but two TS unions (micro vs long); its
         // value set is the union of both. Splitting per-kind is a TS-only
         // nicety — Rust accepts any variant on either field.
-        let rust = rust_enum_values([
-            HintMix::Both,
-            HintMix::Physical,
-            HintMix::Psychological,
-            HintMix::Solo,
-            HintMix::Social,
-        ]);
+        let rust =
+            rust_enum_values(all_variants!(HintMix: Both, Physical, Psychological, Solo, Social));
         let src = ts_source();
         let mut ts = ts_union_values(&src, "MicroHintMix");
         ts.extend(ts_union_values(&src, "LongHintMix"));
@@ -2546,33 +2556,30 @@ mod parity_tests {
 
     #[test]
     fn hotkey_action_values_match_ts_union() {
-        use crate::scheduler::hotkeys::HotkeyAction::*;
         // The bindable actions are sync'd by hand across the Rust enum, the
         // TS union, the zod enum, and the HOTKEY_ACTIONS list; this guards the
         // Rust ↔ TS-union leg so a new variant can't silently drift.
-        let all = [
-            Pause,
-            Pause15m,
-            Pause30m,
-            Pause60m,
-            Resume,
-            TriggerMicro,
-            TriggerLong,
-            SkipMicro,
-            SkipLong,
-            CycleProfile,
-        ];
-        // Exhaustiveness gate: a new variant fails to compile here until it's
-        // added to `all` above, so the hand-listed parity set can't omit it.
-        for a in all {
-            match a {
-                Pause | Pause15m | Pause30m | Pause60m | Resume | TriggerMicro | TriggerLong
-                | SkipMicro | SkipLong | CycleProfile => {}
-            }
-        }
-        let rust = rust_enum_values(all);
+        use crate::scheduler::hotkeys::HotkeyAction;
+        let rust = rust_enum_values(all_variants!(HotkeyAction:
+            Pause, Pause15m, Pause30m, Pause60m, Resume,
+            TriggerMicro, TriggerLong, SkipMicro, SkipLong, CycleProfile));
         let ts = ts_union_values(&ts_source(), "HotkeyAction");
         assert_eq!(rust, ts, "HotkeyAction ↔ TS union value drift");
+    }
+
+    #[test]
+    fn routine_category_values_match_ts_union() {
+        let rust =
+            rust_enum_values(all_variants!(RoutineCategory: Eyes, Mobility, Breathing, DeskYoga));
+        let ts = ts_union_values(&ts_source(), "RoutineCategory");
+        assert_eq!(rust, ts, "RoutineCategory ↔ TS union value drift");
+    }
+
+    #[test]
+    fn routine_difficulty_values_match_ts_union() {
+        let rust = rust_enum_values(all_variants!(RoutineDifficulty: Gentle, Moderate, Active));
+        let ts = ts_union_values(&ts_source(), "RoutineDifficulty");
+        assert_eq!(rust, ts, "RoutineDifficulty ↔ TS union value drift");
     }
 
     #[test]

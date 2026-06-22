@@ -7,14 +7,16 @@ import type {
 } from "../types";
 import { InfoTip } from "./info-tip";
 
-const CATEGORIES: { id: RoutineCategory; label: string }[] = [
+// Exported for the routine enum-parity test (kept in lockstep with the zod
+// routine enums and the Rust `RoutineCategory` / `RoutineDifficulty`).
+export const CATEGORIES: { id: RoutineCategory; label: string }[] = [
   { id: "eyes", label: "Eyes" },
   { id: "mobility", label: "Mobility" },
   { id: "breathing", label: "Breathing" },
   { id: "desk_yoga", label: "Desk yoga" },
 ];
 
-const DIFFICULTIES: { id: RoutineDifficulty; label: string }[] = [
+export const DIFFICULTIES: { id: RoutineDifficulty; label: string }[] = [
   { id: "gentle", label: "Gentle" },
   { id: "moderate", label: "Moderate" },
   { id: "active", label: "Active" },

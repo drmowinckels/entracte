@@ -1,101 +1,48 @@
-import { z } from "zod";
-import type { BreakSound } from "../../lib/break-sound";
-import type {
-  BreakEvent,
-  BreathPattern,
-  BreathSounds,
-  OverlaySettings,
-  PostponeState,
-  RoutineStep,
+import {
+  DEFAULT_OVERLAY_SETTINGS,
+  type BreakEvent,
+  type OverlaySettings,
+  type PostponeState,
 } from "./types";
 
-// Runtime schemas for the payloads the overlay reads over IPC. The overlay
-// renders untrusted backend data directly (countdown, theme, sounds), so it
-// validates rather than blind-casting; on a parse failure each caller falls
-// back to a safe default (keep previous settings / no break / null postpone)
-// rather than feeding a malformed value into the UI. `satisfies z.ZodType<T>`
-// makes the compiler check each schema against its TS type, and those types
-// are kept in parity with the Rust serde structs (see `ipc-parity.test.ts`).
+// The overlay reads these payloads over IPC from this app's *own* backend
+// (typed Rust serde structs). A heavyweight zod parse on the freshly-spawned
+// overlay webview's content process reliably terminates it — the parse spikes
+// the fragile cold process past WebKit's process watchdog (#196 macOS /
+// #226 Linux), leaving a blank, invisible-but-active break. So we validate
+// with cheap, allocation-light guards instead of zod, trusting the backend
+// shape and falling back to a safe default on anything malformed.
 
-// Rust `BreakSound.custom_path` is a plain `String` (empty when unused), so
-// the backend always sends it — but the TS type and DEFAULT_OVERLAY_SETTINGS
-// treat it as optional, so accept it absent too.
-const breakSoundSchema = z.object({
-  mode: z.enum(["off", "end_chime", "ambient"]),
-  sound_id: z.string(),
-  custom_path: z.string().optional(),
-}) satisfies z.ZodType<BreakSound>;
+function isObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
+}
 
-// `get_settings` returns the full Settings object; z.object strips the
-// non-overlay fields, leaving exactly the overlay subset.
-export const overlaySettingsSchema = z.object({
-  overlay_opacity: z.number(),
-  overlay_color: z.string(),
-  overlay_custom_rgb: z.string(),
-  overlay_high_contrast: z.boolean(),
-  overlay_font_scale: z.number(),
-  show_hint: z.boolean(),
-  show_current_time: z.boolean(),
-  clock_format: z.enum(["12h", "24h"]),
-  micro_sound: breakSoundSchema,
-  long_sound: breakSoundSchema,
-  sound_volume: z.number(),
-  pause_countdown_if_typing: z.boolean(),
-  strict_mode: z.boolean(),
-  custom_css: z.string(),
-  routine_fill: z.boolean(),
-  allow_plugin_sounds: z.boolean(),
-}) satisfies z.ZodType<OverlaySettings>;
+/** True when `x` is a `break:start` / `get_current_break` payload safe to drive
+ * the overlay. Checks only the fields the overlay depends on; the rest is
+ * trusted from the backend (and read defensively at the use site). */
+export function isBreakEvent(x: unknown): x is BreakEvent {
+  if (!isObject(x)) return false;
+  return (
+    (x.kind === "micro" || x.kind === "long" || x.kind === "sleep") &&
+    typeof x.duration_secs === "number" &&
+    Array.isArray(x.hints)
+  );
+}
 
-const routineStepSchema = z.object({
-  text: z.string(),
-  seconds: z.number(),
-  asset: z.string().optional(),
-  sound: z.string().optional(),
-}) satisfies z.ZodType<RoutineStep>;
+/** Coerce a `get_settings` response (the full Settings object) to the overlay
+ * subset, filling any missing field from defaults. `null` only when the
+ * response is not an object (keep the previous/default appearance). */
+export function toOverlaySettings(x: unknown): OverlaySettings | null {
+  if (!isObject(x)) return null;
+  return { ...DEFAULT_OVERLAY_SETTINGS, ...(x as Partial<OverlaySettings>) };
+}
 
-const breathSoundsSchema = z.object({
-  inhale: z.string().optional(),
-  hold: z.string().optional(),
-  exhale: z.string().optional(),
-  hold_out: z.string().optional(),
-}) satisfies z.ZodType<BreathSounds>;
-
-const breathSchema = z.object({
-  inhale: z.number(),
-  hold: z.number().optional(),
-  exhale: z.number(),
-  hold_out: z.number().optional(),
-  cycles: z.number().optional(),
-  then: z.enum(["loop", "rest"]).optional(),
-  sounds: breathSoundsSchema.optional(),
-}) satisfies z.ZodType<BreathPattern>;
-
-export const breakEventSchema = z.object({
-  kind: z.enum(["micro", "long", "sleep"]),
-  duration_secs: z.number(),
-  enforceable: z.boolean(),
-  manual_finish: z.boolean(),
-  postpone_available: z.boolean(),
-  skip_available: z.boolean(),
-  hints: z.array(z.string()),
-  hint_rotate_seconds: z.number(),
-  health_intensity: z.number(),
-  // Always present on the wire; default keeps older payloads / fixtures that
-  // omit it parsing to an empty routine (overlay falls back to hints).
-  routine_steps: z.array(routineStepSchema).optional().default([]),
-  // Optional: the routine's own declared pacing. Absent means the overlay
-  // falls back to the global `routine_fill` setting.
-  routine_pacing: z.enum(["hold", "fill", "loop"]).optional(),
-  routine_max_step_secs: z.number().optional(),
-  routine_breath: breathSchema.optional(),
-  // The day's long-break chore nudge; absent for micro / bedtime and for an
-  // empty list (backend skips the field via skip_serializing_if).
-  chore_prompt: z.string().optional(),
-}) satisfies z.ZodType<BreakEvent>;
-
-export const postponeStateSchema = z.object({
-  count: z.number(),
-  max: z.number(),
-  remaining: z.number(),
-}) satisfies z.ZodType<PostponeState>;
+/** A `get_postpone_state` response, or `null` when malformed. */
+export function toPostponeState(x: unknown): PostponeState | null {
+  if (!isObject(x)) return null;
+  return typeof x.count === "number" &&
+    typeof x.max === "number" &&
+    typeof x.remaining === "number"
+    ? (x as unknown as PostponeState)
+    : null;
+}
