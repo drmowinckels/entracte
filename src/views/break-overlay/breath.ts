@@ -50,6 +50,23 @@ export function breathScale(fullness: number, reducedMotion: boolean): number {
   return reducedMotion ? 0.85 : 0.55 + 0.45 * fullness;
 }
 
+// The ring eases to its `--breath-scale` over a 1s CSS transition that matches
+// the 1Hz countdown tick. Setting the scale to the *current* tick's fullness
+// makes the ring spend each second easing toward a value the phase label
+// already shows — a ~1s visible lag. Target the fullness one tick AHEAD
+// instead, so the easing animates across the current second in real time and
+// the ring stays in lockstep with the labels (#236). Reduced-motion is static,
+// so the lead is a no-op there; a degenerate all-zero pattern holds at exhaled.
+export function breathRingScale(
+  b: BreathPattern,
+  elapsed: number,
+  reducedMotion: boolean,
+): number {
+  if (reducedMotion) return breathScale(0, true);
+  const next = breathProgress(b, elapsed + 1);
+  return breathScale(next ? next.fullness : 0, false);
+}
+
 // Map elapsed break time onto a breathing pattern, the same way `routineProgress`
 // maps it onto steps: derived purely from the break countdown (no separate
 // timer, so it pauses with the countdown). Phase seconds are absolute — the

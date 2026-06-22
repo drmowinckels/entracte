@@ -11,6 +11,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 - **Pause until a specific date & time.** The Quiet tab's **Manual pause** section gains a **Pause until** date-and-time picker — set it before a holiday when you'll be on the computer but not working, and Entracte stays quiet until then and resumes itself, so there's nothing to remember to switch back on. The deadline survives a restart, and the pause status now reads in days when it's that far out (e.g. _"6d 4h left"_). The menu-bar icon's quick durations are unchanged. ([#205](https://github.com/drmowinckels/entracte/issues/205))
 
+### Fixed
+
+- **The breathing ring now keeps pace with its labels.** During a guided breathing routine, the pulsing ring eases between sizes over a one-second animation that runs off the same per-second countdown as the phase labels — so the ring was always finishing the _previous_ second's motion while the label had already moved on, leaving it visibly about a second behind. The ring now animates toward where it should be at the end of each second, so it expands and contracts in step with "Breathe in / Hold / Breathe out." Reduced-motion users, who see a still ring, are unaffected. ([#236](https://github.com/drmowinckels/entracte/issues/236))
+
 ## [0.0.8] — 2026-06-18
 
 ### Added
