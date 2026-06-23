@@ -37,53 +37,6 @@ function renderTab(
   );
 }
 
-function checkbox(label: string): HTMLInputElement {
-  const span = screen.getByText(label);
-  const input = span.closest("label")?.querySelector('input[type="checkbox"]');
-  if (!input) throw new Error(`no checkbox for label "${label}"`);
-  return input as HTMLInputElement;
-}
-
-describe("ScheduleTab per-break postpone & skip", () => {
-  it("shows the per-kind postpone and skip toggles under each break type", () => {
-    renderTab(() => {}, { postpone_enabled: true, strict_mode: false });
-    expect(checkbox("Postpone micro breaks")).toBeTruthy();
-    expect(checkbox("Skip micro breaks")).toBeTruthy();
-    expect(checkbox("Postpone long breaks")).toBeTruthy();
-    expect(checkbox("Skip long breaks")).toBeTruthy();
-  });
-
-  it("toggling each per-kind postpone or skip calls update with that key", () => {
-    const update = vi.fn();
-    renderTab(update, { postpone_enabled: true, strict_mode: false });
-    fireEvent.click(checkbox("Postpone micro breaks"));
-    expect(update).toHaveBeenCalledWith("micro_postpone_enabled", false);
-    fireEvent.click(checkbox("Skip micro breaks"));
-    expect(update).toHaveBeenCalledWith("micro_skip_enabled", false);
-    fireEvent.click(checkbox("Postpone long breaks"));
-    expect(update).toHaveBeenCalledWith("long_postpone_enabled", false);
-    fireEvent.click(checkbox("Skip long breaks"));
-    expect(update).toHaveBeenCalledWith("long_skip_enabled", false);
-  });
-
-  it("hides the postpone toggles (but not skip) when the master switch is off", () => {
-    renderTab(() => {}, { postpone_enabled: false, strict_mode: false });
-    expect(screen.queryByText("Postpone micro breaks")).toBeNull();
-    expect(screen.queryByText("Postpone long breaks")).toBeNull();
-    // Skip is independent of the postpone master switch.
-    expect(checkbox("Skip micro breaks")).toBeTruthy();
-    expect(checkbox("Skip long breaks")).toBeTruthy();
-  });
-
-  it("hides every per-kind postpone and skip toggle in strict mode", () => {
-    renderTab(() => {}, { postpone_enabled: true, strict_mode: true });
-    expect(screen.queryByText("Postpone micro breaks")).toBeNull();
-    expect(screen.queryByText("Skip micro breaks")).toBeNull();
-    expect(screen.queryByText("Postpone long breaks")).toBeNull();
-    expect(screen.queryByText("Skip long breaks")).toBeNull();
-  });
-});
-
 describe("ScheduleTab active-hours weekday picker", () => {
   it("renders a labelled toggle for each weekday reflecting the mask", () => {
     // 0b001_1111 = Mon..Fri on, Sat/Sun off.

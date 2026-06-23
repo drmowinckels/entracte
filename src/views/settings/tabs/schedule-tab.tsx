@@ -134,22 +134,6 @@ export function ScheduleTab({
               multiplier={1}
               onChange={(v) => update("micro_duration_secs", v)}
             />
-            {settings.postpone_enabled && !settings.strict_mode && (
-              <CheckboxRow
-                label="Postpone micro breaks"
-                value={settings.micro_postpone_enabled}
-                onChange={(v) => update("micro_postpone_enabled", v)}
-                tip="When on, the micro break overlay offers a Postpone button. Requires the postpone master switch (Breaks → Skip & postpone)."
-              />
-            )}
-            {!settings.strict_mode && (
-              <CheckboxRow
-                label="Skip micro breaks"
-                value={settings.micro_skip_enabled}
-                onChange={(v) => update("micro_skip_enabled", v)}
-                tip="When off, the micro break overlay has no Skip button and Esc won't dismiss it."
-              />
-            )}
             <SoundControls
               sound={settings.micro_sound}
               volume={settings.sound_volume}
@@ -176,18 +160,6 @@ export function ScheduleTab({
                 multiplier={60}
                 onChange={(v) => update("micro_idle_reset_secs", v)}
                 tip="If you've been idle longer than this, the next-break timer resets when you come back — Entracte assumes you already took a break."
-              />
-              <CheckboxRow
-                label="Cannot be dismissed"
-                value={settings.micro_enforceable}
-                onChange={(v) => update("micro_enforceable", v)}
-                tip="Skip and close controls are hidden during the break. Use sparingly."
-              />
-              <CheckboxRow
-                label="Wait for manual finish"
-                value={settings.micro_manual_finish}
-                onChange={(v) => update("micro_manual_finish", v)}
-                tip={`The overlay stays up until you press "I'm back", instead of auto-closing when the countdown reaches zero.`}
               />
             </Advanced>
           </>
@@ -261,22 +233,6 @@ export function ScheduleTab({
               multiplier={60}
               onChange={(v) => update("long_duration_secs", v)}
             />
-            {settings.postpone_enabled && !settings.strict_mode && (
-              <CheckboxRow
-                label="Postpone long breaks"
-                value={settings.long_postpone_enabled}
-                onChange={(v) => update("long_postpone_enabled", v)}
-                tip="When on, the long break overlay offers a Postpone button. Requires the postpone master switch (Breaks → Skip & postpone)."
-              />
-            )}
-            {!settings.strict_mode && (
-              <CheckboxRow
-                label="Skip long breaks"
-                value={settings.long_skip_enabled}
-                onChange={(v) => update("long_skip_enabled", v)}
-                tip="When off, the long break overlay has no Skip button and Esc won't dismiss it."
-              />
-            )}
             <SoundControls
               sound={settings.long_sound}
               volume={settings.sound_volume}
@@ -303,18 +259,6 @@ export function ScheduleTab({
                 multiplier={60}
                 onChange={(v) => update("long_idle_reset_secs", v)}
                 tip="If you've been idle longer than this, the next-break timer resets when you come back — Entracte assumes you already took a break."
-              />
-              <CheckboxRow
-                label="Cannot be dismissed"
-                value={settings.long_enforceable}
-                onChange={(v) => update("long_enforceable", v)}
-                tip="Skip and close controls are hidden during the break."
-              />
-              <CheckboxRow
-                label="Wait for manual finish"
-                value={settings.long_manual_finish}
-                onChange={(v) => update("long_manual_finish", v)}
-                tip={`The overlay stays up until you press "I'm back", instead of auto-closing when the countdown reaches zero.`}
               />
             </Advanced>
           </>

@@ -119,6 +119,9 @@ export type CheckboxRowProps = {
   onChange: (next: boolean) => void;
   /** Restrict the control to these platforms; on others it renders disabled with a suffix. */
   onlyOn?: Platform[];
+  /** Grey out and block the control — used for a dependency on another
+   * setting (e.g. a per-break toggle that needs its master switch on). */
+  disabled?: boolean;
   tip?: string;
   /** Render the tip as a warning (caution glyph + styling) instead of plain info. */
   tipWarn?: boolean;
@@ -129,6 +132,7 @@ export function CheckboxRow({
   value,
   onChange,
   onlyOn,
+  disabled,
   tip,
   tipWarn,
 }: CheckboxRowProps) {
@@ -137,13 +141,14 @@ export function CheckboxRow({
   const displayLabel = supported
     ? label
     : `${label} (${onlyOn!.map((p) => PLATFORM_LABELS[p]).join("/")} only)`;
+  const isDisabled = Boolean(disabled) || !supported;
   return (
-    <label className={`row checkbox-row${supported ? "" : " disabled"}`}>
+    <label className={`row checkbox-row${isDisabled ? " disabled" : ""}`}>
       <RowLabel label={displayLabel} tip={tip} tipWarn={tipWarn} />
       <input
         type="checkbox"
         checked={value}
-        disabled={!supported}
+        disabled={isDisabled}
         onChange={(e) => onChange(e.target.checked)}
       />
     </label>

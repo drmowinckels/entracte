@@ -375,45 +375,79 @@ export function BreaksTab({
           label="Allow postponing a break"
           value={settings.postpone_enabled}
           onChange={(v) => update("postpone_enabled", v)}
-          tip="Master switch. When on, choose per break type on the Schedule tab (under each break) which can be postponed; skipping is set there too."
+          disabled={settings.strict_mode}
+          tip="Master switch for postponing. Turn it on, then choose below which break types can be postponed."
         />
-        {settings.postpone_enabled && !settings.strict_mode && (
-          <NumberRow
-            label="Postpone by (minutes)"
-            value={settings.postpone_minutes}
-            min={1}
-            multiplier={1}
-            onChange={(v) => update("postpone_minutes", v)}
-          />
-        )}
-        {settings.postpone_enabled && !settings.strict_mode && (
-          <CheckboxRow
-            label="Escalate each subsequent postpone of the same break"
-            value={settings.postpone_escalation_enabled}
-            onChange={(v) => update("postpone_escalation_enabled", v)}
-            tip="Each postpone of the same break adds extra delay, making repeated postponing progressively less attractive."
-          />
-        )}
-        {settings.postpone_enabled &&
-          !settings.strict_mode &&
-          settings.postpone_escalation_enabled && (
-            <>
-              <NumberRow
-                label="Extra delay per postpone (seconds)"
-                value={settings.postpone_escalation_step_secs}
-                min={0}
-                multiplier={1}
-                onChange={(v) => update("postpone_escalation_step_secs", v)}
-              />
-              <NumberRow
-                label="Maximum postpones per break"
-                value={settings.postpone_max_count}
-                min={1}
-                multiplier={1}
-                onChange={(v) => update("postpone_max_count", v)}
-              />
-            </>
-          )}
+        <NumberRow
+          label="Postpone by (minutes)"
+          value={settings.postpone_minutes}
+          min={1}
+          multiplier={1}
+          disabled={!settings.postpone_enabled || settings.strict_mode}
+          onChange={(v) => update("postpone_minutes", v)}
+        />
+        <CheckboxRow
+          label="Escalate each subsequent postpone of the same break"
+          value={settings.postpone_escalation_enabled}
+          onChange={(v) => update("postpone_escalation_enabled", v)}
+          disabled={!settings.postpone_enabled || settings.strict_mode}
+          tip="Each postpone of the same break adds extra delay, making repeated postponing progressively less attractive."
+        />
+        <NumberRow
+          label="Extra delay per postpone (seconds)"
+          value={settings.postpone_escalation_step_secs}
+          min={0}
+          multiplier={1}
+          disabled={
+            !settings.postpone_enabled ||
+            settings.strict_mode ||
+            !settings.postpone_escalation_enabled
+          }
+          onChange={(v) => update("postpone_escalation_step_secs", v)}
+        />
+        <NumberRow
+          label="Maximum postpones per break"
+          value={settings.postpone_max_count}
+          min={1}
+          multiplier={1}
+          disabled={
+            !settings.postpone_enabled ||
+            settings.strict_mode ||
+            !settings.postpone_escalation_enabled
+          }
+          onChange={(v) => update("postpone_max_count", v)}
+        />
+
+        <h3>Per break type</h3>
+        <CheckboxRow
+          label="Postpone micro breaks"
+          value={settings.micro_postpone_enabled}
+          onChange={(v) => update("micro_postpone_enabled", v)}
+          disabled={!settings.postpone_enabled || settings.strict_mode}
+          tip="Shows a Postpone button on the micro break overlay."
+        />
+        <CheckboxRow
+          label="Postpone long breaks"
+          value={settings.long_postpone_enabled}
+          onChange={(v) => update("long_postpone_enabled", v)}
+          disabled={!settings.postpone_enabled || settings.strict_mode}
+          tip="Shows a Postpone button on the long break overlay."
+        />
+        <CheckboxRow
+          label="Skip micro breaks"
+          value={settings.micro_skip_enabled}
+          onChange={(v) => update("micro_skip_enabled", v)}
+          disabled={settings.strict_mode}
+          tip="When off, the micro break overlay has no Skip button and Esc won't dismiss it."
+        />
+        <CheckboxRow
+          label="Skip long breaks"
+          value={settings.long_skip_enabled}
+          onChange={(v) => update("long_skip_enabled", v)}
+          disabled={settings.strict_mode}
+          tip="When off, the long break overlay has no Skip button and Esc won't dismiss it."
+        />
+
         <div className="actions inline">
           <button
             className="secondary"
@@ -430,6 +464,33 @@ export function BreaksTab({
             Skip next long
           </button>
         </div>
+
+        <Advanced label="Enforcement">
+          <CheckboxRow
+            label="Micro: wait for manual finish"
+            value={settings.micro_manual_finish}
+            onChange={(v) => update("micro_manual_finish", v)}
+            tip={`The micro overlay stays up until you press "I'm back", instead of auto-closing when the countdown reaches zero.`}
+          />
+          <CheckboxRow
+            label="Long: wait for manual finish"
+            value={settings.long_manual_finish}
+            onChange={(v) => update("long_manual_finish", v)}
+            tip={`The long overlay stays up until you press "I'm back", instead of auto-closing when the countdown reaches zero.`}
+          />
+          <CheckboxRow
+            label="Micro: cannot be dismissed"
+            value={settings.micro_enforceable}
+            onChange={(v) => update("micro_enforceable", v)}
+            tip="Skip and close controls are hidden during the micro break. Use sparingly."
+          />
+          <CheckboxRow
+            label="Long: cannot be dismissed"
+            value={settings.long_enforceable}
+            onChange={(v) => update("long_enforceable", v)}
+            tip="Skip and close controls are hidden during the long break."
+          />
+        </Advanced>
       </section>
 
       <h2>Break ideas</h2>
