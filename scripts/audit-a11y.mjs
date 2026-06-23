@@ -29,7 +29,7 @@ const DEFAULT_SETTINGS_JSON = readFileSync(
 const TABS = [
   "Schedule",
   "Breaks",
-  "Quiet times",
+  "Pausing",
   "System",
   "Insights",
   "Profiles",

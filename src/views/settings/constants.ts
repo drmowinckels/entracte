@@ -37,7 +37,7 @@ export const SOUND_MODES: { id: BreakSoundMode; label: string }[] = [
 export const TABS: { id: Tab; label: string }[] = [
   { id: "schedule", label: "Schedule" },
   { id: "breaks", label: "Breaks" },
-  { id: "quiet", label: "Quiet times" },
+  { id: "quiet", label: "Pausing" },
   { id: "system", label: "System" },
   { id: "insights", label: "Insights" },
   { id: "profiles", label: "Profiles" },
