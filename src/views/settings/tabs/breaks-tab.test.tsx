@@ -28,6 +28,8 @@ const baseSettings = {
   show_current_time: true,
   monitor_placement: "primary",
   sound_volume: 0.5,
+  micro_sound: { mode: "off", sound_id: "" },
+  long_sound: { mode: "off", sound_id: "" },
   strict_mode: false,
   postpone_enabled: true,
   micro_postpone_enabled: true,
@@ -396,6 +398,48 @@ describe("BreaksTab postpone configuration", () => {
       { target: { value: "5" } },
     );
     expect(update).toHaveBeenCalledWith("postpone_max_count", 5);
+  });
+});
+
+describe("BreaksTab sound", () => {
+  it("renders the volume slider and a sound picker for each break kind", () => {
+    renderTab(false);
+    expect(screen.getByRole("heading", { name: "Sound" })).toBeTruthy();
+    // Each kind's SoundControls renders a mode <select> with an "Off"
+    // option — micro + long give two, proving both pickers moved here.
+    expect(screen.getAllByRole("option", { name: "Off" })).toHaveLength(2);
+  });
+
+  it("dragging the volume slider persists sound_volume", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    const volumeRow = screen.getByText("Volume").closest("label");
+    const slider = volumeRow?.querySelector('input[type="range"]');
+    if (!slider) throw new Error("no volume slider");
+    fireEvent.change(slider, { target: { value: "30" } });
+    expect(update).toHaveBeenCalledWith("sound_volume", 0.3);
+  });
+
+  it("changing each kind's sound mode persists the right key", () => {
+    const update = vi.fn();
+    // volume 0 so selecting a track doesn't try to audition through the
+    // (unmocked) real audio layer — previewSound bails when volume <= 0.
+    renderTab(false, update, { sound_volume: 0 });
+    // "Off" appears only in the two sound-mode selects; micro is first.
+    const offOptions = screen.getAllByRole("option", { name: "Off" });
+    const microSelect = offOptions[0].closest("select");
+    const longSelect = offOptions[1].closest("select");
+    if (!microSelect || !longSelect) throw new Error("no sound selects");
+    fireEvent.change(microSelect, { target: { value: "end_chime" } });
+    expect(update).toHaveBeenCalledWith(
+      "micro_sound",
+      expect.objectContaining({ mode: "end_chime" }),
+    );
+    fireEvent.change(longSelect, { target: { value: "end_chime" } });
+    expect(update).toHaveBeenCalledWith(
+      "long_sound",
+      expect.objectContaining({ mode: "end_chime" }),
+    );
   });
 });
 

@@ -107,7 +107,6 @@ export default function Settings() {
                 settings={settings}
                 update={update}
                 updateMany={updateMany}
-                supporter={supporter.status}
               />
             </div>
             <div

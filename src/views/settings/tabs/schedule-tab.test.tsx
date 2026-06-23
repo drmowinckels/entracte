@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const { ScheduleTab } = await import("./schedule-tab");
 import fixture from "../../../../scripts/audit-a11y-settings-fixture.json";
-import type { SchedulerSettings, SupporterStatus } from "../types";
+import type { SchedulerSettings } from "../types";
 
 // The audit fixture is a complete, schema-valid SchedulerSettings, so it
 // spares this test from hand-listing every field ScheduleTab reads.
@@ -17,11 +17,6 @@ function renderTab(
   update: (key: string, value: unknown) => void = () => {},
   overrides: Partial<SchedulerSettings> = {},
 ) {
-  const supporter: SupporterStatus = {
-    is_supporter: false,
-    masked_key: null,
-    last_validated_at: null,
-  };
   return render(
     <ScheduleTab
       settings={{
@@ -32,7 +27,6 @@ function renderTab(
       }}
       update={update as never}
       updateMany={(() => {}) as never}
-      supporter={supporter}
     />,
   );
 }
