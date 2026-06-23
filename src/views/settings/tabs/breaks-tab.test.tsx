@@ -27,6 +27,10 @@ const baseSettings = {
   hint_rotate_seconds: 0,
   show_current_time: true,
   monitor_placement: "primary",
+  micro_enabled: true,
+  long_enabled: true,
+  micro_break_mode: "overlay",
+  long_break_mode: "overlay",
   sound_volume: 0.5,
   micro_sound: { mode: "off", sound_id: "" },
   long_sound: { mode: "off", sound_id: "" },
@@ -398,6 +402,62 @@ describe("BreaksTab postpone configuration", () => {
       { target: { value: "5" } },
     );
     expect(update).toHaveBeenCalledWith("postpone_max_count", 5);
+  });
+});
+
+describe("BreaksTab delivery", () => {
+  it("renders a delivery-mode select for each break kind", () => {
+    renderTab(false);
+    expect(screen.getByRole("heading", { name: "Delivery" })).toBeTruthy();
+    expect(
+      screen.getAllByRole("option", { name: "Full-screen overlay" }),
+    ).toHaveLength(2);
+  });
+
+  it("changing a kind's delivery mode persists the right key", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    const overlayOpts = screen.getAllByRole("option", {
+      name: "Full-screen overlay",
+    });
+    const microSelect = overlayOpts[0].closest("select");
+    const longSelect = overlayOpts[1].closest("select");
+    if (!microSelect || !longSelect) throw new Error("no delivery selects");
+    fireEvent.change(microSelect, { target: { value: "windowed" } });
+    expect(update).toHaveBeenCalledWith("micro_break_mode", "windowed");
+    fireEvent.change(longSelect, { target: { value: "notification" } });
+    expect(update).toHaveBeenCalledWith("long_break_mode", "notification");
+  });
+
+  it("disables a kind's delivery select and Test button when that kind is off", () => {
+    renderTab(false, () => {}, { micro_enabled: false, long_enabled: true });
+    const overlayOpts = screen.getAllByRole("option", {
+      name: "Full-screen overlay",
+    });
+    const microSelect = overlayOpts[0].closest("select") as HTMLSelectElement;
+    expect(microSelect.disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Test micro" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Test long" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("clicking Test triggers a test break for that kind", () => {
+    renderTab(false, () => {}, { micro_enabled: true, long_enabled: true });
+    fireEvent.click(screen.getByRole("button", { name: "Test micro" }));
+    expect(invokeMock).toHaveBeenCalledWith("trigger_test_break", {
+      kind: "micro",
+      durationSecs: 10,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Test long" }));
+    expect(invokeMock).toHaveBeenCalledWith("trigger_test_break", {
+      kind: "long",
+      durationSecs: 15,
+    });
   });
 });
 

@@ -7,6 +7,7 @@ import {
   rgbCsvToHex,
 } from "../../../lib/color";
 import { useLocalDraft } from "../../../lib/use-local-draft";
+import { BREAK_MODE_OPTIONS, type BreakMode } from "../../../lib/break-mode";
 import { Advanced } from "../components/advanced";
 import { CheckboxRow, NumberRow } from "../components/rows";
 import { InfoTip } from "../components/info-tip";
@@ -128,6 +129,67 @@ export function BreaksTab({
 
   return (
     <>
+      <h2>Delivery</h2>
+      <section>
+        <p className="placeholder">
+          How each break appears. Turn a break on or off, and set its cadence,
+          on the Schedule tab.
+          <InfoTip text="Full-screen overlay covers the monitor. Windowed shows the same prompt sized to a fraction of the screen, leaving the desktop reachable. System notification only posts a notification and records no skip/postpone metrics." />
+        </p>
+        <label className={`row${settings.micro_enabled ? "" : " disabled"}`}>
+          <span>Micro breaks</span>
+          <select
+            value={settings.micro_break_mode}
+            disabled={!settings.micro_enabled}
+            onChange={(e) =>
+              update("micro_break_mode", e.target.value as BreakMode)
+            }
+          >
+            {BREAK_MODE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={`row${settings.long_enabled ? "" : " disabled"}`}>
+          <span>Long breaks</span>
+          <select
+            value={settings.long_break_mode}
+            disabled={!settings.long_enabled}
+            onChange={(e) =>
+              update("long_break_mode", e.target.value as BreakMode)
+            }
+          >
+            {BREAK_MODE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="actions inline">
+          <button
+            className="secondary"
+            disabled={!settings.micro_enabled}
+            onClick={() =>
+              invoke("trigger_test_break", { kind: "micro", durationSecs: 10 })
+            }
+          >
+            Test micro
+          </button>
+          <button
+            className="secondary"
+            disabled={!settings.long_enabled}
+            onClick={() =>
+              invoke("trigger_test_break", { kind: "long", durationSecs: 15 })
+            }
+          >
+            Test long
+          </button>
+        </div>
+      </section>
+
       <h2>Overlay</h2>
       <section>
         <label className="row">

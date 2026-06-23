@@ -42,8 +42,7 @@ export default function Settings() {
     },
     [],
   );
-  const { settings, update, updateMany, reloadFromActive, setAutostart } =
-    useSettings();
+  const { settings, update, reloadFromActive, setAutostart } = useSettings();
   const pauseInfo = usePause();
   const stats = useStats();
   const profiles = useProfiles();
@@ -103,11 +102,7 @@ export default function Settings() {
               tabIndex={0}
               hidden={tab !== "schedule"}
             >
-              <ScheduleTab
-                settings={settings}
-                update={update}
-                updateMany={updateMany}
-              />
+              <ScheduleTab settings={settings} update={update} />
             </div>
             <div
               className="tab-content"
