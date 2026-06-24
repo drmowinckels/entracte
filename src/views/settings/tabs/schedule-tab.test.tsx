@@ -26,10 +26,31 @@ function renderTab(
         ...overrides,
       }}
       update={update as never}
-      updateMany={(() => {}) as never}
     />,
   );
 }
+
+describe("ScheduleTab break enable toggles", () => {
+  it("toggling each kind's enable checkbox persists", () => {
+    const update = vi.fn();
+    renderTab(update, { micro_enabled: true, long_enabled: true });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Enable micro breaks/ }),
+    );
+    expect(update).toHaveBeenCalledWith("micro_enabled", false);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Enable long breaks/ }),
+    );
+    expect(update).toHaveBeenCalledWith("long_enabled", false);
+  });
+
+  it("hides a kind's timing details when it is disabled", () => {
+    renderTab(() => {}, { micro_enabled: false, long_enabled: true });
+    // The micro timing rows only render when micro is enabled; long stays.
+    expect(screen.queryByText("Duration (seconds)")).toBeNull();
+    expect(screen.getByText("Duration (minutes)")).toBeTruthy();
+  });
+});
 
 describe("ScheduleTab active-hours weekday picker", () => {
   it("renders a labelled toggle for each weekday reflecting the mask", () => {

@@ -15,33 +15,33 @@ A small handful of personalisation extras are part of the [Supporter pack](./sup
 The Schedule tab covers when breaks happen.
 
 - **Active hours** — limit breaks to a daily time range (Bedtime ignores this and uses its own window).
-- **Micro breaks** — per-kind **mode** (Overlay or Notification, or Off), **schedule** (interval, fixed times, or both), interval / duration, plus an advanced control for idle reset. (Enforcement — _cannot be dismissed_ and _wait for manual finish_ — lives with the rest of the break behaviour under **Breaks → Skip & postpone**.)
+- **Micro breaks** — an **enable** toggle, **schedule** (interval, fixed times, or both), interval / duration, plus an advanced control for idle reset. (How a break is _delivered_ — overlay / windowed / notification — and its enforcement now live on the **Breaks** tab.)
 - **Long breaks** — same shape as Micro breaks.
 - **Bedtime** — start/end window and reminder cadence. Inside the window, Entracte fires a Sleep prompt instead of Micro/Long breaks. Sleep prompts are always enforceable — they ignore Do Not Disturb and camera state.
 - **Daily screen time** — a cumulative-budget nudge that fires once you've accumulated a configurable amount of active time across the day. Different from breaks. The counter ticks only while you're actually at the keyboard, resets at local midnight, and survives restarts. A small progress bar in the same section shows today's total against the budget.
 - **Show advanced scheduling** (collapsible) — **Input-aware scheduling**: delay a break if you're mid-keystroke (with grace and max deferral), and pause the break countdown while you're typing.
 
-### Break mode (per kind)
-
-Each break kind picks its presentation from a single **Mode** dropdown:
-
-- **Off** — disable this break kind entirely.
-- **Overlay** (default) — full-screen prompt covering the monitor.
-- **Windowed** — same overlay sized to a fraction of the monitor and centered (80% by default, configurable under **Breaks → Overlay → Windowed break size**), with `always_on_top` dropped so the surrounding desktop stays reachable. Useful when you want a visible, focus-grabbing reminder without losing access to urgent things. Composes with **Show break on**: e.g. `Monitor under cursor` + `Windowed` shows one windowed overlay only on the display your cursor is on.
-- **Notification** — skip the overlay entirely and post a non-blocking system notification with the break title and duration; the timer keeps ticking on the normal cadence. Because there's no overlay to interact with, break-engagement metrics (completion, skip, postpone) aren't recorded for that break type while notification mode is active.
-
-Bedtime (Sleep) is hard-coded to full-screen Overlay and ignores this setting.
-
 ## Breaks
 
 The Breaks tab covers what breaks look and sound like, and the escape hatches.
 
-- **Overlay** — transparency, text size, theme (Dark / Midnight / Forest / Rose / Sunset — plus Rotate and Custom in the [Supporter pack](./supporter)), wellness hints toggle, current time toggle. Advanced disclosure adds **monitor placement**, **windowed break size** (presets of 70% / 80% / 90% or a custom slider, with optional per-kind overrides so a micro break can be smaller than a long one), **high contrast**, and the **break-health vignette** that intensifies as you skip more breaks. (Whether a break renders full-screen or windowed is part of the per-kind **Mode** dropdown in the Schedule tab — see [Break mode](#break-mode-per-kind) below.)
+- **Delivery** — a per-kind delivery-mode dropdown for Micro and Long, plus a **Test** button for each that fires a short example break. Enabling a break and setting its cadence stays on the Schedule tab; a disabled kind's controls here are greyed out. See [Delivery mode](#delivery-mode-per-kind) below.
+- **Overlay** — transparency, text size, theme (Dark / Midnight / Forest / Rose / Sunset — plus Rotate and Custom in the [Supporter pack](./supporter)), wellness hints toggle, current time toggle. Advanced disclosure adds **monitor placement**, **windowed break size** (presets of 70% / 80% / 90% or a custom slider, with optional per-kind overrides so a micro break can be smaller than a long one), **high contrast**, and the **break-health vignette** that intensifies as you skip more breaks. (Whether a break renders full-screen or windowed is set by the per-kind dropdown in the **Delivery** section above — see [Delivery mode](#delivery-mode-per-kind).)
 - **Sound** — one **volume** slider that applies to every break sound, then a per-kind picker (**Off**, **Chime at end of break**, or **Ambient (loops during break)**) and a track for **Micro breaks** and **Long breaks** each. Selecting a track auditions it immediately — there's no separate Preview button. Choosing a custom sound file is a [Supporter pack](./supporter) feature.
 - **Break ideas** — optional rotation toggle (off by default — one idea is picked per break and stays on screen; turn on to cycle through the pool every N seconds), plus a **Mix** selector for Micro (Physical / Psychological / Both) and Long (Solo / Social / Both — Social prompts you to call someone, walk with a colleague, or share a coffee). The curated default pools cover every category out of the box; editing the pool text is a [Supporter pack](./supporter) feature. A **Guided routine** selector per kind replaces the rotating idea with a step-by-step sequence (e.g. eye reset, full-body stretch) that advances through the break with a per-step countdown. Each kind has three modes: **None** (keep the rotating ideas), a **specific routine**, or **Random** — which draws a fresh routine each break from the bundled set, filtered by the **categories** you tick (Eyes / Mobility / Breathing / Desk yoga; none ticked means all) and a **maximum difficulty** (Gentle / Moderate / Active). These routine settings are per-profile, so different profiles can pull from different pools. The **Spread routine steps across the whole break** toggle (off by default) scales a routine's step durations proportionally so they exactly fill the break length rather than holding the final step until time runs out; a content-pack routine can override this with its own `pacing` field.
 - **Today's chores** — a daily "post-it" of tasks you'd like done (one per line, free for everyone). During a long break, Entracte surfaces one in the wellness-hint space — _"You've got ~10 min — knock out: water the plants"_ — rotating to a different task each long break so the list works itself down over the day. The list is stored locally, separate from your settings profiles, and clears at local midnight, so each morning starts a fresh post-it. Leave it empty to keep the usual rotating ideas. Micro and bedtime breaks are unaffected.
 - **Content packs** — share or back up your break ideas and guided routines as a plain local JSON file. **Import** adds a pack's ideas and routines to your pools without removing anything you already have (exact-duplicate ideas are skipped, and routines whose id collides with a built-in or one you already have are skipped); **Export** writes your current pools and imported routines to a file. Local files only — no cloud, no registry, nothing downloads automatically. See [Content-pack format](#content-pack-format) below.
 - **Skip & postpone** — everything governing how a break can be dismissed, in one place: Strict mode (no skip, no postpone, all breaks enforced), the postpone master toggle and minutes, optional postpone escalation (each postpone of the same break adds extra delay), and **per-break-kind toggles** for which kinds can be postponed and skipped. Controls that depend on a switch above stay visible but greyed out until you enable it, so the dependency is discoverable rather than hidden. The one-shot **Skip next micro / Skip next long** buttons sit here too, and an **Enforcement** disclosure holds the per-kind _wait for manual finish_ and _cannot be dismissed_ options.
+
+### Delivery mode (per kind)
+
+Each break kind picks its presentation from the **Delivery** section's dropdown (whether the kind fires at all is the **enable** toggle on the Schedule tab):
+
+- **Full-screen overlay** (default) — full-screen prompt covering the monitor.
+- **Windowed** — same overlay sized to a fraction of the monitor and centered (80% by default, configurable under **Breaks → Overlay → Windowed break size**), with `always_on_top` dropped so the surrounding desktop stays reachable. Useful when you want a visible, focus-grabbing reminder without losing access to urgent things. Composes with **Show break on**: e.g. `Monitor under cursor` + `Windowed` shows one windowed overlay only on the display your cursor is on.
+- **System notification only** — skip the overlay entirely and post a non-blocking system notification with the break title and duration; the timer keeps ticking on the normal cadence. Because there's no overlay to interact with, break-engagement metrics (completion, skip, postpone) aren't recorded for that break type while notification mode is active.
+
+Bedtime (Sleep) is hard-coded to full-screen overlay and ignores this setting.
 
 ### Content-pack format
 

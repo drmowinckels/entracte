@@ -3,7 +3,6 @@ import { formatClockList, parseClockList } from "../../../lib/clock-list";
 import { useLocalDraft } from "../../../lib/use-local-draft";
 import { formatScreenTime, progressPercent } from "../../../lib/screen-time";
 import { Advanced } from "../components/advanced";
-import { BreakModeRow } from "../components/break-mode-row";
 import { CheckboxRow, NumberRow, TimeRow } from "../components/rows";
 import { WeekdayToggle } from "../components/weekday-toggle";
 import type { UseSettings } from "../hooks/use-settings";
@@ -13,11 +12,9 @@ import type { SchedulerSettings } from "../types";
 export function ScheduleTab({
   settings,
   update,
-  updateMany,
 }: {
   settings: SchedulerSettings;
   update: UseSettings["update"];
-  updateMany: UseSettings["updateMany"];
 }) {
   const [microFixedTimesText, setMicroFixedTimesText] = useLocalDraft(
     () => formatClockList(settings.micro_fixed_times, settings.clock_format),
@@ -65,14 +62,11 @@ export function ScheduleTab({
 
       <h2>Micro breaks</h2>
       <section>
-        <BreakModeRow
-          label="Mode"
-          enabled={settings.micro_enabled}
-          mode={settings.micro_break_mode}
-          enabledKey="micro_enabled"
-          modeKey="micro_break_mode"
-          onChange={(patch) => updateMany(patch as Partial<SchedulerSettings>)}
-          tip="Overlay = full-screen prompt. Windowed = the same prompt sized to 80% of the monitor, leaving the desktop reachable. Notification = system notification only (skip/postpone metrics aren't recorded in this mode)."
+        <CheckboxRow
+          label="Enable micro breaks"
+          value={settings.micro_enabled}
+          onChange={(v) => update("micro_enabled", v)}
+          tip="Short, frequent breaks. Set how they're delivered (overlay, windowed, or notification) on the Breaks tab."
         />
         {settings.micro_enabled && (
           <>
@@ -130,19 +124,7 @@ export function ScheduleTab({
               multiplier={1}
               onChange={(v) => update("micro_duration_secs", v)}
             />
-            <div className="actions inline">
-              <button
-                onClick={() =>
-                  invoke("trigger_test_break", {
-                    kind: "micro",
-                    durationSecs: 10,
-                  })
-                }
-              >
-                Test now (10s)
-              </button>
-            </div>
-            <Advanced>
+            <Advanced label="Advanced micro timing">
               <NumberRow
                 label="Idle reset threshold (minutes)"
                 value={settings.micro_idle_reset_secs}
@@ -158,14 +140,11 @@ export function ScheduleTab({
 
       <h2>Long breaks</h2>
       <section>
-        <BreakModeRow
-          label="Mode"
-          enabled={settings.long_enabled}
-          mode={settings.long_break_mode}
-          enabledKey="long_enabled"
-          modeKey="long_break_mode"
-          onChange={(patch) => updateMany(patch as Partial<SchedulerSettings>)}
-          tip="Overlay = full-screen prompt. Windowed = the same prompt sized to 80% of the monitor, leaving the desktop reachable. Notification = system notification only (skip/postpone metrics aren't recorded in this mode)."
+        <CheckboxRow
+          label="Enable long breaks"
+          value={settings.long_enabled}
+          onChange={(v) => update("long_enabled", v)}
+          tip="Longer, less frequent breaks. Set how they're delivered (overlay, windowed, or notification) on the Breaks tab."
         />
         {settings.long_enabled && (
           <>
@@ -223,19 +202,7 @@ export function ScheduleTab({
               multiplier={60}
               onChange={(v) => update("long_duration_secs", v)}
             />
-            <div className="actions inline">
-              <button
-                onClick={() =>
-                  invoke("trigger_test_break", {
-                    kind: "long",
-                    durationSecs: 15,
-                  })
-                }
-              >
-                Test now (15s)
-              </button>
-            </div>
-            <Advanced>
+            <Advanced label="Advanced long timing">
               <NumberRow
                 label="Idle reset threshold (minutes)"
                 value={settings.long_idle_reset_secs}
