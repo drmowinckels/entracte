@@ -12,6 +12,7 @@ import { CheckboxRow, NumberRow } from "../components/rows";
 import { InfoTip } from "../components/info-tip";
 import { WindowedSizeRow } from "../components/windowed-size-row";
 import { RoutinePicker } from "../components/routine-picker";
+import { SoundControls } from "../components/sound-controls";
 import { ContentPacks } from "../components/content-packs";
 import {
   MONITOR_PLACEMENTS,
@@ -339,12 +340,8 @@ export function BreaksTab({
         </Advanced>
       </section>
 
-      <h2>Sound volume</h2>
+      <h2>Sound</h2>
       <section>
-        <p className="placeholder">
-          Applies to every break sound. Pick which sound each break uses on the
-          Breaks tab.
-        </p>
         <label className="row">
           <span>Volume</span>
           <span className="range-wrap">
@@ -361,6 +358,24 @@ export function BreaksTab({
             <span className="range-value">{soundVolumePct}%</span>
           </span>
         </label>
+        <p className="placeholder">
+          The volume applies to every break sound. Choose the track for each
+          break type below.
+        </p>
+        <h3>Micro breaks</h3>
+        <SoundControls
+          sound={settings.micro_sound}
+          volume={settings.sound_volume}
+          onChange={(next) => update("micro_sound", next)}
+          isSupporter={isSupporter}
+        />
+        <h3>Long breaks</h3>
+        <SoundControls
+          sound={settings.long_sound}
+          volume={settings.sound_volume}
+          onChange={(next) => update("long_sound", next)}
+          isSupporter={isSupporter}
+        />
       </section>
 
       <h2>Skip & postpone</h2>

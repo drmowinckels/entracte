@@ -5,24 +5,20 @@ import { formatScreenTime, progressPercent } from "../../../lib/screen-time";
 import { Advanced } from "../components/advanced";
 import { BreakModeRow } from "../components/break-mode-row";
 import { CheckboxRow, NumberRow, TimeRow } from "../components/rows";
-import { SoundControls } from "../components/sound-controls";
 import { WeekdayToggle } from "../components/weekday-toggle";
 import type { UseSettings } from "../hooks/use-settings";
 import { useScreenTime } from "../hooks/use-screen-time";
-import type { SchedulerSettings, SupporterStatus } from "../types";
+import type { SchedulerSettings } from "../types";
 
 export function ScheduleTab({
   settings,
   update,
   updateMany,
-  supporter,
 }: {
   settings: SchedulerSettings;
   update: UseSettings["update"];
   updateMany: UseSettings["updateMany"];
-  supporter: SupporterStatus;
 }) {
-  const isSupporter = supporter.is_supporter;
   const [microFixedTimesText, setMicroFixedTimesText] = useLocalDraft(
     () => formatClockList(settings.micro_fixed_times, settings.clock_format),
     [settings.micro_fixed_times, settings.clock_format],
@@ -134,12 +130,6 @@ export function ScheduleTab({
               multiplier={1}
               onChange={(v) => update("micro_duration_secs", v)}
             />
-            <SoundControls
-              sound={settings.micro_sound}
-              volume={settings.sound_volume}
-              onChange={(next) => update("micro_sound", next)}
-              isSupporter={isSupporter}
-            />
             <div className="actions inline">
               <button
                 onClick={() =>
@@ -232,12 +222,6 @@ export function ScheduleTab({
               min={1}
               multiplier={60}
               onChange={(v) => update("long_duration_secs", v)}
-            />
-            <SoundControls
-              sound={settings.long_sound}
-              volume={settings.sound_volume}
-              onChange={(next) => update("long_sound", next)}
-              isSupporter={isSupporter}
             />
             <div className="actions inline">
               <button
