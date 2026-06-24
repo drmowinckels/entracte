@@ -34,6 +34,10 @@ const baseSettings = {
   long_postpone_enabled: true,
   micro_skip_enabled: true,
   long_skip_enabled: true,
+  micro_manual_finish: false,
+  long_manual_finish: false,
+  micro_enforceable: false,
+  long_enforceable: false,
   postpone_escalation_enabled: false,
   postpone_escalation_step_secs: 120,
   postpone_max_count: 3,
@@ -277,9 +281,45 @@ function checkboxForLabel(label: string): HTMLInputElement {
 }
 
 describe("BreaksTab per-break postpone & skip", () => {
-  // The per-kind postpone/skip toggles themselves moved to the Schedule tab
-  // (see schedule-tab.test.tsx); this only covers the Skip-next action button
-  // that still lives here and reacts to a kind's skip setting.
+  it("shows the per-kind postpone and skip toggles alongside the master switch", () => {
+    renderTab(false, () => {}, { postpone_enabled: true, strict_mode: false });
+    expect(checkboxForLabel("Postpone micro breaks")).toBeTruthy();
+    expect(checkboxForLabel("Postpone long breaks")).toBeTruthy();
+    expect(checkboxForLabel("Skip micro breaks")).toBeTruthy();
+    expect(checkboxForLabel("Skip long breaks")).toBeTruthy();
+  });
+
+  it("toggling each per-kind postpone or skip calls update with that key", () => {
+    const update = vi.fn();
+    renderTab(false, update, { postpone_enabled: true, strict_mode: false });
+    fireEvent.click(checkboxForLabel("Postpone micro breaks"));
+    expect(update).toHaveBeenCalledWith("micro_postpone_enabled", false);
+    fireEvent.click(checkboxForLabel("Skip micro breaks"));
+    expect(update).toHaveBeenCalledWith("micro_skip_enabled", false);
+    fireEvent.click(checkboxForLabel("Postpone long breaks"));
+    expect(update).toHaveBeenCalledWith("long_postpone_enabled", false);
+    fireEvent.click(checkboxForLabel("Skip long breaks"));
+    expect(update).toHaveBeenCalledWith("long_skip_enabled", false);
+  });
+
+  it("keeps postpone toggles visible but disabled when the master switch is off", () => {
+    renderTab(false, () => {}, { postpone_enabled: false, strict_mode: false });
+    // Visible (not removed) so the dependency stays discoverable...
+    expect(checkboxForLabel("Postpone micro breaks").disabled).toBe(true);
+    expect(checkboxForLabel("Postpone long breaks").disabled).toBe(true);
+    // ...while skip is independent of the postpone master switch.
+    expect(checkboxForLabel("Skip micro breaks").disabled).toBe(false);
+    expect(checkboxForLabel("Skip long breaks").disabled).toBe(false);
+  });
+
+  it("disables every per-kind postpone and skip toggle in strict mode", () => {
+    renderTab(false, () => {}, { postpone_enabled: true, strict_mode: true });
+    expect(checkboxForLabel("Postpone micro breaks").disabled).toBe(true);
+    expect(checkboxForLabel("Postpone long breaks").disabled).toBe(true);
+    expect(checkboxForLabel("Skip micro breaks").disabled).toBe(true);
+    expect(checkboxForLabel("Skip long breaks").disabled).toBe(true);
+  });
+
   it("disables the Skip-next button when that kind's skip is off", () => {
     renderTab(false, () => {}, { micro_skip_enabled: false });
     const micro = screen.getByRole("button", {
@@ -290,6 +330,87 @@ describe("BreaksTab per-break postpone & skip", () => {
     }) as HTMLButtonElement;
     expect(micro.disabled).toBe(true);
     expect(long.disabled).toBe(false);
+  });
+
+  it("clicking an enabled Skip-next button invokes skip_next_break for that kind", () => {
+    renderTab(false, () => {}, {
+      strict_mode: false,
+      micro_skip_enabled: true,
+      long_skip_enabled: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Skip next micro" }));
+    expect(invokeMock).toHaveBeenCalledWith("skip_next_break", {
+      kind: "micro",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Skip next long" }));
+    expect(invokeMock).toHaveBeenCalledWith("skip_next_break", {
+      kind: "long",
+    });
+  });
+});
+
+describe("BreaksTab postpone configuration", () => {
+  it("toggling strict mode and the postpone master persists each", () => {
+    const update = vi.fn();
+    renderTab(false, update, { strict_mode: false, postpone_enabled: true });
+    fireEvent.click(
+      checkboxForLabel(
+        "Strict mode (all breaks enforced, no skip or postpone)",
+      ),
+    );
+    expect(update).toHaveBeenCalledWith("strict_mode", true);
+    fireEvent.click(checkboxForLabel("Allow postponing a break"));
+    expect(update).toHaveBeenCalledWith("postpone_enabled", false);
+  });
+
+  it("editing postpone minutes and toggling escalation persist", () => {
+    const update = vi.fn();
+    renderTab(false, update, { postpone_enabled: true, strict_mode: false });
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: "Postpone by (minutes)" }),
+      { target: { value: "10" } },
+    );
+    expect(update).toHaveBeenCalledWith("postpone_minutes", 10);
+    fireEvent.click(
+      checkboxForLabel("Escalate each subsequent postpone of the same break"),
+    );
+    expect(update).toHaveBeenCalledWith("postpone_escalation_enabled", true);
+  });
+
+  it("editing escalation step and max persist when escalation is on", () => {
+    const update = vi.fn();
+    renderTab(false, update, {
+      postpone_enabled: true,
+      strict_mode: false,
+      postpone_escalation_enabled: true,
+    });
+    fireEvent.change(
+      screen.getByRole("spinbutton", {
+        name: "Extra delay per postpone (seconds)",
+      }),
+      { target: { value: "30" } },
+    );
+    expect(update).toHaveBeenCalledWith("postpone_escalation_step_secs", 30);
+    fireEvent.change(
+      screen.getByRole("spinbutton", { name: "Maximum postpones per break" }),
+      { target: { value: "5" } },
+    );
+    expect(update).toHaveBeenCalledWith("postpone_max_count", 5);
+  });
+});
+
+describe("BreaksTab enforcement", () => {
+  it("toggling each enforcement option calls update for that kind", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.click(checkboxForLabel("Micro: wait for manual finish"));
+    expect(update).toHaveBeenCalledWith("micro_manual_finish", true);
+    fireEvent.click(checkboxForLabel("Long: wait for manual finish"));
+    expect(update).toHaveBeenCalledWith("long_manual_finish", true);
+    fireEvent.click(checkboxForLabel("Micro: cannot be dismissed"));
+    expect(update).toHaveBeenCalledWith("micro_enforceable", true);
+    fireEvent.click(checkboxForLabel("Long: cannot be dismissed"));
+    expect(update).toHaveBeenCalledWith("long_enforceable", true);
   });
 });
 

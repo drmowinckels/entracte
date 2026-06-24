@@ -261,6 +261,25 @@ describe("CheckboxRow", () => {
     expect(row?.textContent).toMatch(/macOS\/Windows only/);
   });
 
+  it("disables the checkbox and marks the row when `disabled` is set (dependency on another setting)", () => {
+    // Used for second-level dependencies — e.g. a per-break postpone toggle
+    // that needs its master switch on. It stays visible (not removed) so the
+    // dependency is discoverable; a regression that hides it breaks that.
+    const onChange = vi.fn();
+    const { container } = render(
+      <CheckboxRow
+        label="Postpone micro breaks"
+        value={false}
+        onChange={onChange}
+        disabled
+      />,
+    );
+    const cb = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(cb.disabled).toBe(true);
+    const row = container.querySelector("label.row");
+    expect(row?.className).toContain("disabled");
+  });
+
   it("ignores `onlyOn` entirely when not provided (no platform suffix appears)", () => {
     currentPlatform = "linux";
     const { container } = render(
