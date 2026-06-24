@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import Settings from "./views/settings";
 import BreakOverlay from "./views/break-overlay";
+import { PausePicker } from "./views/pause-picker";
 import { ErrorBoundary } from "./error-boundary";
 import { titleForWindow, windowKind } from "./lib/window-kind";
 
@@ -20,6 +21,13 @@ function App() {
     return (
       <ErrorBoundary area="Break overlay">
         <BreakOverlay />
+      </ErrorBoundary>
+    );
+  }
+  if (windowKind === "pause") {
+    return (
+      <ErrorBoundary area="Pause picker">
+        <PausePicker />
       </ErrorBoundary>
     );
   }

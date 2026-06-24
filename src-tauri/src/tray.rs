@@ -139,6 +139,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let pause_indef = MenuItem::with_id(app, "pause_indef", "Indefinitely", true, None::<&str>)?;
+    let pause_sep = PredefinedMenuItem::separator(app)?;
+    let pause_until = MenuItem::with_id(app, "pause_until", "Pause until…", true, None::<&str>)?;
 
     let pause_submenu = Submenu::with_items(
         app,
@@ -152,6 +154,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             &pause_4h,
             &pause_tomorrow,
             &pause_indef,
+            &pause_sep,
+            &pause_until,
         ],
     )?;
 
@@ -217,6 +221,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 }
                 "preferences" => {
                     crate::window::show_main_window(app);
+                    return;
+                }
+                "pause_until" => {
+                    crate::window::show_pause_window(app);
                     return;
                 }
                 "resume" => {

@@ -187,6 +187,8 @@ pub fn run() {
             diagnostics::build_diagnostics_report,
             platform::get_platform,
             platform::get_platform_capabilities,
+            platform::get_locale,
+            window::close_pause_window,
             renderer_log::report_renderer_error,
             audio::play_sound,
             audio::play_custom_sound,
