@@ -1,13 +1,21 @@
-export type WindowKind = "main" | "overlay";
+export type WindowKind = "main" | "overlay" | "pause";
 
 export function readWindowKind(search: string): WindowKind {
-  return new URLSearchParams(search).get("window") === "overlay"
-    ? "overlay"
-    : "main";
+  const kind = new URLSearchParams(search).get("window");
+  if (kind === "overlay") return "overlay";
+  if (kind === "pause") return "pause";
+  return "main";
 }
 
 export function titleForWindow(kind: WindowKind): string {
-  return kind === "overlay" ? "Entracte — Break" : "Entracte — Settings";
+  switch (kind) {
+    case "overlay":
+      return "Entracte — Break";
+    case "pause":
+      return "Entracte — Pause";
+    default:
+      return "Entracte — Settings";
+  }
 }
 
 export const windowKind: WindowKind = readWindowKind(window.location.search);

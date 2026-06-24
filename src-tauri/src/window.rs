@@ -164,6 +164,46 @@ pub fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// Show the small "Pause until…" picker, creating it on first use. Launched
+/// from the tray; mirrors the overlay's on-demand window creation. The
+/// renderer closes the window after pausing or cancelling, so the next
+/// launch builds a fresh one.
+pub fn show_pause_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("pause") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+    match tauri::WebviewWindowBuilder::new(
+        app,
+        "pause",
+        tauri::WebviewUrl::App("index.html?window=pause".into()),
+    )
+    .title("Pause Entracte")
+    .inner_size(360.0, 220.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .always_on_top(true)
+    .center()
+    .focused(true)
+    .build()
+    {
+        Ok(_) => log::debug!("pause: created picker window"),
+        Err(e) => log::error!("pause: failed to create picker window: {e}"),
+    }
+}
+
+/// Close the "Pause until…" picker. Invoked by the picker itself after it
+/// pauses or the user cancels. A backend command (rather than the JS window
+/// API) keeps `@tauri-apps/api/window` out of the renderer bundle.
+#[tauri::command]
+pub fn close_pause_window<R: Runtime>(app: tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("pause") {
+        let _ = window.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{nudged_dimension, wayland_fix_strategy, wayland_session_from_env, WaylandFix};

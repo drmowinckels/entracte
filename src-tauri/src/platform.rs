@@ -17,6 +17,24 @@ pub fn get_platform() -> &'static str {
     std::env::consts::OS
 }
 
+/// Normalise an optional OS locale into a BCP-47 tag the renderer can hand
+/// to `Intl`. Falls back to `"en-US"` when the OS reports nothing usable.
+/// Pure so the fallback is unit-testable without the platform locale source.
+fn locale_or_default(raw: Option<String>) -> String {
+    raw.map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "en-US".to_string())
+}
+
+/// Return the OS's preferred locale as a BCP-47 tag (e.g. `"en-GB"`,
+/// `"nb-NO"`). The renderer formats the pause-picker date with `Intl` using
+/// this. The WebView's own locale is unreliable — a non-localised app falls
+/// back to en-US even when the OS region differs — so it's read natively.
+#[tauri::command]
+pub fn get_locale() -> String {
+    locale_or_default(sys_locale::get_locale())
+}
+
 /// Behavioural capability flags the renderer branches on, so each
 /// platform-gated feature is decided once here rather than re-derived
 /// from the raw platform string in every component.
@@ -90,6 +108,25 @@ pub fn get_platform_capabilities() -> PlatformCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locale_or_default_falls_back_when_missing_or_blank() {
+        assert_eq!(locale_or_default(None), "en-US");
+        assert_eq!(locale_or_default(Some("".into())), "en-US");
+        assert_eq!(locale_or_default(Some("   ".into())), "en-US");
+    }
+
+    #[test]
+    fn locale_or_default_passes_through_and_trims_a_real_tag() {
+        assert_eq!(locale_or_default(Some("nb-NO".into())), "nb-NO");
+        assert_eq!(locale_or_default(Some(" en-GB ".into())), "en-GB");
+    }
+
+    #[test]
+    fn get_locale_returns_a_nonempty_tag() {
+        // Whatever the host reports, the command never yields an empty string.
+        assert!(!get_locale().is_empty());
+    }
 
     #[test]
     fn get_platform_returns_a_known_value() {

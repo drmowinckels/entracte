@@ -11,6 +11,10 @@ describe("readWindowKind", () => {
     expect(readWindowKind("?window=overlay")).toBe("overlay");
   });
 
+  it("returns 'pause' for ?window=pause", () => {
+    expect(readWindowKind("?window=pause")).toBe("pause");
+  });
+
   it("falls back to 'main' for any other window value", () => {
     expect(readWindowKind("?window=settings")).toBe("main");
     expect(readWindowKind("?window=")).toBe("main");
@@ -24,5 +28,9 @@ describe("titleForWindow", () => {
 
   it("returns the Break title for the overlay window", () => {
     expect(titleForWindow("overlay")).toBe("Entracte — Break");
+  });
+
+  it("returns the Pause title for the pause window", () => {
+    expect(titleForWindow("pause")).toBe("Entracte — Pause");
   });
 });
