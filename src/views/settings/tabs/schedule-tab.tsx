@@ -29,7 +29,7 @@ export function ScheduleTab({
 
   return (
     <>
-      <h2>Active hours</h2>
+      <h2 id="settings-active-hours">Active hours</h2>
       <section>
         <CheckboxRow
           label="Only fire breaks within set hours"
@@ -60,7 +60,7 @@ export function ScheduleTab({
         />
       </section>
 
-      <h2>Micro breaks</h2>
+      <h2 id="settings-micro-breaks">Micro breaks</h2>
       <section>
         <CheckboxRow
           label="Enable micro breaks"
@@ -138,7 +138,7 @@ export function ScheduleTab({
         )}
       </section>
 
-      <h2>Long breaks</h2>
+      <h2 id="settings-long-breaks">Long breaks</h2>
       <section>
         <CheckboxRow
           label="Enable long breaks"
@@ -216,7 +216,7 @@ export function ScheduleTab({
         )}
       </section>
 
-      <h2>Bedtime</h2>
+      <h2 id="settings-bedtime">Bedtime</h2>
       <section>
         <CheckboxRow
           label="Persistent sleep reminders within window"
@@ -268,7 +268,7 @@ export function ScheduleTab({
         )}
       </section>
 
-      <h2>Daily screen time</h2>
+      <h2 id="settings-screen-time">Daily screen time</h2>
       <section>
         <CheckboxRow
           label="Remind me to wrap up after a daily budget"

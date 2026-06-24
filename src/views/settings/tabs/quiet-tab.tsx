@@ -40,7 +40,7 @@ export function QuietTab({
 
   return (
     <>
-      <h2>Auto-pause</h2>
+      <h2 id="settings-auto-pause">Auto-pause</h2>
       <section>
         <p className="placeholder">
           Breaks are automatically suppressed while these conditions apply.
@@ -74,7 +74,7 @@ export function QuietTab({
         />
       </section>
 
-      <h2>During breaks</h2>
+      <h2 id="settings-during-breaks">During breaks</h2>
       <section>
         <CheckboxRow
           label="Pause media while a break is showing"
@@ -89,7 +89,7 @@ export function QuietTab({
         />
       </section>
 
-      <h2>Pause for specific apps</h2>
+      <h2 id="settings-app-pause">Pause for specific apps</h2>
       <section>
         <CheckboxRow
           label="Pause when any of these apps are running"
@@ -145,7 +145,7 @@ export function QuietTab({
         )}
       </section>
 
-      <h2>Manual pause</h2>
+      <h2 id="settings-manual-pause">Manual pause</h2>
       <section>
         {pauseInfo.paused ? (
           <div className="pause-control">

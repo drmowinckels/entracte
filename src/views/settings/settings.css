@@ -1140,6 +1140,109 @@ body,
   opacity: 0.6;
 }
 
+.settings .settings-search {
+  position: relative;
+  margin: 0 0 0.6rem;
+}
+
+.settings .settings-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: inherit;
+  border-radius: 7px;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.settings .settings-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings .settings-search-results {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.settings .settings-search-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  padding: 0.4rem 0.55rem;
+  color: var(--fg);
+  font-size: 0.9rem;
+  font-weight: 400;
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings .settings-search-result:hover {
+  background: var(--input-hover);
+}
+
+.settings .settings-search-result:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.settings .settings-search-result-tab {
+  flex: none;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint-fg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+}
+
+.settings .settings-search-empty {
+  padding: 0.4rem 0.55rem;
+  color: var(--faint-fg);
+  font-size: 0.88rem;
+}
+
+@keyframes settings-flash {
+  from {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+
+  to {
+    background: transparent;
+  }
+}
+
+.settings .settings-flash {
+  animation: settings-flash 1.2s ease-out;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .settings-flash {
+    animation: none;
+  }
+}
+
 .settings .settings-header {
   display: flex;
   align-items: flex-end;
