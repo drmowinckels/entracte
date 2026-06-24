@@ -77,7 +77,12 @@ vi.mock("./tabs/schedule-tab", () => ({
   ScheduleTab: () => <div data-testid="content-schedule">schedule-content</div>,
 }));
 vi.mock("./tabs/breaks-tab", () => ({
-  BreaksTab: () => <div data-testid="content-breaks">breaks-content</div>,
+  BreaksTab: () => (
+    <div data-testid="content-breaks">
+      <span id="settings-sound" />
+      breaks-content
+    </div>
+  ),
 }));
 vi.mock("./tabs/quiet-tab", () => ({
   QuietTab: () => <div data-testid="content-quiet">quiet-content</div>,
@@ -272,6 +277,57 @@ describe("Settings shell ARIA + keyboard", () => {
       expect(panel?.textContent).toBe(expected);
     },
   );
+
+  it("searching and choosing a result switches to that setting's tab", async () => {
+    const user = userEvent.setup();
+    mockSettings = hydratedSettings;
+    render(<Settings />);
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search settings" }),
+      "volume",
+    );
+    await user.click(screen.getByRole("button", { name: /Sound/ }));
+    const breaksTab = screen
+      .getAllByRole("tab")
+      .find((t) => t.id === "settings-tab-breaks");
+    expect(breaksTab?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("flashes the matched section, then clears the highlight after a delay", () => {
+    vi.useFakeTimers();
+    try {
+      mockSettings = hydratedSettings;
+      const { container } = render(<Settings />);
+      fireEvent.change(
+        screen.getByRole("searchbox", { name: "Search settings" }),
+        { target: { value: "volume" } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Sound/ }));
+      const el = container.querySelector("#settings-sound");
+      expect(el?.classList.contains("settings-flash")).toBe(true);
+      act(() => {
+        vi.advanceTimersByTime(1200);
+      });
+      expect(el?.classList.contains("settings-flash")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still switches tab when the matched section has no scrollable anchor", async () => {
+    const user = userEvent.setup();
+    mockSettings = hydratedSettings;
+    render(<Settings />);
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search settings" }),
+      "diagnostics",
+    );
+    await user.click(screen.getByRole("button", { name: /Diagnostics/ }));
+    const aboutTab = screen
+      .getAllByRole("tab")
+      .find((t) => t.id === "settings-tab-about");
+    expect(aboutTab?.getAttribute("aria-selected")).toBe("true");
+  });
 
   it("shows the onboarding wizard when needed and settings are loaded", () => {
     mockSettings = hydratedSettings;

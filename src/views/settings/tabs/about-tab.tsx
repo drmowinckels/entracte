@@ -67,7 +67,7 @@ export function AboutTab({
 
   return (
     <>
-      <h2>About</h2>
+      <h2 id="settings-about">About</h2>
       <section>
         <div className="about-title-row">
           <p className="about-title">Entracte</p>
@@ -121,7 +121,9 @@ export function AboutTab({
         )}
       </section>
 
-      <h2>Supporter{supporter.status.is_supporter ? " ✓" : ""}</h2>
+      <h2 id="settings-supporter">
+        Supporter{supporter.status.is_supporter ? " ✓" : ""}
+      </h2>
       <section>
         {supporter.status.is_supporter ? (
           <>
@@ -217,7 +219,7 @@ export function AboutTab({
       </section>
 
       <div className="section-heading">
-        <h2>Diagnostics</h2>
+        <h2 id="settings-diagnostics">Diagnostics</h2>
         <button onClick={onCopyDiagnosticsReport}>
           Copy diagnostics report
         </button>

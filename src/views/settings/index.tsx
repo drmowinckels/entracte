@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCustomStylesheet } from "../../lib/use-custom-stylesheet";
 import { useTauriListen } from "../../lib/use-tauri-listen";
 import { OnboardingWizard } from "./components/onboarding/onboarding-wizard";
+import { SettingsSearch } from "./components/settings-search";
 import { TABS } from "./constants";
+import type { SettingsSearchEntry } from "./search-index";
 import { useHooks } from "./hooks/use-hooks";
 import { useOnboarding } from "./hooks/use-onboarding";
 import { usePause } from "./hooks/use-pause";
@@ -56,6 +58,33 @@ export default function Settings() {
     onChange: setTab,
   });
 
+  // Anchor to scroll to after a search navigation. Held in a ref (not state)
+  // so consuming it doesn't re-run the effect and clear its own flash timer;
+  // a nonce drives the effect once per navigation.
+  const pendingAnchorRef = useRef<string | null>(null);
+  const [navNonce, setNavNonce] = useState(0);
+  const onSearchNavigate = useCallback((entry: SettingsSearchEntry) => {
+    pendingAnchorRef.current = entry.anchorId;
+    setTab(entry.tabId);
+    setNavNonce((n) => n + 1);
+  }, []);
+  // After the target tab renders (its panel is no longer `hidden`), scroll the
+  // matched section into view and flash it briefly.
+  useEffect(() => {
+    const anchor = pendingAnchorRef.current;
+    if (!anchor) return;
+    pendingAnchorRef.current = null;
+    const el = document.getElementById(anchor);
+    if (!el) return;
+    el.scrollIntoView?.({ block: "start" });
+    el.classList.add("settings-flash");
+    const timer = window.setTimeout(
+      () => el.classList.remove("settings-flash"),
+      1200,
+    );
+    return () => window.clearTimeout(timer);
+  }, [navNonce]);
+
   return (
     <>
       <a className="skip-link" href={`#${tabPanelId(tab)}`}>
@@ -70,6 +99,7 @@ export default function Settings() {
             onFinish={onboarding.complete}
           />
         )}
+        <SettingsSearch onNavigate={onSearchNavigate} />
         <header className="settings-header">
           <div
             className="tabs"

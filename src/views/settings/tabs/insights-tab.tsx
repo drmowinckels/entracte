@@ -134,7 +134,7 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
 
   return (
     <>
-      <h2>This session</h2>
+      <h2 id="settings-insights">This session</h2>
       <section>
         <p className="placeholder">
           Live counters since this run started. They reset every time Entracte
@@ -286,7 +286,7 @@ export function InsightsTab({ stats }: { stats: UseStats }) {
             <Heatmap days={digest.by_day} />
           </section>
 
-          <h2>Manage data</h2>
+          <h2 id="settings-manage-data">Manage data</h2>
           <section>
             <div className="actions inline">
               <button onClick={onExportCsv}>Export CSV</button>

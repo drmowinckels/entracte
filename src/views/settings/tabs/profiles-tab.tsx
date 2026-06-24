@@ -3,7 +3,7 @@ import type { UseProfiles } from "../hooks/use-profiles";
 export function ProfilesTab({ profiles }: { profiles: UseProfiles }) {
   return (
     <>
-      <h2>Profiles</h2>
+      <h2 id="settings-profiles">Profiles</h2>
       <section>
         <p className="placeholder">
           Each profile keeps its own break cadence, hints, and overlay settings.

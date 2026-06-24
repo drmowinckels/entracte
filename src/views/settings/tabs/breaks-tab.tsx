@@ -129,7 +129,7 @@ export function BreaksTab({
 
   return (
     <>
-      <h2>Delivery</h2>
+      <h2 id="settings-delivery">Delivery</h2>
       <section>
         <p className="placeholder">
           How each break appears. Turn a break on or off, and set its cadence,
@@ -190,7 +190,7 @@ export function BreaksTab({
         </div>
       </section>
 
-      <h2>Overlay</h2>
+      <h2 id="settings-overlay">Overlay</h2>
       <section>
         <label className="row">
           <span>
@@ -402,7 +402,7 @@ export function BreaksTab({
         </Advanced>
       </section>
 
-      <h2>Sound</h2>
+      <h2 id="settings-sound">Sound</h2>
       <section>
         <label className="row">
           <span>Volume</span>
@@ -440,7 +440,7 @@ export function BreaksTab({
         />
       </section>
 
-      <h2>Skip & postpone</h2>
+      <h2 id="settings-skip-postpone">Skip & postpone</h2>
       <section>
         <CheckboxRow
           label="Strict mode (all breaks enforced, no skip or postpone)"
@@ -570,7 +570,7 @@ export function BreaksTab({
         </Advanced>
       </section>
 
-      <h2>Break ideas</h2>
+      <h2 id="settings-break-ideas">Break ideas</h2>
       <section>
         <p className="placeholder">
           Choose which kinds of prompt appear during each break.
@@ -663,7 +663,7 @@ export function BreaksTab({
           onChange={(v) => update("allow_plugin_sounds", v)}
           tip="When on (default), routines from plugins may play their own short sound cues — a breathing in/out tone, or a chime between exercises. Cues always follow your overall sound volume; turn this off to silence them."
         />
-        <h3>Today's chores</h3>
+        <h3 id="settings-chores">Today's chores</h3>
         <p className="placeholder">
           Jot down chores you'd like done today — one per line. During a long
           break, Entracte nudges you to knock one out (these take precedence
@@ -726,7 +726,7 @@ export function BreaksTab({
         )}
       </section>
 
-      <h2>Content packs</h2>
+      <h2 id="settings-content-packs">Content packs</h2>
       <section>
         <ContentPacks
           reload={async () => {
@@ -738,7 +738,7 @@ export function BreaksTab({
 
       {isSupporter && (
         <>
-          <h2>Custom CSS</h2>
+          <h2 id="settings-custom-css">Custom CSS</h2>
           <section>
             <p className="placeholder">
               Applied to the settings window and the break overlay. Bad CSS can

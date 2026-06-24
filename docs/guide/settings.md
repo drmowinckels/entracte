@@ -8,6 +8,10 @@ Settings persist automatically as plain JSON in the platform app-data directory 
 Most non-obvious settings carry a small ⓘ icon next to the label — hover or focus it for a short explanation. Power-user options are tucked behind a **Show advanced** disclosure in each section.
 :::
 
+::: tip Search
+A search box at the top of the window jumps straight to any setting. Type a name or synonym (e.g. "volume", "dnd", "shortcuts") and pick a result — Entracte switches to the right tab and highlights the section. Press Enter to jump to the first match.
+:::
+
 A small handful of personalisation extras are part of the [Supporter pack](./supporter) and flagged inline below.
 
 ## Schedule

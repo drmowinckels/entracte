@@ -80,7 +80,7 @@ export function SystemTab({
 
   return (
     <>
-      <h2>Startup</h2>
+      <h2 id="settings-startup">Startup</h2>
       <section>
         <CheckboxRow
           label="Start Entracte at login"
@@ -89,7 +89,7 @@ export function SystemTab({
         />
       </section>
 
-      <h2>Display</h2>
+      <h2 id="settings-display">Display</h2>
       <section>
         <label className="row">
           <span>Time format</span>
@@ -105,7 +105,7 @@ export function SystemTab({
         </label>
       </section>
 
-      <h2>Notifications</h2>
+      <h2 id="settings-notifications">Notifications</h2>
       <section>
         <CheckboxRow
           label="Notify before a break starts"
@@ -122,12 +122,12 @@ export function SystemTab({
         />
       </section>
 
-      <h2>Global hotkeys</h2>
+      <h2 id="settings-hotkeys">Global hotkeys</h2>
       <section>
         <HotkeysSection settings={settings} update={update} />
       </section>
 
-      <h2>Tray countdown</h2>
+      <h2 id="settings-tray">Tray countdown</h2>
       <section>
         <CheckboxRow
           label="Show countdown to next break in the tray"
@@ -159,13 +159,13 @@ export function SystemTab({
         </label>
       </section>
 
-      <h2>Plugins</h2>
+      <h2 id="settings-plugins">Plugins</h2>
       <section>
         <Plugins reload={reload} />
       </section>
 
       <Advanced label="Show advanced (hooks)">
-        <h3>Event hooks</h3>
+        <h3 id="settings-hooks">Event hooks</h3>
         <p className="placeholder hook-warning">
           ⚠ Hooks run shell commands on your machine with your full user
           permissions — a hostile command can read or delete your files, send
