@@ -1,6 +1,6 @@
 # Settings
 
-All settings live in the Preferences window, reachable from the tray menu. They're grouped into seven tabs by intent: **Schedule** (when breaks fire), **Breaks** (what they look and sound like), **Quiet times** (when not to interrupt), **System** (app and OS integration), **Insights** (stats and history), **Profiles**, and **About**.
+All settings live in the Preferences window, reachable from the tray menu. They're grouped into seven tabs by intent: **Schedule** (when breaks fire), **Breaks** (what they look and sound like), **Pausing** (suppressing and pausing breaks), **System** (app and OS integration), **Insights** (stats and history), **Profiles**, and **About**.
 
 Settings persist automatically as plain JSON in the platform app-data directory (`settings.json`), atomically rewritten on every change — no save button to forget about. See [Architecture internals → On-disk state](../developer/architecture-internals#on-disk-state) for the file paths.
 
@@ -77,9 +77,9 @@ A content pack is a versioned JSON file:
 
 `Show break on` chooses where overlays appear: `Primary monitor`, `Monitor under cursor` (the display the mouse cursor is on at break-fire time), or `All monitors`. If active-monitor detection fails for any reason, Entracte falls back to the primary monitor.
 
-## Quiet times
+## Pausing
 
-The Quiet times tab covers when breaks should _not_ fire.
+The Pausing tab covers when breaks should _not_ fire — automatic suppression and manual pausing. (It was previously called "Quiet times".)
 
 - **Auto-pause** — suppress breaks while Do Not Disturb / Focus is on (macOS, Windows), while the camera is in use (all OSes), or while fullscreen video is playing. On macOS, Windows and X11 Linux the fullscreen-video check confirms a real fullscreen window, so a small background video won't hold your breaks. On Linux Wayland there is no portable way to confirm a fullscreen window, so the toggle shows a caution marker: detection falls back to "any media is keeping the display awake" and may suppress breaks for a small background video.
 - **During breaks** — _Pause media while a break is showing_ quiets whatever is playing (video or audio) when a break starts and resumes it when the break ends. On Linux this targets your media players precisely (via MPRIS); on macOS and Windows it sends a play/pause media key as a best-effort, so it works for most players but can't guarantee the exact app.
