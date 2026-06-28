@@ -14,19 +14,21 @@
 //!   remember them, and resume exactly those when the break ends.
 //! - **macOS / Windows** have no portable way to enumerate players, so we
 //!   synthesise the system Play/Pause media key — a best-effort toggle.
-//!   Because the key is a toggle (there's no separate "pause" key), we
-//!   only send it when a display-wake assertion says something is likely
-//!   playing, so we don't accidentally *start* media that was paused; the
-//!   matching resume sends the same key again.
+//!   Because the key is a toggle (there's no separate "pause" key), we only
+//!   send it when an "is media actually playing?" probe says yes, so we don't
+//!   accidentally *start* media that was paused: a real CoreAudio output tap
+//!   on macOS (the one public signal that tells a paused player apart from one
+//!   merely holding the audio device open — #233), a display-wake assertion on
+//!   Windows. The matching resume sends the same key again.
 //!
 //! The testable core is pure and lives at module scope so it compiles and
 //! is unit-tested on every OS, mirroring [`crate::video`]: the gdbus output
 //! parsers and the "which players are Playing" decision (Linux), and the
 //! "may the blind toggle fire?" guards ([`media_key_pause_allowed`] /
 //! [`media_key_resume_allowed`], macOS/Windows). The guards keep the toggle
-//! from ever *starting* media the user had paused (#104): pause only when a
-//! display-wake assertion says something is playing, and resume only a
-//! toggle we ourselves sent.
+//! from ever *starting* media the user had paused (#104): pause only when the
+//! platform probe says something is playing, and resume only a toggle we
+//! ourselves sent.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -256,7 +258,7 @@ fn platform_resume(token: &ResumeToken) {
 /// break start. The toggle has no separate "pause" key, so sending it when
 /// nothing is playing would *start* media the user had paused (issue #104).
 /// We therefore only allow it when the platform's "is media actually
-/// playing?" probe says yes — real audio-device activity on macOS (#233), a
+/// playing?" probe says yes — a real audio-output tap on macOS (#233), a
 /// display-wake request on Windows. Pure so it's unit-tested without FFI on
 /// every OS.
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
@@ -275,10 +277,11 @@ fn media_key_resume_allowed(token: &ResumeToken) -> bool {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn platform_pause() -> ResumeToken {
-    // macOS: a real audio-output-active probe; Windows: the display-wake
-    // request (its blind-toggle proxy is unchanged here — tracked in #234).
+    // macOS: a real audio-output tap (true only when samples are actually
+    // playing); Windows: the display-wake request (its blind-toggle proxy is
+    // unchanged here — tracked in #234).
     #[cfg(target_os = "macos")]
-    let media_likely_playing = audio_probe::output_active();
+    let media_likely_playing = audio_tap::output_active();
     #[cfg(target_os = "windows")]
     let media_likely_playing = crate::video::assertion_active();
     if !media_key_pause_allowed(media_likely_playing) {
@@ -396,71 +399,268 @@ mod media_key {
 }
 
 #[cfg(target_os = "macos")]
-mod audio_probe {
-    use std::ffi::c_void;
+mod audio_tap {
+    //! Detect whether macOS is producing *real audio output right now* by
+    //! briefly tapping the system output and measuring the actual signal.
+    //!
+    //! Every cheaper signal we tried lies about paused media: a display-wake
+    //! assertion (#103) and CoreAudio `DeviceIsRunningSomewhere` (#233) both
+    //! read "active" while Chrome / Spotify / Apple Music sit paused but keep
+    //! the output device's IOProc alive. The private MediaRemote now-playing
+    //! API reads the true state but is restricted to Apple platform binaries
+    //! on macOS 15.4+, so a third-party app can't use it. A CoreAudio *process
+    //! tap* (macOS 14.2+) is the one public, unentitled signal that reflects
+    //! reality: it captures the samples actually being mixed to the device, so
+    //! a paused player contributes digital silence (exactly 0.0) and reads as
+    //! not playing. That is what keeps a break from *starting* media the user
+    //! had paused.
+
+    use std::ffi::{c_void, CStr};
     use std::ptr::NonNull;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
+    use block2::RcBlock;
+    use objc2::runtime::AnyObject;
+    use objc2::AllocAnyThread;
     use objc2_core_audio::{
-        kAudioDevicePropertyDeviceIsRunningSomewhere, kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
-        AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress,
+        kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceNameKey,
+        kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey,
+        kAudioAggregateDeviceUIDKey, kAudioObjectPropertyElementMain,
+        kAudioObjectPropertyScopeGlobal, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
+        kAudioTapPropertyUID, AudioDeviceCreateIOProcIDWithBlock, AudioDeviceDestroyIOProcID,
+        AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop, AudioHardwareCreateAggregateDevice,
+        AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice,
+        AudioHardwareDestroyProcessTap, AudioObjectGetPropertyData, AudioObjectID,
+        AudioObjectPropertyAddress, CATapDescription, CATapMuteBehavior,
     };
+    use objc2_core_audio_types::{AudioBufferList, AudioTimeStamp};
+    use objc2_core_foundation::{CFDictionary, CFRetained, CFString};
+    use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUUID};
 
-    fn global_address(selector: u32) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress {
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain,
+    // Samples whose absolute amplitude exceeds this count as "real audio".
+    // Digital silence is exactly 0.0, so any small positive floor cleanly
+    // separates a paused player (no samples) from an active one; the margin
+    // just ignores denormal/dither noise.
+    const SILENCE_THRESHOLD: f32 = 0.003;
+    // Upper bound on how long we wait for output before concluding it's silent.
+    // We early-exit the instant an audible sample arrives, so this only delays
+    // the "nothing playing" case (which has nothing to pause anyway).
+    const PROBE_WINDOW: Duration = Duration::from_millis(250);
+    const POLL_STEP: Duration = Duration::from_millis(10);
+
+    /// Pure decision: is a measured peak amplitude loud enough to be real
+    /// playback? Split out so the threshold is unit-tested without any FFI.
+    pub(super) fn is_audible(peak: f32) -> bool {
+        peak > SILENCE_THRESHOLD
+    }
+
+    /// True when the system is emitting real audio output right now. Opens a
+    /// private global process tap, measures the live output signal for at most
+    /// [`PROBE_WINDOW`], and tears the tap down. Any FFI failure degrades to
+    /// `false` — never a blind Play/Pause toggle on a guess.
+    pub(super) fn output_active() -> bool {
+        measure().unwrap_or(false)
+    }
+
+    /// Owns the tap + aggregate device + IOProc so every early return tears
+    /// them down in order, leaving no private CoreAudio objects behind.
+    struct TapSession {
+        tap: AudioObjectID,
+        agg: AudioObjectID,
+        proc_id: AudioDeviceIOProcID,
+        started: bool,
+    }
+
+    impl Drop for TapSession {
+        fn drop(&mut self) {
+            // SAFETY: each id is either zero/None (skipped) or a live object we
+            // created; teardown is the documented reverse of construction.
+            unsafe {
+                if self.started {
+                    AudioDeviceStop(self.agg, self.proc_id);
+                }
+                if self.proc_id.is_some() {
+                    AudioDeviceDestroyIOProcID(self.agg, self.proc_id);
+                }
+                if self.agg != 0 {
+                    AudioHardwareDestroyAggregateDevice(self.agg);
+                }
+                if self.tap != 0 {
+                    AudioHardwareDestroyProcessTap(self.tap);
+                }
+            }
         }
     }
 
-    // Read one fixed-size `u32` property of `object` into `out`. Returns
-    // false on any non-zero OSStatus so a probe failure degrades to "not
-    // playing" — never a blind toggle on a guess.
-    unsafe fn get_u32(object: AudioObjectID, selector: u32, out: &mut u32) -> bool {
-        let address = global_address(selector);
-        let mut size = std::mem::size_of::<u32>() as u32;
-        let status = AudioObjectGetPropertyData(
-            object,
-            NonNull::from(&address),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::from(&mut *out).cast::<c_void>(),
-        );
-        status == 0
+    fn ns(key: &CStr) -> objc2::rc::Retained<NSString> {
+        NSString::from_str(key.to_str().unwrap_or_default())
     }
 
-    /// True when the system's default output device is actively running in at
-    /// least one process — i.e. audio is *really playing right now*, not merely
-    /// "something is keeping the display awake". Paused media does no device
-    /// I/O, so this reads false and the blind Play/Pause key is never sent,
-    /// which is what stops a break from *starting* media the user had paused
-    /// (#233). A CoreAudio property read, far cheaper than the `pmset` fork the
-    /// display-assertion proxy used.
-    pub(super) fn output_active() -> bool {
-        // SAFETY: each call reads a single `u32` property into a stack slot
-        // with the matching size; `kAudioObjectSystemObject` is the documented
-        // root object and the default-output id is validated before reuse.
+    /// Read a CFString-valued audio object property into an owned `NSString`.
+    fn read_uid(object: AudioObjectID, selector: u32) -> Option<objc2::rc::Retained<NSString>> {
+        let address = AudioObjectPropertyAddress {
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        let mut cf: *const CFString = std::ptr::null();
+        let mut size = std::mem::size_of::<*const CFString>() as u32;
+        // SAFETY: reads a single CFStringRef-sized value into `cf`; `address`
+        // and `size` are valid for the call.
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                object,
+                NonNull::from(&address),
+                0,
+                std::ptr::null(),
+                NonNull::from(&mut size),
+                NonNull::from(&mut cf).cast::<c_void>(),
+            )
+        };
+        let cf = NonNull::new(cf as *mut CFString)?;
+        if status != 0 {
+            return None;
+        }
+        // `Get` returns a +1 reference we own; `CFRetained` releases it.
+        let owned = unsafe { CFRetained::from_raw(cf) };
+        Some(NSString::from_str(&owned.to_string()))
+    }
+
+    /// Build the aggregate-device description embedding our tap.
+    fn aggregate_description(
+        tap_uid: &NSString,
+    ) -> objc2::rc::Retained<NSDictionary<NSString, AnyObject>> {
+        let drift = NSNumber::new_i32(1);
+        let sub_keys = [
+            &*ns(kAudioSubTapUIDKey),
+            &*ns(kAudioSubTapDriftCompensationKey),
+        ];
+        let sub_vals: [&AnyObject; 2] = [tap_uid, &drift];
+        let sub = NSDictionary::<NSString, AnyObject>::from_slices(&sub_keys, &sub_vals);
+        let tap_list = NSArray::from_retained_slice(&[sub]);
+
+        let name = NSString::from_str("entracte-playing-probe-agg");
+        let uid = NSUUID::new().UUIDString();
+        let yes = NSNumber::new_i32(1);
+        let keys = [
+            &*ns(kAudioAggregateDeviceNameKey),
+            &*ns(kAudioAggregateDeviceUIDKey),
+            &*ns(kAudioAggregateDeviceIsPrivateKey),
+            &*ns(kAudioAggregateDeviceTapAutoStartKey),
+            &*ns(kAudioAggregateDeviceTapListKey),
+        ];
+        let vals: [&AnyObject; 5] = [&name, &uid, &yes, &yes, &tap_list];
+        NSDictionary::<NSString, AnyObject>::from_slices(&keys, &vals)
+    }
+
+    fn measure() -> Option<bool> {
+        // 1) Private global output tap (exclude no processes = tap everything).
+        let empty: objc2::rc::Retained<NSArray<NSNumber>> = NSArray::from_retained_slice(&[]);
+        let desc = unsafe {
+            CATapDescription::initStereoGlobalTapButExcludeProcesses(
+                CATapDescription::alloc(),
+                &empty,
+            )
+        };
         unsafe {
-            let mut device: AudioObjectID = 0;
-            if !get_u32(
-                kAudioObjectSystemObject as AudioObjectID,
-                kAudioHardwarePropertyDefaultOutputDevice,
-                &mut device,
-            ) || device == 0
-            {
-                return false;
+            desc.setName(&NSString::from_str("entracte-playing-probe"));
+            desc.setPrivate(true);
+            desc.setMuteBehavior(CATapMuteBehavior::Unmuted);
+        }
+        let mut tap: AudioObjectID = 0;
+        if unsafe { AudioHardwareCreateProcessTap(Some(&desc), &mut tap) } != 0 || tap == 0 {
+            return None;
+        }
+        let mut session = TapSession {
+            tap,
+            agg: 0,
+            proc_id: None,
+            started: false,
+        };
+
+        // 2) Aggregate device wrapping the tap so we can run an IOProc on it.
+        let tap_uid = read_uid(tap, kAudioTapPropertyUID)?;
+        let dict = aggregate_description(&tap_uid);
+        let cf_dict: &CFDictionary =
+            unsafe { &*(objc2::rc::Retained::as_ptr(&dict) as *const CFDictionary) };
+        let mut agg: AudioObjectID = 0;
+        if unsafe { AudioHardwareCreateAggregateDevice(cf_dict, NonNull::from(&mut agg)) } != 0
+            || agg == 0
+        {
+            return None;
+        }
+        session.agg = agg;
+
+        // 3) IOProc that flips a flag the moment it sees an audible sample.
+        let audible = Arc::new(AtomicBool::new(false));
+        let audible_cb = audible.clone();
+        let block = RcBlock::new(
+            move |_now: NonNull<AudioTimeStamp>,
+                  in_data: NonNull<AudioBufferList>,
+                  _in_time: NonNull<AudioTimeStamp>,
+                  _out: NonNull<AudioBufferList>,
+                  _out_time: NonNull<AudioTimeStamp>| {
+                if buffers_audible(in_data) {
+                    audible_cb.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        let mut proc_id: AudioDeviceIOProcID = None;
+        if unsafe {
+            AudioDeviceCreateIOProcIDWithBlock(
+                NonNull::from(&mut proc_id),
+                agg,
+                None,
+                RcBlock::as_ptr(&block) as _,
+            )
+        } != 0
+            || proc_id.is_none()
+        {
+            return None;
+        }
+        session.proc_id = proc_id;
+        if unsafe { AudioDeviceStart(agg, proc_id) } != 0 {
+            return None;
+        }
+        session.started = true;
+
+        // 4) Wait until we hear something or the window elapses.
+        let deadline = Instant::now() + PROBE_WINDOW;
+        while Instant::now() < deadline {
+            if audible.load(Ordering::Relaxed) {
+                break;
             }
-            let mut running: u32 = 0;
-            if !get_u32(
-                device,
-                kAudioDevicePropertyDeviceIsRunningSomewhere,
-                &mut running,
-            ) {
-                return false;
+            std::thread::sleep(POLL_STEP);
+        }
+        Some(audible.load(Ordering::Relaxed))
+        // `session` drops here, tearing the tap down.
+    }
+
+    /// True if any sample across the buffer list exceeds the silence floor.
+    fn buffers_audible(in_data: NonNull<AudioBufferList>) -> bool {
+        // SAFETY: CoreAudio hands us a valid AudioBufferList for the IO cycle;
+        // each buffer's `mData`/`mDataByteSize` describe a float32 sample run.
+        unsafe {
+            let list = in_data.as_ref();
+            let buffers =
+                std::slice::from_raw_parts(list.mBuffers.as_ptr(), list.mNumberBuffers as usize);
+            let mut peak: f32 = 0.0;
+            for buf in buffers {
+                if buf.mData.is_null() {
+                    continue;
+                }
+                let count = buf.mDataByteSize as usize / std::mem::size_of::<f32>();
+                let samples = std::slice::from_raw_parts(buf.mData as *const f32, count);
+                for &s in samples {
+                    let a = s.abs();
+                    if a > peak {
+                        peak = a;
+                    }
+                }
             }
-            running != 0
+            is_audible(peak)
         }
     }
 }
@@ -764,6 +964,30 @@ mod tests {
         assert!(!media_key_resume_allowed(&ResumeToken::Mpris(vec![
             "org.mpris.MediaPlayer2.vlc".to_string()
         ])));
+    }
+
+    // The macOS output tap's pure decision: digital silence is exactly 0.0, so
+    // only a positive peak past the small floor counts as real playback.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn audio_tap_is_audible_separates_silence_from_signal() {
+        assert!(!audio_tap::is_audible(0.0));
+        assert!(!audio_tap::is_audible(0.001));
+        assert!(audio_tap::is_audible(0.05));
+        assert!(audio_tap::is_audible(0.9));
+    }
+
+    // Smoke-test the macOS output-tap FFI end to end: create the global process
+    // tap + aggregate device + IOProc, sample, and tear it all down. The value
+    // is environment-dependent (false on a silent runner), so we only assert it
+    // returns within the probe window without panicking or leaking — that
+    // exercises the CoreAudio/objc2 wiring a mismatch would crash on. macOS
+    // only, where the module exists; absent from the Linux coverage build like
+    // the other platform FFI.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn output_active_probe_resolves_without_panicking() {
+        let _: bool = audio_tap::output_active();
     }
 
     #[test]

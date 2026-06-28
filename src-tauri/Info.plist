@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Entracte briefly taps the system audio output to tell whether media is
+	     actually playing before a break, so it never starts media you'd paused.
+	     macOS does not prompt for this today, but the key keeps a future OS that
+	     gates the tap from hard-crashing the app instead of degrading to "not
+	     playing". See src/media.rs `audio_tap`. -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Entracte checks whether audio is playing so it can pause it during breaks.</string>
+</dict>
+</plist>

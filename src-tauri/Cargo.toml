@@ -75,9 +75,15 @@ windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSFont", "NSFontDescriptor", "NSAttributedString", "NSEvent", "NSGraphicsContext", "objc2-core-graphics"] }
-objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSString", "NSDictionary", "NSArray", "NSValue", "NSGeometry"] }
 objc2-core-graphics = { version = "0.3", features = ["CGEvent", "CGEventTypes"] }
-objc2-core-audio = { version = "0.3", features = ["AudioHardware"] }
+# Default features pull in objc2/block2/dispatch2/objc2-foundation, needed for
+# the CoreAudio process-tap APIs (CATapDescription, the IOProc block, the
+# aggregate-device dictionary) used by media.rs to detect real audio output.
+objc2-core-audio = "0.3"
+objc2-core-audio-types = "0.3"
+objc2-core-foundation = { version = "0.3", features = ["CFDictionary", "CFString", "CFBase"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSString", "NSDictionary", "NSArray", "NSValue", "NSGeometry", "NSUUID"] }
 core-graphics = "0.25"
 core-foundation = "0.10"
 
