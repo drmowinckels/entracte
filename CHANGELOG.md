@@ -9,7 +9,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Added
 
-- **Groundwork for translating Entracte into other languages.** Introduces an internationalisation (i18n) framework: every piece of interface text lives in a per-language catalog (`src/i18n/locales/<code>/`), and the app picks your language from the operating system automatically. The **Pause until** picker is the first surface translated, shipping in English and Norwegian (Bokmål); the rest of the interface follows. Adding a new language is a matter of dropping in a folder of translated text — no code changes — so contributions are welcome.
+- **Groundwork for translating Entracte into other languages.** Introduces an internationalisation (i18n) framework: every piece of interface text lives in a per-language catalog (`src/i18n/locales/<code>/`), and the app picks your language from the operating system automatically. The **Pause until** picker is the first surface translated, shipping in English and Norwegian (Bokmål); the rest of the interface follows. Adding a new language is a matter of dropping in a folder of translated text — no code changes — so contributions are welcome. ([#252](https://github.com/drmowinckels/entracte/pull/252))
 
 ## [0.0.9] — 2026-06-22
 
