@@ -194,3 +194,6 @@ ungranted
 unsandboxed
 acks
 unacked
+CLDR
+endonym
+Norsk
