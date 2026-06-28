@@ -1584,6 +1584,7 @@ name = "entracte"
 version = "0.0.9"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "chrono",
  "core-foundation",
  "core-graphics",
@@ -1598,6 +1599,8 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation",
  "reqwest 0.12.28",
