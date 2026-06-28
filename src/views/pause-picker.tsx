@@ -10,6 +10,7 @@ import {
   monthNames,
   type DateField,
 } from "../lib/locale-format";
+import { useT } from "../i18n";
 import type { ClockFormat } from "./settings/types";
 import "./pause-picker.css";
 
@@ -25,6 +26,7 @@ function clampDay(year: number, month: number, day: number): number {
  * WebView locks to its own locale (en-US in a non-localised app) regardless
  * of the OS region. Pauses all breaks until the chosen moment, then closes. */
 export function PausePicker() {
+  const t = useT();
   const now = useMemo(() => new Date(), []);
   const [locale, setLocale] = useState("en-US");
   const [clockFormat, setClockFormat] = useState<ClockFormat>("24h");
@@ -94,7 +96,7 @@ export function PausePicker() {
       return (
         <select
           key="day"
-          aria-label="Day"
+          aria-label={t("pause.day")}
           value={day}
           onChange={(e) => setDay(Number(e.target.value))}
         >
@@ -110,7 +112,7 @@ export function PausePicker() {
       return (
         <select
           key="month"
-          aria-label="Month"
+          aria-label={t("pause.month")}
           value={month}
           onChange={(e) => setMonth(Number(e.target.value))}
         >
@@ -125,7 +127,7 @@ export function PausePicker() {
     return (
       <select
         key="year"
-        aria-label="Year"
+        aria-label={t("pause.year")}
         value={year}
         onChange={(e) => setYear(Number(e.target.value))}
       >
@@ -140,18 +142,15 @@ export function PausePicker() {
 
   return (
     <main className="pause-picker">
-      <h1 className="pause-picker-title">Pause until</h1>
-      <p className="pause-picker-hint">
-        Suppress all breaks until the chosen date and time, shown in your
-        region&apos;s format.
-      </p>
+      <h1 className="pause-picker-title">{t("pause.title")}</h1>
+      <p className="pause-picker-hint">{t("pause.hint")}</p>
       <div className="pause-picker-date">{order.map(fieldFor)}</div>
       <label className="pause-picker-time">
-        <span>Time</span>
+        <span>{t("pause.time")}</span>
         <input
           type="text"
           className="pause-picker-input"
-          aria-label="Time"
+          aria-label={t("pause.time")}
           inputMode="numeric"
           spellCheck={false}
           placeholder={clockFormat === "12h" ? "h:mm AM/PM" : "HH:MM"}
@@ -173,14 +172,14 @@ export function PausePicker() {
       </label>
       <div className="pause-picker-actions">
         <button type="button" className="secondary" onClick={close}>
-          Cancel
+          {t("pause.cancel")}
         </button>
         <button
           type="button"
           disabled={secs === null}
           onClick={() => void submit()}
         >
-          Pause
+          {t("pause.pause")}
         </button>
       </div>
     </main>

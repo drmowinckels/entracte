@@ -49,13 +49,43 @@ The first `cargo` build takes a couple of minutes. After that, hot reload is ins
 - Bug reports — particularly with the diagnostics bundle from **Settings → About → Copy diagnostics report** attached.
 - Per-OS implementations that close gaps in [Per-OS detection](.github/AGENTS.md#per-os-detection) — Linux DnD, Wayland-friendly idle detection, etc.
 - Accessibility improvements (axe-clean output is a hard CI gate; if you see real-world AT issues that axe doesn't catch, please open an issue).
-- Translations / internationalisation if you're interested — none yet, but the renderer is structured to make it tractable.
+- Translations / internationalisation — the framework is in place and English + Norwegian ship today. See [Translations](#translations) below; adding a language needs no code changes.
 
 **Out of scope for now:**
 
 - Plugin / extension systems. Considered, decided against.
 - Cloud sync, telemetry, account systems. Entracte is local-only by design.
 - Forks of the scheduler logic for very specific personal workflows — those are better as your own fork than as core features.
+
+## Translations
+
+Interface text lives in per-language catalogs under [`src/i18n/locales/`](src/i18n/locales). Each language is a folder of small JSON files, one per UI surface — the filename is the key's namespace, so `pause.json`'s `cancel` is looked up as `pause.cancel`:
+
+```
+src/i18n/locales/
+  en/                 # English — the source of truth for the key set
+    _meta.json        # { "label": "English", "order": 0 }
+    pause.json
+  nb/                 # Norwegian Bokmål
+    _meta.json        # { "label": "Norsk", "order": 20 }
+    pause.json
+```
+
+English defines every key; the TypeScript `Catalog` type is derived straight from `en/`, so calling `t("pause.cancel")` is checked at compile time, and a test asserts every other language carries exactly the English key set (no missing or stray keys).
+
+**Add a language** — no code changes, nothing to register:
+
+1. **Copy the folder.** Duplicate `src/i18n/locales/en/` to `src/i18n/locales/<code>/`, where `<code>` is the [ISO 639-1 code](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes) (e.g. `de`, `fr`, `nn`).
+2. **Set `_meta.json`.** `label` is the language's own name (its endonym, e.g. `Deutsch`); `order` is its place in the language picker (English is `0`).
+3. **Translate the values.** Keep every key exactly as in `en/`; change only the values. `{name}` placeholders are filled in at runtime — keep them — and a plural entry stays an object: `{ "one": "{count} break", "other": "{count} breaks" }`.
+4. **Check it.** The registry auto-discovers the folder; browser/OS language detection, the parity test, and the fallback chain all pick it up automatically.
+
+   ```sh
+   npm run typecheck   # flags any structural mistakes
+   npm test            # the registry test lists any missing/extra keys
+   ```
+
+Locale files are excluded from the spell-checker, so translated prose won't trip `audit:spell`.
 
 ## Cross-platform parity
 

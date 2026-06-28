@@ -1,0 +1,10 @@
+{
+  "title": "Pause until",
+  "hint": "Suppress all breaks until the chosen date and time, shown in your region's format.",
+  "day": "Day",
+  "month": "Month",
+  "year": "Year",
+  "time": "Time",
+  "cancel": "Cancel",
+  "pause": "Pause"
+}

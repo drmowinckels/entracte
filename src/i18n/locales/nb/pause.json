@@ -1,0 +1,10 @@
+{
+  "title": "Sett på pause til",
+  "hint": "Demp alle pauser fram til valgt dato og tid, vist i din regions format.",
+  "day": "Dag",
+  "month": "Måned",
+  "year": "År",
+  "time": "Tid",
+  "cancel": "Avbryt",
+  "pause": "Pause"
+}

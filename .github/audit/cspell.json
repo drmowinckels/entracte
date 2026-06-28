@@ -13,6 +13,7 @@
     "**/package-lock.json",
     "**/.vitepress/cache/**",
     "**/.claude/**",
+    "**/src/i18n/locales/**",
     "**/icons/**",
     "**/public/**",
     "**/*.svg",

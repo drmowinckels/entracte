@@ -13,6 +13,8 @@ import { invoke } from "@tauri-apps/api/core";
 const invokeMock = vi.mocked(invoke);
 
 const { PausePicker } = await import("./pause-picker");
+const { LangProvider } = await import("../i18n");
+const { default: nbPause } = await import("../i18n/locales/nb/pause.json");
 
 function mockBackend(opts: { locale?: string; clock?: string } = {}) {
   invokeMock.mockImplementation(async (cmd: string) => {
@@ -25,6 +27,7 @@ function mockBackend(opts: { locale?: string; clock?: string } = {}) {
 afterEach(() => {
   cleanup();
   invokeMock.mockReset();
+  localStorage.clear();
 });
 
 const combo = (name: string) =>
@@ -89,5 +92,19 @@ describe("PausePicker", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(invokeMock).toHaveBeenCalledWith("close_pause_window");
     expect(invokeMock).not.toHaveBeenCalledWith("pause", expect.anything());
+  });
+
+  it("renders its labels in the active language", async () => {
+    localStorage.setItem("entracte-lang", "nb");
+    mockBackend({ locale: "nb-NO" });
+    render(
+      <LangProvider>
+        <PausePicker />
+      </LangProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: nbPause.title })).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: nbPause.cancel })).toBeTruthy();
   });
 });
