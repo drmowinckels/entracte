@@ -63,7 +63,10 @@ jobs:
   # the job's final step exits non-zero if lychee flagged any link.
   # Findings are aggregated into one sticky PR comment.
   advisory:
-    runs-on: ubuntu-22.04
+    # Pinned to 24.04: lychee-action's bundled lychee binary links against
+    # GLIBC_2.38/2.39, which ubuntu-22.04 (glibc 2.35) lacks — on 22.04 the
+    # binary won't execute and the link check fails having checked nothing.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: write
@@ -81,7 +84,7 @@ jobs:
           # Key the cache per runner image: ubuntu-22.04 and ubuntu-24.04
           # both report runner.os=Linux, so a cross-image restore can run a
           # build-script binary against the wrong glibc (GLIBC_2.39 not found).
-          prefix-key: "rust-ubuntu-22.04"
+          prefix-key: "rust-ubuntu-24.04"
       - run: mkdir -p audit-reports
 
       - name: Install cargo-deny
@@ -102,7 +105,7 @@ jobs:
         continue-on-error: true
         # SHA-pinned: this action runs against the repo workspace and has
         # access to GITHUB_TOKEN for rate-limiting. Update via dependabot.
-        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: --config .github/audit/lychee.toml --root-dir "${{ github.workspace }}/docs" --no-progress "**/*.md"
           output: audit-reports/lychee.md
