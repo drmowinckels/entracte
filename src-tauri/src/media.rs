@@ -445,9 +445,11 @@ mod audio_tap {
     // just ignores denormal/dither noise.
     const SILENCE_THRESHOLD: f32 = 0.003;
     // Upper bound on how long we wait for output before concluding it's silent.
-    // We early-exit the instant an audible sample arrives, so this only delays
-    // the "nothing playing" case (which has nothing to pause anyway).
-    const PROBE_WINDOW: Duration = Duration::from_millis(250);
+    // We early-exit the instant an audible sample arrives (real playback lands
+    // in the first buffer or two, ~10-20ms), so this bound is only paid on the
+    // silent case — which runs synchronously on the break-fire path before the
+    // overlay opens, so keep it tight to avoid janking every silent break.
+    const PROBE_WINDOW: Duration = Duration::from_millis(80);
     const POLL_STEP: Duration = Duration::from_millis(10);
 
     /// Pure decision: is a measured peak amplitude loud enough to be real
@@ -460,7 +462,25 @@ mod audio_tap {
     /// private global process tap, measures the live output signal for at most
     /// [`PROBE_WINDOW`], and tears the tap down. Any FFI failure degrades to
     /// `false` — never a blind Play/Pause toggle on a guess.
+    /// Process taps are macOS 14.2+. On older systems the tap symbols are
+    /// weak-linked (see `build.rs`) and resolve to null, so we must never call
+    /// them. Gating here degrades cleanly: `output_active` returns false, the
+    /// media key is not toggled, so a break neither pauses playing media nor
+    /// starts paused media on < 14.2 — the feature is simply inert there.
+    fn process_tap_supported() -> bool {
+        use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
+        let required = NSOperatingSystemVersion {
+            majorVersion: 14,
+            minorVersion: 2,
+            patchVersion: 0,
+        };
+        NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(required)
+    }
+
     pub(super) fn output_active() -> bool {
+        if !process_tap_supported() {
+            return false;
+        }
         measure().unwrap_or(false)
     }
 
@@ -519,10 +539,13 @@ mod audio_tap {
                 NonNull::from(&mut cf).cast::<c_void>(),
             )
         };
-        let cf = NonNull::new(cf as *mut CFString)?;
+        // Check the status before adopting the pointer: on a non-zero status we
+        // must not take ownership of whatever `cf` holds (it may be an
+        // uninitialised or non-owned value), so bail before `CFRetained`.
         if status != 0 {
             return None;
         }
+        let cf = NonNull::new(cf as *mut CFString)?;
         // `Get` returns a +1 reference we own; `CFRetained` releases it.
         let owned = unsafe { CFRetained::from_raw(cf) };
         Some(NSString::from_str(&owned.to_string()))
@@ -556,7 +579,33 @@ mod audio_tap {
     }
 
     fn measure() -> Option<bool> {
+        // The IOProc flag and its block are created first, so `block` is
+        // declared before `session`: locals drop in reverse declaration order,
+        // so `session` (whose Drop calls AudioDeviceDestroyIOProcID) tears down
+        // *before* our RcBlock reference is released, on every return path.
+        // CoreAudio Block_copy's the block too, but this makes the ordering
+        // correct by construction instead of relying on that.
+        let audible = Arc::new(AtomicBool::new(false));
+        let audible_cb = audible.clone();
+        let block = RcBlock::new(
+            move |_now: NonNull<AudioTimeStamp>,
+                  in_data: NonNull<AudioBufferList>,
+                  _in_time: NonNull<AudioTimeStamp>,
+                  _out: NonNull<AudioBufferList>,
+                  _out_time: NonNull<AudioTimeStamp>| {
+                if buffers_audible(in_data) {
+                    audible_cb.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+
         // 1) Private global output tap (exclude no processes = tap everything).
+        //    KNOWN LIMITATION (#233 follow-up): a global tap answers "is *any*
+        //    audio playing", not "is the media player playing", so a stray
+        //    system/notification sound inside the probe window can read as
+        //    audible and let the blind Play/Pause key fire. The tight
+        //    PROBE_WINDOW keeps the exposure small; per-source attribution
+        //    isn't available from a global tap.
         let empty: objc2::rc::Retained<NSArray<NSNumber>> = NSArray::from_retained_slice(&[]);
         let desc = unsafe {
             CATapDescription::initStereoGlobalTapButExcludeProcesses(
@@ -593,20 +642,7 @@ mod audio_tap {
         }
         session.agg = agg;
 
-        // 3) IOProc that flips a flag the moment it sees an audible sample.
-        let audible = Arc::new(AtomicBool::new(false));
-        let audible_cb = audible.clone();
-        let block = RcBlock::new(
-            move |_now: NonNull<AudioTimeStamp>,
-                  in_data: NonNull<AudioBufferList>,
-                  _in_time: NonNull<AudioTimeStamp>,
-                  _out: NonNull<AudioBufferList>,
-                  _out_time: NonNull<AudioTimeStamp>| {
-                if buffers_audible(in_data) {
-                    audible_cb.store(true, Ordering::Relaxed);
-                }
-            },
-        );
+        // 3) Install the IOProc (built above) so it flips the flag on audio.
         let mut proc_id: AudioDeviceIOProcID = None;
         if unsafe {
             AudioDeviceCreateIOProcIDWithBlock(

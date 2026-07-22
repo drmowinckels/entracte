@@ -83,7 +83,7 @@ objc2-core-audio = "0.3"
 objc2-core-audio-types = "0.3"
 objc2-core-foundation = { version = "0.3", features = ["CFDictionary", "CFString", "CFBase"] }
 block2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSString", "NSDictionary", "NSArray", "NSValue", "NSGeometry", "NSUUID"] }
+objc2-foundation = { version = "0.3", features = ["NSAttributedString", "NSString", "NSDictionary", "NSArray", "NSValue", "NSGeometry", "NSUUID", "NSProcessInfo"] }
 core-graphics = "0.25"
 core-foundation = "0.10"
 
