@@ -279,12 +279,15 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
 
           # tauri-action's bundle naming conventions, by target:
-          #   macOS   : <productName>_<arch>.app.tar.gz[.sig]
-          #             productName="Entracte", arches "aarch64" + "x64".
-          #             NOTE: tauri-action's matrix uploader drops the
-          #             version from `.app.tar.gz` artifact names (since
-          #             the matrix produces two files that would otherwise
-          #             collide). Linux + Windows keep the version.
+          #   macOS   : <productName>_[<version>_]<arch>.app.tar.gz[.sig]
+          #             productName="Entracte", arches "aarch64" + Intel.
+          #             tauri-action < 1.0 dropped the version from
+          #             `.app.tar.gz` names; action-v1.0.0 puts it back
+          #             (its breaking change #1), so the basename is no
+          #             longer stable enough to hardcode. Resolve both from
+          #             the actual artifacts instead — "aarch64" is the
+          #             stable discriminator; the other `.app.tar.gz` is the
+          #             Intel build whatever its arch suffix ("x64"/"x86_64").
           #   Linux   : <productName?>_<version>_amd64.AppImage[.sig]
           #             The AppImage basename's casing has drifted across
           #             tauri-bundler versions (`entracte_…` through v0.0.1,
@@ -293,8 +296,20 @@ jobs:
           #   Windows : <productName>_<version>_x64_en-US.msi[.sig]
           #             the locale suffix is what tauri-bundler emits;
           #             update here if we ever switch the MSI locale.
-          AARCH64_FILE="Entracte_aarch64.app.tar.gz"
-          X64_FILE="Entracte_x64.app.tar.gz"
+          AARCH64_FILE=""
+          X64_FILE=""
+          for cand in release-assets/*.app.tar.gz; do
+            [ -e "$cand" ] || continue
+            base="$(basename "$cand")"
+            case "$base" in
+              *aarch64*) AARCH64_FILE="$base" ;;
+              *)         X64_FILE="$base" ;;
+            esac
+          done
+          if [ -z "$AARCH64_FILE" ] || [ -z "$X64_FILE" ]; then
+            echo "::error::could not resolve both macOS .app.tar.gz updater artifacts (aarch64='${AARCH64_FILE}' x64='${X64_FILE}')"
+            exit 1
+          fi
           APPIMAGE_FILE=""
           for cand in release-assets/*_amd64.AppImage; do
             [ -e "$cand" ] && APPIMAGE_FILE="$(basename "$cand")" && break
