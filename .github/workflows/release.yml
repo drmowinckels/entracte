@@ -95,7 +95,7 @@ jobs:
       # SHA-pinned: this action handles Apple signing secrets and drafts the
       # release. A compromised upstream tag could exfiltrate APPLE_CERTIFICATE
       # / APPLE_PASSWORD or replace artifacts. Update via dependabot.yml.
-      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -126,6 +126,12 @@ jobs:
           # (#238). The 0.0.x version number itself signals the beta line.
           prerelease: false
           args: ${{ matrix.args }}
+          # The publish-updater-manifest job composes the authoritative
+          # multi-platform latest.json. Disable tauri-action's own per-run
+          # upload (default true) so a partial, matrix-raced manifest never
+          # lands on the draft. Only the JSON is skipped — bundle `.sig`
+          # sidecars still upload (uploadUpdaterSignatures, default true).
+          uploadUpdaterJson: false
 
       # tauri-action notarises and staples the inner `.app`, but leaves the
       # `.dmg` container only Developer ID-signed — `spctl` reports the raw
@@ -279,27 +285,50 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
 
           # tauri-action's bundle naming conventions, by target:
-          #   macOS   : <productName>_<arch>.app.tar.gz[.sig]
-          #             productName="Entracte", arches "aarch64" + "x64".
-          #             NOTE: tauri-action's matrix uploader drops the
-          #             version from `.app.tar.gz` artifact names (since
-          #             the matrix produces two files that would otherwise
-          #             collide). Linux + Windows keep the version.
+          #   macOS   : <productName>_[<version>_]<arch>.app.tar.gz[.sig]
+          #             productName="Entracte", arches "aarch64" + Intel.
+          #             tauri-action < 1.0 dropped the version from
+          #             `.app.tar.gz` names; action-v1.0.0 puts it back
+          #             (its breaking change #1), so the basename is no
+          #             longer stable enough to hardcode. Resolve both from
+          #             the actual artifacts instead — "aarch64" is the
+          #             stable discriminator; the other `.app.tar.gz` is the
+          #             Intel build whatever its arch suffix ("x64"/"x86_64").
           #   Linux   : <productName?>_<version>_amd64.AppImage[.sig]
           #             The AppImage basename's casing has drifted across
           #             tauri-bundler versions (`entracte_…` through v0.0.1,
           #             `Entracte_…` from v0.0.2), so resolve it from the
           #             actual artifact rather than hardcoding the casing.
           #   Windows : <productName>_<version>_x64_en-US.msi[.sig]
-          #             the locale suffix is what tauri-bundler emits;
-          #             update here if we ever switch the MSI locale.
-          AARCH64_FILE="Entracte_aarch64.app.tar.gz"
-          X64_FILE="Entracte_x64.app.tar.gz"
+          #             resolved via glob like the others, so a locale/arch
+          #             suffix change (or the tauri-action version bump that
+          #             re-versions macOS names) never needs a manual edit here.
+          AARCH64_FILE=""
+          X64_FILE=""
+          for cand in release-assets/*.app.tar.gz; do
+            [ -e "$cand" ] || continue
+            base="$(basename "$cand")"
+            case "$base" in
+              *aarch64*) AARCH64_FILE="$base" ;;
+              *)         X64_FILE="$base" ;;
+            esac
+          done
+          if [ -z "$AARCH64_FILE" ] || [ -z "$X64_FILE" ]; then
+            echo "::error::could not resolve both macOS .app.tar.gz updater artifacts (aarch64='${AARCH64_FILE}' x64='${X64_FILE}')"
+            exit 1
+          fi
           APPIMAGE_FILE=""
           for cand in release-assets/*_amd64.AppImage; do
             [ -e "$cand" ] && APPIMAGE_FILE="$(basename "$cand")" && break
           done
-          MSI_FILE="Entracte_${VERSION}_x64_en-US.msi"
+          MSI_FILE=""
+          for cand in release-assets/*.msi; do
+            [ -e "$cand" ] && MSI_FILE="$(basename "$cand")" && break
+          done
+          if [ -z "$MSI_FILE" ]; then
+            echo "::error::could not resolve the Windows .msi updater artifact"
+            exit 1
+          fi
 
           for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig" "${APPIMAGE_FILE}.sig" "${MSI_FILE}.sig"; do
             if [ ! -f "release-assets/${f}" ]; then
