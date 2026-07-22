@@ -126,6 +126,12 @@ jobs:
           # (#238). The 0.0.x version number itself signals the beta line.
           prerelease: false
           args: ${{ matrix.args }}
+          # The publish-updater-manifest job composes the authoritative
+          # multi-platform latest.json. Disable tauri-action's own per-run
+          # upload (default true) so a partial, matrix-raced manifest never
+          # lands on the draft. Only the JSON is skipped — bundle `.sig`
+          # sidecars still upload (uploadUpdaterSignatures, default true).
+          uploadUpdaterJson: false
 
       # tauri-action notarises and staples the inner `.app`, but leaves the
       # `.dmg` container only Developer ID-signed — `spctl` reports the raw
@@ -294,8 +300,9 @@ jobs:
           #             `Entracte_…` from v0.0.2), so resolve it from the
           #             actual artifact rather than hardcoding the casing.
           #   Windows : <productName>_<version>_x64_en-US.msi[.sig]
-          #             the locale suffix is what tauri-bundler emits;
-          #             update here if we ever switch the MSI locale.
+          #             resolved via glob like the others, so a locale/arch
+          #             suffix change (or the tauri-action version bump that
+          #             re-versions macOS names) never needs a manual edit here.
           AARCH64_FILE=""
           X64_FILE=""
           for cand in release-assets/*.app.tar.gz; do
@@ -314,7 +321,14 @@ jobs:
           for cand in release-assets/*_amd64.AppImage; do
             [ -e "$cand" ] && APPIMAGE_FILE="$(basename "$cand")" && break
           done
-          MSI_FILE="Entracte_${VERSION}_x64_en-US.msi"
+          MSI_FILE=""
+          for cand in release-assets/*.msi; do
+            [ -e "$cand" ] && MSI_FILE="$(basename "$cand")" && break
+          done
+          if [ -z "$MSI_FILE" ]; then
+            echo "::error::could not resolve the Windows .msi updater artifact"
+            exit 1
+          fi
 
           for f in "${AARCH64_FILE}.sig" "${X64_FILE}.sig" "${APPIMAGE_FILE}.sig" "${MSI_FILE}.sig"; do
             if [ ! -f "release-assets/${f}" ]; then
