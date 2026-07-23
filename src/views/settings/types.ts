@@ -233,6 +233,10 @@ export type ChoresState = {
   /** Backend-internal: the day the morning prompt last fired. On the wire
    * (get_chores returns the full state) but unused by the UI. */
   prompted_date: string;
+  /** Backend-internal: whether the user has ever saved a non-empty list, so
+   * the morning prompt only nudges people who actually use chores. On the
+   * wire but unused by the UI. */
+  ever_used_chores: boolean;
 };
 
 export type PauseInfo = {
