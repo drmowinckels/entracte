@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A break no longer starts media you'd paused — for real this time (macOS).** The previous fix ([#233](https://github.com/drmowinckels/entracte/issues/233)) tried to tap the Play/Pause key only when audio was "actually playing", but it judged that from whether the sound device was _running_ — and apps like Chrome, Spotify, and Apple Music keep the device running even while paused, so a paused video or track still looked active and a break could **start** it. Entracte now briefly listens to the real audio coming out of your speakers and only taps the key when something is genuinely making sound, so paused media stays paused. (The truly accurate signal — the system's now-playing state — is locked to Apple's own apps on recent macOS, so it isn't available to Entracte.) ([#233](https://github.com/drmowinckels/entracte/issues/233))
+
 ## [0.0.9] — 2026-06-22
 
 ### Added
