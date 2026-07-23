@@ -32,6 +32,13 @@ pub struct ChoresSnapshot {
     /// a value `!= date` means we haven't prompted today yet. Defaults empty
     /// on older stores that predate the field.
     pub prompted_date: String,
+    /// True once the user has ever saved a non-empty chore list. Unlike
+    /// `items` (which reset each morning), this persists across days, so the
+    /// morning prompt only nudges people who actually use chores — a
+    /// permanently-empty list no longer pops Preferences every work-day
+    /// (#251-adjacent annoyance). Defaults false on older stores; a store that
+    /// already has items is migrated to true on load.
+    pub ever_used_chores: bool,
 }
 
 pub fn load(path: &Path) -> ChoresSnapshot {
@@ -105,6 +112,7 @@ mod tests {
             ],
             rotation: 3,
             prompted_date: "2026-06-11".to_string(),
+            ever_used_chores: true,
         };
         save(&path, &snap).unwrap();
         assert_eq!(load(&path), snap);
