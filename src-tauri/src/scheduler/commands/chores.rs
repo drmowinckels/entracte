@@ -42,6 +42,12 @@ pub(crate) async fn set_chores_impl(scheduler: &Scheduler, items: Vec<String>) -
     let mut c = scheduler.chores.lock().await;
     rollover_if_new_day(&mut c, &today);
     c.items = cleaned;
+    // Saving any real chore marks the user as a chore-user for good, so the
+    // morning prompt keeps nudging them on future (empty) mornings. Never
+    // cleared — clearing today's list doesn't mean they've stopped using it.
+    if !c.items.is_empty() {
+        c.ever_used_chores = true;
+    }
     persist_chores(&scheduler.chores_path, &c);
     c.clone()
 }
@@ -72,6 +78,23 @@ mod tests {
         // A fresh read sees the same sanitized list (persisted + in memory).
         let read = get_chores_impl(&sched).await;
         assert_eq!(read.items, stored.items);
+    }
+
+    #[tokio::test]
+    async fn set_chores_marks_and_keeps_the_chore_user_flag() {
+        let (_dir, sched) = test_scheduler(Settings::default());
+        // Saving an all-blank (→ empty) list does not flip the flag.
+        let empty = set_chores_impl(&sched, vec!["   ".to_string()]).await;
+        assert!(empty.items.is_empty());
+        assert!(!empty.ever_used_chores);
+        // Saving a real chore marks the user as a chore-user...
+        let used = set_chores_impl(&sched, vec!["Water the plants".to_string()]).await;
+        assert!(used.ever_used_chores);
+        // ...and clearing the list again keeps it set — they still use chores,
+        // so the morning prompt should keep nudging them.
+        let cleared = set_chores_impl(&sched, vec![]).await;
+        assert!(cleared.items.is_empty());
+        assert!(cleared.ever_used_chores);
     }
 
     #[tokio::test]

@@ -22,6 +22,10 @@ pub struct ChoresState {
     /// [`ChoresSnapshot::prompted_date`]). `!= date` means "not prompted yet
     /// today".
     pub prompted_date: String,
+    /// True once the user has ever saved a non-empty list. Persists across the
+    /// daily rollover (unlike `items`), so the morning prompt only nudges
+    /// people who actually use chores — see [`should_prompt_morning_chores`].
+    pub ever_used_chores: bool,
 }
 
 impl ChoresState {
@@ -29,12 +33,18 @@ impl ChoresState {
     /// is discarded — a chore post-it is a fresh thing each morning, so we
     /// never carry yesterday's list into today.
     pub fn from_snapshot(snap: ChoresSnapshot, today: &str) -> Self {
+        // Migrate stores that predate `ever_used_chores`: a snapshot that
+        // already carries items (today's or yesterday's) is clearly a
+        // chore-user, so treat it as having used chores even if the flag
+        // was default-false.
+        let ever_used_chores = snap.ever_used_chores || !snap.items.is_empty();
         if snap.date == today {
             Self {
                 date: snap.date,
                 items: snap.items,
                 rotation: snap.rotation,
                 prompted_date: snap.prompted_date,
+                ever_used_chores,
             }
         } else {
             Self {
@@ -42,6 +52,7 @@ impl ChoresState {
                 items: Vec::new(),
                 rotation: 0,
                 prompted_date: String::new(),
+                ever_used_chores,
             }
         }
     }
@@ -54,6 +65,7 @@ impl ChoresState {
             items: self.items.clone(),
             rotation: self.rotation,
             prompted_date: self.prompted_date.clone(),
+            ever_used_chores: self.ever_used_chores,
         }
     }
 }
@@ -81,8 +93,11 @@ const MORNING_PROMPT_FLOOR_MIN: u32 = 5 * 60;
 /// Whether to surface the morning chore prompt this tick. Fires once per
 /// local day — the first time the user is inside their work window (past an
 /// early-morning floor), while today's list is still empty and we haven't
-/// already prompted today. Pure so the gating is unit-testable without a
-/// scheduler or clock.
+/// already prompted today. Only nudges users who have *ever* used chores:
+/// the list resets empty every morning, so without this a user who never
+/// touches chores would have Preferences popped open every single work-day
+/// on a permanently-empty list. Pure so the gating is unit-testable without
+/// a scheduler or clock.
 pub fn should_prompt_morning_chores(
     enabled: bool,
     in_work_window: bool,
@@ -91,6 +106,7 @@ pub fn should_prompt_morning_chores(
     today: &str,
 ) -> bool {
     enabled
+        && state.ever_used_chores
         && in_work_window
         && now_min >= MORNING_PROMPT_FLOOR_MIN
         && state.items.is_empty()
@@ -139,6 +155,19 @@ mod tests {
             items: items.iter().map(|s| s.to_string()).collect(),
             rotation,
             prompted_date: String::new(),
+            // A state built with items is a chore-user; keep the flag in sync
+            // so the rotation / "already has chores" tests act like real use.
+            ever_used_chores: !items.is_empty(),
+        }
+    }
+
+    /// A returning chore-user whose daily list has reset to empty this
+    /// morning: empty today, but `ever_used_chores` is set, so the morning
+    /// prompt should still nudge them. This is the case the gate allows.
+    fn returning_user_empty() -> ChoresState {
+        ChoresState {
+            ever_used_chores: true,
+            ..state_with(&[], 0)
         }
     }
 
@@ -149,11 +178,14 @@ mod tests {
             items: vec!["Water the plants".to_string()],
             rotation: 2,
             prompted_date: "2026-06-11".to_string(),
+            ever_used_chores: false,
         };
         let st = ChoresState::from_snapshot(snap, "2026-06-11");
         assert_eq!(st.items, vec!["Water the plants".to_string()]);
         assert_eq!(st.rotation, 2);
         assert_eq!(st.prompted_date, "2026-06-11");
+        // Migration: a store with items predates the flag but is a chore-user.
+        assert!(st.ever_used_chores);
     }
 
     #[test]
@@ -163,6 +195,7 @@ mod tests {
             items: vec!["Yesterday's chore".to_string()],
             rotation: 5,
             prompted_date: "2026-06-10".to_string(),
+            ever_used_chores: false,
         };
         let st = ChoresState::from_snapshot(snap, "2026-06-11");
         assert_eq!(st.date, "2026-06-11");
@@ -171,6 +204,27 @@ mod tests {
         // A stale day's "already prompted" marker must not suppress today's
         // prompt.
         assert_eq!(st.prompted_date, "");
+        // ...but "has ever used chores" persists across the day boundary
+        // (migrated here from yesterday's non-empty list), so a returning
+        // user still gets this morning's nudge.
+        assert!(st.ever_used_chores);
+    }
+
+    #[test]
+    fn from_snapshot_preserves_ever_used_across_days() {
+        // A chore-user who cleared their list: empty items, but the flag was
+        // already set. Rolling into a new day keeps the flag even though the
+        // (empty) list is discarded.
+        let snap = ChoresSnapshot {
+            date: "2026-06-10".to_string(),
+            items: vec![],
+            rotation: 0,
+            prompted_date: "2026-06-10".to_string(),
+            ever_used_chores: true,
+        };
+        let st = ChoresState::from_snapshot(snap, "2026-06-11");
+        assert!(st.items.is_empty());
+        assert!(st.ever_used_chores);
     }
 
     #[test]
@@ -182,11 +236,15 @@ mod tests {
         assert_eq!(st.rotation, 0);
         assert_eq!(st.date, "2026-06-12");
         assert_eq!(st.prompted_date, "");
+        // The daily rollover must NOT wipe the chore-user flag, or a user with
+        // the app running across midnight would stop getting the morning
+        // nudge every day.
+        assert!(st.ever_used_chores);
     }
 
     #[test]
-    fn morning_prompt_fires_in_window_with_empty_list() {
-        let st = state_with(&[], 0);
+    fn morning_prompt_fires_for_returning_user_with_empty_list() {
+        let st = returning_user_empty();
         assert!(should_prompt_morning_chores(
             true,
             true,
@@ -197,8 +255,24 @@ mod tests {
     }
 
     #[test]
-    fn morning_prompt_skips_when_disabled() {
+    fn morning_prompt_skips_when_user_never_used_chores() {
+        // Empty list + never used chores: every other condition is met, but a
+        // user who doesn't use chores must not have Preferences popped open
+        // every morning on a permanently-empty list.
         let st = state_with(&[], 0);
+        assert!(!st.ever_used_chores);
+        assert!(!should_prompt_morning_chores(
+            true,
+            true,
+            9 * 60,
+            &st,
+            "2026-06-11"
+        ));
+    }
+
+    #[test]
+    fn morning_prompt_skips_when_disabled() {
+        let st = returning_user_empty();
         assert!(!should_prompt_morning_chores(
             false,
             true,
@@ -210,7 +284,7 @@ mod tests {
 
     #[test]
     fn morning_prompt_skips_outside_work_window() {
-        let st = state_with(&[], 0);
+        let st = returning_user_empty();
         assert!(!should_prompt_morning_chores(
             true,
             false,
@@ -224,7 +298,7 @@ mod tests {
     fn morning_prompt_skips_before_the_morning_floor() {
         // All-day work window: in_window is true even at 02:00, but the floor
         // keeps the prompt from firing at the post-midnight rollover.
-        let st = state_with(&[], 0);
+        let st = returning_user_empty();
         assert!(!should_prompt_morning_chores(
             true,
             true,
@@ -255,7 +329,7 @@ mod tests {
 
     #[test]
     fn morning_prompt_skips_when_already_prompted_today() {
-        let mut st = state_with(&[], 0);
+        let mut st = returning_user_empty();
         st.prompted_date = "2026-06-11".to_string();
         assert!(!should_prompt_morning_chores(
             true,
