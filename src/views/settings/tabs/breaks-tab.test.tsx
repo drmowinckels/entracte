@@ -234,6 +234,7 @@ describe("BreaksTab break ideas", () => {
       items: [] as string[],
       rotation: 0,
       prompted_date: "",
+      ever_used_chores: false,
     };
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "get_chores") return emptyToday;
@@ -261,6 +262,7 @@ describe("BreaksTab break ideas", () => {
       items: ["Water the plants"],
       rotation: 0,
       prompted_date: "",
+      ever_used_chores: false,
     };
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "get_chores") return today;

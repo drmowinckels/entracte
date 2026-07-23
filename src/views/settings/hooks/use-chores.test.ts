@@ -12,6 +12,7 @@ describe("useChores", () => {
       items: ["Water the plants"],
       rotation: 0,
       prompted_date: "",
+      ever_used_chores: false,
     });
     const { result } = renderHook(() => useChores({ invoke }));
     expect(result.current.chores).toBeNull();
@@ -46,12 +47,14 @@ describe("useChores", () => {
         items: [],
         rotation: 0,
         prompted_date: "",
+        ever_used_chores: false,
       })
       .mockResolvedValueOnce({
         date: TODAY,
         items: ["Tidy desk"],
         rotation: 0,
         prompted_date: "",
+        ever_used_chores: false,
       });
     const { result } = renderHook(() => useChores({ invoke }));
     await waitFor(() => expect(result.current.chores).not.toBeNull());
@@ -72,6 +75,7 @@ describe("useChores", () => {
         items: ["Keep me"],
         rotation: 0,
         prompted_date: "",
+        ever_used_chores: false,
       })
       .mockResolvedValueOnce({ bogus: true });
     const { result } = renderHook(() => useChores({ invoke }));
