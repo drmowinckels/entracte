@@ -187,6 +187,9 @@ export function BreaksTab({
           >
             Test long
           </button>
+          <button onClick={() => invoke("start_long_break_now")}>
+            Take a long break now
+          </button>
         </div>
       </section>
 

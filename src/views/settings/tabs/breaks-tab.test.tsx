@@ -461,6 +461,27 @@ describe("BreaksTab delivery", () => {
       durationSecs: 15,
     });
   });
+
+  it("clicking Take a long break now invokes start_long_break_now", () => {
+    renderTab(false, () => {}, { micro_enabled: true, long_enabled: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Take a long break now" }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("start_long_break_now");
+  });
+
+  it("keeps Take a long break now enabled even when long breaks are off", () => {
+    // Deliberately not gated on long_enabled (unlike Test long): taking a long
+    // break on demand is a valid manual override independent of the schedule.
+    renderTab(false, () => {}, { micro_enabled: true, long_enabled: false });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Take a long break now",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
 });
 
 describe("BreaksTab sound", () => {

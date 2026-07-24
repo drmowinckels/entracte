@@ -642,6 +642,29 @@ pub async fn resume_last_break<R: Runtime>(
     resume_last_break_impl(&app, scheduler.inner()).await
 }
 
+/// Fire a long break right now and restart the rotation, exactly as if the
+/// scheduled long break had come due (#258). Lets a user take their long
+/// break early — a chore timer went off, the washing machine finished —
+/// without waiting for it and without it doubling up later:
+/// `fire_scheduled_break` re-anchors *both* interval clocks (a long break
+/// swallows the pending micro). Bypasses suppression, matching the other
+/// explicit manual triggers. Shared by the renderer command and the tray.
+pub async fn start_long_break_now_impl<R: Runtime>(app: &AppHandle<R>, scheduler: &Scheduler) {
+    let s = scheduler.settings.lock().await.clone();
+    super::super::run_loop::fire_scheduled_break(app, scheduler, &s, BreakKind::Long, None).await;
+}
+
+/// Renderer-facing "take a long break now". Thin wrapper over
+/// `start_long_break_now_impl`.
+#[tauri::command]
+pub async fn start_long_break_now<R: Runtime>(
+    app: AppHandle<R>,
+    scheduler: tauri::State<'_, Scheduler>,
+) -> Result<(), String> {
+    start_long_break_now_impl(&app, scheduler.inner()).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1671,6 +1694,86 @@ mod rig_smoke_tests {
         trigger_break_from_cli(app.handle(), &sched, BreakKind::Long, 42).await;
         // Notification delivery does not stash an overlay break.
         assert!(sched.current_break.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn start_long_break_now_reanchors_both_interval_clocks() {
+        // #258: "take a long break now" fires a real long break AND restarts
+        // the rotation, so a break already overdue on the clock is no longer
+        // due the instant after — no doubled-up break later. Notification mode
+        // keeps delivery windowless (the mock runtime can't open an overlay);
+        // the re-anchor is `fire_scheduled_break`'s job regardless of channel.
+        use super::super::super::settings::BreakMode;
+        let mut settings = Settings::default();
+        settings.long_break_mode = BreakMode::Notification;
+        settings.long_interval_secs = 1_800;
+        settings.micro_interval_secs = 1_200;
+        let (_dir, app, sched) = mock_app_with_scheduler(settings);
+
+        // A genuine past sample (never `now() - offset`, which can underflow
+        // the monotonic clock on a fresh runner) standing in for stale anchors
+        // left overdue by a long stretch of work.
+        let stale = Instant::now();
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_micro = stale;
+            t.last_long = stale;
+            t.long_warned = true;
+            t.micro_warned = true;
+        }
+
+        start_long_break_now_impl(app.handle(), &sched).await;
+
+        let t = sched.timers.lock().await;
+        assert!(
+            t.last_long > stale,
+            "long anchor must move forward to the fire instant"
+        );
+        assert!(
+            t.last_micro > stale,
+            "a long break swallows the pending micro, so its clock re-anchors too"
+        );
+        assert!(!t.long_warned, "the long warn flag resets on fire");
+        assert!(!t.micro_warned, "the micro warn flag resets on fire");
+        assert!(
+            !crate::scheduler::timers::interval_break_due(
+                true,
+                true,
+                t.last_long,
+                1_800,
+                false,
+                t.last_long
+            ),
+            "no long break may be due the instant after taking one"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn start_long_break_now_command_via_rig_fires_and_reanchors() {
+        // Covers the `#[tauri::command]` wrapper (State/AppHandle threading),
+        // separate from the impl-level test above. Notification mode keeps
+        // delivery windowless under the mock runtime; a moved long anchor
+        // proves the wrapper reached the impl and the fire path ran.
+        use super::super::super::settings::BreakMode;
+        let mut settings = Settings::default();
+        settings.long_break_mode = BreakMode::Notification;
+        let (_dir, app, sched) = mock_app_with_scheduler(settings);
+        let stale = Instant::now();
+        {
+            let mut t = sched.timers.lock().await;
+            t.last_long = stale;
+        }
+
+        start_long_break_now(app.handle().clone(), app.state::<Scheduler>())
+            .await
+            .expect("start_long_break_now command succeeds");
+
+        assert!(
+            sched.timers.lock().await.last_long > stale,
+            "the wrapper drove the fire path and re-anchored the long clock"
+        );
     }
 
     #[test]

@@ -519,7 +519,12 @@ pub(super) async fn run_loop(app: AppHandle, sched: Scheduler) {
 /// under the timers lock (see [`record_scheduled_fire`]). `fixed_key` is
 /// `Some((today, minute))` for a fixed-time fire (recording the dedupe
 /// key) or `None` for an interval fire; the fire `Instant` is stamped here.
-async fn fire_scheduled_break<R: Runtime>(
+///
+/// Also the on-demand entry for "take a long break now" (#258): the
+/// `start_long_break_now` command calls this with `Long`/`None` so a
+/// user-initiated long break behaves exactly like a due one — same delivery,
+/// same re-anchor of both interval clocks — and never doubles up later.
+pub(super) async fn fire_scheduled_break<R: Runtime>(
     app: &AppHandle<R>,
     sched: &Scheduler,
     s: &Settings,

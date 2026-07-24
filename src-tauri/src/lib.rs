@@ -163,6 +163,7 @@ pub fn run() {
             scheduler::get_postpone_state,
             scheduler::get_last_break_info,
             scheduler::resume_last_break,
+            scheduler::start_long_break_now,
             scheduler::get_break_stats,
             scheduler::get_current_break,
             scheduler::get_routines,

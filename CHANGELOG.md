@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Take a long break now.** A new **Take a long break now** action — in the menu-bar menu and on the Breaks tab (next to _Test long_) — starts your long break immediately and restarts the rotation from that moment, so if you step away early (the washing machine's done, a call wrapped up) you get your proper long break when you want it and aren't broken again a few minutes later. ([#258](https://github.com/drmowinckels/entracte/issues/258))
+
 ## [0.0.10] — 2026-07-23
 
 ### Fixed

@@ -125,6 +125,13 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         false,
         None::<&str>,
     )?;
+    let long_break_now = MenuItem::with_id(
+        app,
+        "long_break_now",
+        "Take a long break now",
+        true,
+        None::<&str>,
+    )?;
 
     let pause_15m = MenuItem::with_id(app, "pause_15m", "15 minutes", true, None::<&str>)?;
     let pause_30m = MenuItem::with_id(app, "pause_30m", "30 minutes", true, None::<&str>)?;
@@ -179,6 +186,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             &profile_submenu,
             &sep3,
             &resume_break,
+            &long_break_now,
             &sep4,
             &quit,
         ],
@@ -249,6 +257,14 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     });
                     return;
                 }
+                "long_break_now" => {
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let scheduler = app_handle.state::<Scheduler>().inner().clone();
+                        crate::scheduler::start_long_break_now_impl(&app_handle, &scheduler).await;
+                    });
+                    return;
+                }
                 _ => {}
             }
 
@@ -309,6 +325,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let resume_for_rebuild = resume.clone();
     let pause_submenu_for_rebuild = pause_submenu.clone();
     let resume_break_for_rebuild = resume_break.clone();
+    let long_break_now_for_rebuild = long_break_now.clone();
     let sep1_for_rebuild = sep1.clone();
     let sep2_for_rebuild = sep2.clone();
     let sep3_for_rebuild = sep3.clone();
@@ -323,6 +340,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         let resume = resume_for_rebuild.clone();
         let pause_submenu = pause_submenu_for_rebuild.clone();
         let resume_break = resume_break_for_rebuild.clone();
+        let long_break_now = long_break_now_for_rebuild.clone();
         let sep1 = sep1_for_rebuild.clone();
         let sep2 = sep2_for_rebuild.clone();
         let sep3 = sep3_for_rebuild.clone();
@@ -352,6 +370,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     &new_submenu,
                     &sep3,
                     &resume_break,
+                    &long_break_now,
                     &sep4,
                     &quit,
                 ],
