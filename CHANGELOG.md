@@ -9,6 +9,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Fixed
 
+- **A break no longer starts media you'd paused (Windows).** To pause your music or video for a break, Entracte taps the system Play/Pause key — a blind toggle, so it only taps when it believes something is playing. On Windows it judged that from whether anything was keeping the display awake, which a paused video tab or a call app can do on its own — so if you'd paused your media before a break, Entracte could **start** it, play it through the break, then pause it again at the end. It now checks whether audio is actually coming out of your speakers right now (the same real-output approach the macOS fix uses), so paused media stays paused. ([#234](https://github.com/drmowinckels/entracte/issues/234))
 - **A leftover build of Entracte can no longer hijack "launch at login" from the one you installed (macOS).** If a copy of Entracte was ever run from a build folder (a `target/…` directory left over from building it locally), it would quietly point "launch at login" at itself and re-claim that spot every login — so the app that actually started each day was the old build, not the version in your Applications folder. If that build predated a fix, you'd keep seeing the already-fixed bug (e.g. the invisible break overlay of [#196](https://github.com/drmowinckels/entracte/issues/196)). A build running from a `target/…` folder now leaves "launch at login" alone, so the installed app stays the one that runs.
 
 ### Added

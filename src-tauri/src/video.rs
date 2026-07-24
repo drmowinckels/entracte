@@ -37,18 +37,6 @@ pub fn spawn_monitor(active: Arc<AtomicBool>) {
     let _ = active;
 }
 
-/// Whether *something* is currently requesting the display stay awake — the
-/// assertion half of the fullscreen-video check, without the fullscreen
-/// gate. [`crate::media`] uses it on Windows as a cheap "is media likely
-/// playing?" guard before sending a best-effort play/pause media key, so it
-/// never starts media that was paused. Windows only — macOS now gates that
-/// toggle on a real audio-output-active probe instead (#233), and Linux
-/// media control goes through MPRIS directly with no caller for it.
-#[cfg(target_os = "windows")]
-pub(crate) fn assertion_active() -> bool {
-    windows::display_request_active()
-}
-
 // 10-second poll interval: hot enough that a video call started
 // before a break gets caught in time, but cool enough that we're not
 // fork-bombing `pmset` / `powercfg` / `systemd-inhibit` 43k times a

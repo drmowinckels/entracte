@@ -1626,6 +1626,7 @@ dependencies = [
  "tokio",
  "user-idle",
  "wat",
+ "windows 0.61.3",
  "windows-sys 0.59.0",
  "winreg 0.52.0",
  "zeroize",

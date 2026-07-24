@@ -16,10 +16,10 @@
 //!   synthesise the system Play/Pause media key — a best-effort toggle.
 //!   Because the key is a toggle (there's no separate "pause" key), we only
 //!   send it when an "is media actually playing?" probe says yes, so we don't
-//!   accidentally *start* media that was paused: a real CoreAudio output tap
-//!   on macOS (the one public signal that tells a paused player apart from one
-//!   merely holding the audio device open — #233), a display-wake assertion on
-//!   Windows. The matching resume sends the same key again.
+//!   accidentally *start* media that was paused: a real audio-output probe that
+//!   tells a paused player apart from one merely holding the audio device open
+//!   — a CoreAudio process tap on macOS (#233) and a WASAPI endpoint peak meter
+//!   on Windows (#234). The matching resume sends the same key again.
 //!
 //! The testable core is pure and lives at module scope so it compiles and
 //! is unit-tested on every OS, mirroring [`crate::video`]: the gdbus output
@@ -258,9 +258,9 @@ fn platform_resume(token: &ResumeToken) {
 /// break start. The toggle has no separate "pause" key, so sending it when
 /// nothing is playing would *start* media the user had paused (issue #104).
 /// We therefore only allow it when the platform's "is media actually
-/// playing?" probe says yes — a real audio-output tap on macOS (#233), a
-/// display-wake request on Windows. Pure so it's unit-tested without FFI on
-/// every OS.
+/// playing?" probe says yes — a real audio-output probe on both macOS (a
+/// CoreAudio tap, #233) and Windows (a WASAPI peak meter, #234). Pure so it's
+/// unit-tested without FFI on every OS.
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn media_key_pause_allowed(media_likely_playing: bool) -> bool {
     media_likely_playing
@@ -275,15 +275,32 @@ fn media_key_resume_allowed(token: &ResumeToken) -> bool {
     matches!(token, ResumeToken::MediaKey)
 }
 
+/// A measured output peak above this counts as real audio. Digital silence is
+/// ~0.0, so any small positive floor cleanly separates a paused player (no
+/// output) from an active one; the margin ignores denormal/dither noise.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+const SILENCE_THRESHOLD: f32 = 0.003;
+
+/// Pure decision shared by both audio-output probes: is a measured peak
+/// amplitude loud enough to be real playback? One threshold so the macOS tap
+/// (#233) and the Windows peak meter (#234) judge "audible" identically instead
+/// of drifting apart behind two copies. Pure, so it's unit-tested without FFI
+/// on every OS (like [`media_key_pause_allowed`] just above).
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+fn is_audible(peak: f32) -> bool {
+    peak > SILENCE_THRESHOLD
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn platform_pause() -> ResumeToken {
-    // macOS: a real audio-output tap (true only when samples are actually
-    // playing); Windows: the display-wake request (its blind-toggle proxy is
-    // unchanged here — tracked in #234).
+    // Both platforms now gate on real audio output, true only when something
+    // is actually making sound: a CoreAudio process tap on macOS (#233), a
+    // WASAPI endpoint peak meter on Windows (#234). Neither is fooled by a
+    // paused player that merely holds the audio device open.
     #[cfg(target_os = "macos")]
     let media_likely_playing = audio_tap::output_active();
     #[cfg(target_os = "windows")]
-    let media_likely_playing = crate::video::assertion_active();
+    let media_likely_playing = audio_session::output_active();
     if !media_key_pause_allowed(media_likely_playing) {
         return ResumeToken::Noop;
     }
@@ -439,11 +456,6 @@ mod audio_tap {
     use objc2_core_foundation::{CFDictionary, CFRetained, CFString};
     use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUUID};
 
-    // Samples whose absolute amplitude exceeds this count as "real audio".
-    // Digital silence is exactly 0.0, so any small positive floor cleanly
-    // separates a paused player (no samples) from an active one; the margin
-    // just ignores denormal/dither noise.
-    const SILENCE_THRESHOLD: f32 = 0.003;
     // Upper bound on how long we wait for output before concluding it's silent.
     // We early-exit the instant an audible sample arrives (real playback lands
     // in the first buffer or two, ~10-20ms), so this bound is only paid on the
@@ -451,12 +463,6 @@ mod audio_tap {
     // overlay opens, so keep it tight to avoid janking every silent break.
     const PROBE_WINDOW: Duration = Duration::from_millis(80);
     const POLL_STEP: Duration = Duration::from_millis(10);
-
-    /// Pure decision: is a measured peak amplitude loud enough to be real
-    /// playback? Split out so the threshold is unit-tested without any FFI.
-    pub(super) fn is_audible(peak: f32) -> bool {
-        peak > SILENCE_THRESHOLD
-    }
 
     /// True when the system is emitting real audio output right now. Opens a
     /// private global process tap, measures the live output signal for at most
@@ -696,7 +702,7 @@ mod audio_tap {
                     }
                 }
             }
-            is_audible(peak)
+            super::is_audible(peak)
         }
     }
 }
@@ -732,6 +738,106 @@ mod media_key {
             };
             let sent = SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32);
             sent == 2
+        }
+    }
+}
+
+/// Windows analogue of macOS's [`audio_tap`] (#234): "is real audio coming out
+/// of the default render device right now?" measured from the WASAPI endpoint
+/// peak meter, so the blind Play/Pause key only fires when something is
+/// genuinely playing. This replaces the old display-wake proxy, which a paused
+/// player holding a display request could trip — starting media the user had
+/// paused, the same class of bug #233 fixed on macOS.
+///
+/// KNOWN LIMITATIONS (parity with the macOS global tap, and strictly better
+/// than the old display-wake proxy):
+/// - The endpoint meter sums *all* sessions on the device, so it answers "is
+///   any audio playing", not "is the media player playing" — a stray
+///   system/notification sound inside the probe window can read as audible and
+///   let the blind toggle fire. The tight [`PROBE_WINDOW`] keeps the exposure
+///   small; per-source attribution isn't available from the endpoint meter.
+/// - It meters only the *default* multimedia render endpoint, whereas the
+///   macOS tap is global. Media routed to a non-default output device reads as
+///   silent, so it won't be paused — a false negative, i.e. the safe direction
+///   for #234 (which was about false positives *starting* paused media).
+#[cfg(target_os = "windows")]
+mod audio_session {
+    use std::time::{Duration, Instant};
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
+    use windows::Win32::Media::Audio::{
+        eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
+
+    // Upper bound on how long we sample before concluding it's silent. We
+    // early-exit the instant an audible peak arrives, so this bound is only
+    // paid on the silent case; it runs synchronously on the break-fire path
+    // before the overlay opens, so keep it tight to avoid janking a break.
+    const PROBE_WINDOW: Duration = Duration::from_millis(80);
+    const POLL_STEP: Duration = Duration::from_millis(10);
+
+    /// Balances a `CoInitializeEx` that we owned (returned `S_OK`/`S_FALSE`).
+    /// Declared before the COM interface bindings so it drops *last* —
+    /// `CoUninitialize` must run only after every interface pointer is released.
+    struct ComGuard;
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            // SAFETY: paired with the matching CoInitializeEx on this thread.
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    /// True when the default render endpoint is emitting real audio right now.
+    /// Samples the WASAPI peak meter for at most [`PROBE_WINDOW`]. Any COM
+    /// failure — no audio device, metering unavailable — degrades to `false`,
+    /// never a blind Play/Pause toggle on a guess.
+    pub(super) fn output_active() -> bool {
+        // SAFETY: a standard WASAPI endpoint-metering sequence. Every COM object
+        // is created here; the apartment we open is released by `ComGuard` and
+        // the interface pointers drop at scope end (before the guard, which is
+        // declared first and so dropped last).
+        unsafe {
+            let init = CoInitializeEx(None, COINIT_MULTITHREADED);
+            // RPC_E_CHANGED_MODE: this thread already joined a different (STA)
+            // apartment — COM is still usable, but we must not pair a
+            // CoUninitialize we don't own. S_OK / S_FALSE: we (re)initialised
+            // and own the matching CoUninitialize. Any other HRESULT is a real
+            // failure, so bail without toggling.
+            let _guard = if init == RPC_E_CHANGED_MODE {
+                None
+            } else if init.is_ok() {
+                Some(ComGuard)
+            } else {
+                return false;
+            };
+
+            let Ok(enumerator) =
+                CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
+            else {
+                return false;
+            };
+            let Ok(device) = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia) else {
+                return false;
+            };
+            let Ok(meter) = device.Activate::<IAudioMeterInformation>(CLSCTX_ALL, None) else {
+                return false;
+            };
+
+            let deadline = Instant::now() + PROBE_WINDOW;
+            loop {
+                if let Ok(peak) = meter.GetPeakValue() {
+                    if super::is_audible(peak) {
+                        return true;
+                    }
+                }
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(POLL_STEP);
+            }
         }
     }
 }
@@ -1002,15 +1108,17 @@ mod tests {
         ])));
     }
 
-    // The macOS output tap's pure decision: digital silence is exactly 0.0, so
-    // only a positive peak past the small floor counts as real playback.
-    #[cfg(target_os = "macos")]
+    // The shared output-probe decision (#233/#234): digital silence is ~0.0, so
+    // only a positive peak past the small floor counts as real playback. One
+    // test for the one threshold both platforms' probes now feed.
     #[test]
-    fn audio_tap_is_audible_separates_silence_from_signal() {
-        assert!(!audio_tap::is_audible(0.0));
-        assert!(!audio_tap::is_audible(0.001));
-        assert!(audio_tap::is_audible(0.05));
-        assert!(audio_tap::is_audible(0.9));
+    fn is_audible_separates_silence_from_signal() {
+        assert!(!is_audible(0.0));
+        assert!(!is_audible(0.001));
+        // The threshold is exclusive: a peak exactly at the floor is silence.
+        assert!(!is_audible(SILENCE_THRESHOLD));
+        assert!(is_audible(0.05));
+        assert!(is_audible(0.9));
     }
 
     // Smoke-test the macOS output-tap FFI end to end: create the global process
@@ -1024,6 +1132,19 @@ mod tests {
     #[test]
     fn output_active_probe_resolves_without_panicking() {
         let _: bool = audio_tap::output_active();
+    }
+
+    // Smoke-test the Windows WASAPI probe end to end: initialise COM, resolve
+    // the default render endpoint, activate the peak meter, sample, and tear it
+    // down. The value is environment-dependent (false on a headless runner with
+    // no audio device), so we only assert it resolves within the probe window
+    // without panicking — that exercises the COM wiring a signature or feature
+    // mismatch would crash on. Windows only, where the module exists; absent
+    // from the Linux coverage build like the other platform FFI.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_output_active_probe_resolves_without_panicking() {
+        let _: bool = audio_session::output_active();
     }
 
     #[test]
