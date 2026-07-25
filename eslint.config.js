@@ -40,7 +40,11 @@ export default tseslint.config(
       // and its draft-sync / stable-key-ref patterns are intentional.
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
-      ...jsxA11y.flatConfigs.recommended.rules,
+      ...jsxA11y.configs.recommended.rules,
+      // Keep parity with previous flat config defaults used before the
+      // security-driven plugin downgrade.
+      "jsx-a11y/no-onchange": "off",
+      "jsx-a11y/accessible-emoji": "off",
       // Underscore-prefixed bindings are intentionally unused (ignored
       // callback args, placeholder destructures).
       "@typescript-eslint/no-unused-vars": [
