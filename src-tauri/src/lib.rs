@@ -60,9 +60,23 @@ fn autostart_agent_is_stale(plist: &str, current_exe: &str) -> bool {
     launch_agent_program_path(plist).is_some_and(|p| p != current_exe)
 }
 
+/// True when the running executable lives inside a Cargo build tree
+/// (`.../target/debug/...` or `.../target/release/...`). Such a binary is a
+/// transient dev or CI build, never an installed app, so it must not claim
+/// the autostart LaunchAgent. Without this guard a locally-built bundle that
+/// repoints autostart to itself hijacks it from the installed app and
+/// re-asserts every login — the user then keeps launching the stale build
+/// (e.g. the pre-fix invisible overlay of #196/#226) instead of the release
+/// they installed.
+#[cfg(any(target_os = "macos", test))]
+fn is_dev_build_path(exe: &str) -> bool {
+    exe.contains("/target/debug/") || exe.contains("/target/release/")
+}
+
 /// Repoint the autostart LaunchAgent at the running executable when it was
-/// written by a different build. Only the path-mismatch decision carries
-/// logic ([`autostart_agent_is_stale`]); the rest is filesystem/plugin glue.
+/// written by a different build. Only the path decisions carry logic
+/// ([`autostart_agent_is_stale`], [`is_dev_build_path`]); the rest is
+/// filesystem/plugin glue.
 #[cfg(target_os = "macos")]
 fn repoint_stale_autostart_agent(app: &tauri::App) {
     use tauri_plugin_autostart::ManagerExt;
@@ -82,7 +96,16 @@ fn repoint_stale_autostart_agent(app: &tauri::App) {
     let Ok(exe) = std::env::current_exe().and_then(|p| p.canonicalize()) else {
         return;
     };
-    if autostart_agent_is_stale(&contents, &exe.display().to_string()) {
+    let exe = exe.display().to_string();
+    // A build running from a Cargo target tree is never the installed app, so
+    // leave autostart alone: a locally-built bundle that claimed it would
+    // hijack the LaunchAgent from the real install and re-assert every login.
+    // The installed app repoints correctly when it next runs.
+    if is_dev_build_path(&exe) {
+        log::debug!("autostart: running from a build tree; leaving the LaunchAgent untouched");
+        return;
+    }
+    if autostart_agent_is_stale(&contents, &exe) {
         log::warn!(
             "autostart: LaunchAgent points at a stale executable; repointing to current binary"
         );
@@ -445,5 +468,24 @@ mod tests {
     #[test]
     fn agent_is_not_stale_without_program_arguments() {
         assert!(!super::autostart_agent_is_stale("<plist/>", EXE));
+    }
+
+    #[test]
+    fn dev_build_path_detects_cargo_target_tree() {
+        assert!(super::is_dev_build_path(
+            "/Users/dev/workspace/entracte/src-tauri/target/release/bundle/macos/\
+             Entracte.app/Contents/MacOS/entracte"
+        ));
+        assert!(super::is_dev_build_path(
+            "/Users/dev/entracte/src-tauri/target/debug/entracte"
+        ));
+    }
+
+    #[test]
+    fn dev_build_path_false_for_installed_app() {
+        assert!(!super::is_dev_build_path(EXE));
+        assert!(!super::is_dev_build_path(
+            "/Users/me/Applications/Entracte.app/Contents/MacOS/entracte"
+        ));
     }
 }

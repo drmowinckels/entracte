@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A leftover build of Entracte can no longer hijack "launch at login" from the one you installed (macOS).** If a copy of Entracte was ever run from a build folder (a `target/…` directory left over from building it locally), it would quietly point "launch at login" at itself and re-claim that spot every login — so the app that actually started each day was the old build, not the version in your Applications folder. If that build predated a fix, you'd keep seeing the already-fixed bug (e.g. the invisible break overlay of [#196](https://github.com/drmowinckels/entracte/issues/196)). A build running from a `target/…` folder now leaves "launch at login" alone, so the installed app stays the one that runs.
+
 ### Added
 
 - **Take a long break now.** A new **Take a long break now** action — in the menu-bar menu and on the Breaks tab (next to _Test long_) — starts your long break immediately and restarts the rotation from that moment, so if you step away early (the washing machine's done, a call wrapped up) you get your proper long break when you want it and aren't broken again a few minutes later. ([#258](https://github.com/drmowinckels/entracte/issues/258))
