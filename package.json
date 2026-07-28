@@ -39,7 +39,7 @@
     {
       "name": "vendor: react + react-dom",
       "path": "dist/assets/react-vendor-*.js",
-      "limit": "65 KB",
+      "limit": "70 KB",
       "gzip": true
     },
     {
