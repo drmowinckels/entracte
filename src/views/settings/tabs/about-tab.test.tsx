@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import type { PlatformCapabilities } from "../../../lib/platform";
+import type {
+  Arch,
+  Platform,
+  PlatformCapabilities,
+} from "../../../lib/platform";
 import type { UseSupporter } from "../hooks/use-supporter";
 import type { UseUpdateCheck } from "../hooks/use-update-check";
 import type { UpdateInfo, SupporterStatus, SchedulerSettings } from "../types";
@@ -35,6 +39,11 @@ let currentCaps: PlatformCapabilities = {
   installerUnsignedWarning: false,
   videoPauseReliable: true,
 };
+// Default to an undetectable host (both "other") so `primaryInstaller`
+// returns null and the update banner keeps its plain "Open release page"
+// button — the download-specific tests opt into a concrete OS/arch.
+let currentPlatform: Platform = "other";
+let currentArch: Arch = "other";
 vi.mock("../../../lib/platform", async () => {
   const actual = await vi.importActual<typeof import("../../../lib/platform")>(
     "../../../lib/platform",
@@ -42,6 +51,8 @@ vi.mock("../../../lib/platform", async () => {
   return {
     ...actual,
     usePlatformCapabilities: () => currentCaps,
+    usePlatform: () => currentPlatform,
+    useArch: () => currentArch,
   };
 });
 
@@ -91,6 +102,8 @@ afterEach(() => {
     installerUnsignedWarning: false,
     videoPauseReliable: true,
   };
+  currentPlatform = "other";
+  currentArch = "other";
   mockUpdate = {
     info: null,
     checking: false,
@@ -163,6 +176,46 @@ describe("AboutTab — update banner", () => {
     const btn = screen.getByRole("button", { name: /open release page/i });
     await user.click(btn);
     expect(openUrlMock).toHaveBeenCalledWith(updateAvailable.release_url);
+  });
+
+  it("offers a direct download for the detected OS/arch and opens the matching installer", async () => {
+    const user = userEvent.setup();
+    currentPlatform = "macos";
+    currentArch = "aarch64";
+    mockUpdate = { ...mockUpdate, info: updateAvailable };
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
+    const download = screen.getByRole("button", {
+      name: /download for macOS \(Apple Silicon\)/i,
+    });
+    await user.click(download);
+    expect(openUrlMock).toHaveBeenCalledWith(
+      "https://github.com/drmowinckels/entracte/releases/download/v0.0.2/Entracte_0.0.2_aarch64.dmg",
+    );
+    // The release-page link demotes to an "All downloads" secondary action.
+    expect(screen.getByRole("button", { name: /all downloads/i })).toBeTruthy();
+  });
+
+  it("falls back to a plain 'Open release page' button when the arch is undetermined", () => {
+    currentPlatform = "macos";
+    currentArch = "other";
+    mockUpdate = { ...mockUpdate, info: updateAvailable };
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /download for/i })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /open release page/i }),
+    ).toBeTruthy();
   });
 
   it("suppresses the update banner when release_url is null even if has_update is true", () => {

@@ -6,7 +6,9 @@ Entracte is in its public beta line (`0.0.X`). Bundles ship from the same releas
 
 ## Download official builds
 
-Tagged releases appear on the [Releases page](https://github.com/drmowinckels/entracte/releases) with signed installers for every supported platform. Pick the artefact that matches your OS and architecture. Beta releases (`0.0.X`) are flagged as pre-releases on GitHub, so `releases/latest` won't surface them — open the Releases page directly until the stable line begins.
+<SmartDownload />
+
+The button above auto-detects your OS — and your Mac's chip, where the browser reveals it — and links straight to the matching installer for the latest release; **All platforms & formats** expands the full list. Every release is published as a normal (non-prerelease) release, so `releases/latest` and the [Releases page](https://github.com/drmowinckels/entracte/releases) always point at the newest `0.0.X` beta. Prefer to pick by hand? The platform-by-platform breakdown below names every artefact.
 
 ### macOS
 
@@ -55,11 +57,11 @@ Once we have evidence to satisfy SignPath's criteria, we'll reapply. The CI sign
 
 ### Linux
 
-- `entracte_<version>_amd64.AppImage` — portable, single binary
-- `entracte_<version>_amd64.deb` — Debian, Ubuntu, and derivatives
-- `entracte-<version>-1.x86_64.rpm` — Fedora, openSUSE, and derivatives
+- `Entracte_<version>_amd64.AppImage` — portable, single binary
+- `Entracte_<version>_amd64.deb` — Debian, Ubuntu, and derivatives
+- `Entracte-<version>-1.x86_64.rpm` — Fedora, openSUSE, and derivatives
 
-AppImage: `chmod +x entracte_*.AppImage && ./entracte_*.AppImage`. For `.deb` / `.rpm`, install via your package manager (e.g. `sudo apt install ./entracte_*.deb`). Linux builds aren't per-binary code-signed — the ecosystem relies on repository signatures instead.
+AppImage: `chmod +x Entracte_*.AppImage && ./Entracte_*.AppImage`. For `.deb` / `.rpm`, install via your package manager (e.g. `sudo apt install ./Entracte_*.deb`). Linux builds aren't per-binary code-signed — the ecosystem relies on repository signatures instead.
 
 ## Build from source
 

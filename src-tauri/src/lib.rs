@@ -187,6 +187,7 @@ pub fn run() {
             updater::check_for_update,
             diagnostics::build_diagnostics_report,
             platform::get_platform,
+            platform::get_arch,
             platform::get_platform_capabilities,
             platform::get_locale,
             window::close_pause_window,

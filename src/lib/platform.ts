@@ -86,6 +86,80 @@ export function usePlatform(): Platform {
   return platform;
 }
 
+/** Host CPU architectures the Download button distinguishes. Only the two
+ * the release pipeline actually builds (`aarch64`, `x64`) map to a real
+ * installer; `"other"` is the fallback bucket for any target the pipeline
+ * doesn't publish, so callers point at the Releases page rather than
+ * offer a binary that won't run. */
+export type Arch = "aarch64" | "x64" | "other";
+
+/** Map Rust's `std::env::consts::ARCH` — or a browser arch hint such as
+ * `navigator.userAgentData.getHighEntropyValues(["architecture"])` — to
+ * the renderer's `Arch` enum. Apple Silicon reports
+ * `"aarch64"`/`"arm64"`/`"arm"`; Intel/AMD desktops report
+ * `"x86_64"`/`"x64"`/`"amd64"`/`"x86"`. Anything else → `"other"`. */
+export function normaliseArch(raw: string): Arch {
+  const lower = raw.toLowerCase();
+  if (lower === "aarch64" || lower === "arm64" || lower === "arm") {
+    return "aarch64";
+  }
+  if (
+    lower === "x86_64" ||
+    lower === "x64" ||
+    lower === "amd64" ||
+    lower === "x86"
+  ) {
+    return "x64";
+  }
+  return "other";
+}
+
+// Same single-flight cache shape as the platform string above: exactly
+// one in-flight `get_arch` request, shared across every `useArch()`
+// consumer.
+let cachedArch: Arch | null = null;
+let pendingArch: Promise<Arch> | null = null;
+
+/** Resolve the authoritative architecture from the Rust `get_arch`
+ * command. Unlike the platform string there's no trustworthy UA fallback
+ * — WKWebView masks Apple Silicon as Intel — so when Tauri is
+ * unavailable (tests, a plain browser) this resolves to `"other"` and the
+ * caller degrades to the Releases page. */
+function getArch(): Promise<Arch> {
+  if (cachedArch) return Promise.resolve(cachedArch);
+  if (!pendingArch) {
+    pendingArch = invoke<string>("get_arch")
+      .then((raw) => {
+        const a = normaliseArch(raw);
+        cachedArch = a;
+        return a;
+      })
+      .catch(() => {
+        cachedArch = "other";
+        return "other" as Arch;
+      });
+  }
+  return pendingArch;
+}
+
+/** React hook: returns `"other"` synchronously (arch is unknowable until
+ * Rust answers), then upgrades to the authoritative `get_arch` result.
+ * Safe to call from any component. */
+export function useArch(): Arch {
+  const [arch, setArch] = useState<Arch>(() => cachedArch ?? "other");
+  useEffect(() => {
+    if (cachedArch) return;
+    let cancelled = false;
+    getArch().then((a) => {
+      if (!cancelled) setArch(a);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return arch;
+}
+
 /** Behavioural capability flags surfaced from the Rust
  * `get_platform_capabilities` command. Components branch on these rather
  * than on the raw {@link Platform} string, so a platform gaining a

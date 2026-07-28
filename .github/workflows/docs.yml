@@ -48,6 +48,7 @@ jobs:
         working-directory: docs
         run: |
           npm ci || npm install
+          npm test
           npm run build
       - name: Install desktop app dependencies
         run: npm ci || npm install

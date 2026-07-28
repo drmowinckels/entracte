@@ -62,8 +62,12 @@ features:
   </video>
 </div>
 
-::: warning Pre-release
-No tagged binaries yet — installing currently means [building from source](/guide/install). The release pipeline is in place; the first `v0.1.0` will land on the [Releases page](https://github.com/drmowinckels/entracte/releases) once it's cut.
+<div style="text-align: center; margin: 2.5rem 0 1rem;">
+  <SmartDownload />
+</div>
+
+::: tip Public beta
+Entracte is in its public beta line (`0.0.X`). Builds are published for macOS, Windows, and Linux from the [release pipeline](https://github.com/drmowinckels/entracte/releases) — see the [install guide](/guide/install) for signing status and package-manager options.
 :::
 
 <div style="text-align: center; margin-top: 2rem;">

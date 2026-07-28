@@ -17,6 +17,18 @@ pub fn get_platform() -> &'static str {
     std::env::consts::OS
 }
 
+/// Return the host CPU architecture as the value of
+/// `std::env::consts::ARCH` (`"aarch64"`, `"x86_64"`, …). Compiled into
+/// the binary, so it reflects the build target the user is running —
+/// exactly the build the Download button should offer them. The browser
+/// can't see this reliably (WKWebView masks Apple Silicon as Intel), so
+/// the renderer asks Rust and normalises the answer through
+/// `normaliseArch` in `lib/platform.ts`.
+#[tauri::command]
+pub fn get_arch() -> &'static str {
+    std::env::consts::ARCH
+}
+
 /// Normalise an optional OS locale into a BCP-47 tag the renderer can hand
 /// to `Intl`. Falls back to `"en-US"` when the OS reports nothing usable.
 /// Pure so the fallback is unit-testable without the platform locale source.
@@ -137,6 +149,18 @@ mod tests {
         assert!(
             matches!(p, "macos" | "linux" | "windows"),
             "unexpected std::env::consts::OS = {p:?}",
+        );
+    }
+
+    #[test]
+    fn get_arch_returns_a_known_value() {
+        let a = get_arch();
+        // The CI matrix builds x86_64 and aarch64; reject anything else so a
+        // new target arch gets a deliberate mapping in the renderer rather
+        // than silently falling through to the "other" download bucket.
+        assert!(
+            matches!(a, "x86_64" | "aarch64"),
+            "unexpected std::env::consts::ARCH = {a:?}",
         );
     }
 

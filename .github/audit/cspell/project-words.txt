@@ -53,6 +53,7 @@ proscenium
 Lemon
 appimage
 AppImage
+riscv
 gsettings
 gdbus
 WebKit

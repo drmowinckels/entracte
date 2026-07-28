@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-import { detectPlatform, normalisePlatform, PLATFORM_LABELS } from "./platform";
+import {
+  detectPlatform,
+  normaliseArch,
+  normalisePlatform,
+  PLATFORM_LABELS,
+} from "./platform";
 
 describe("detectPlatform", () => {
   it("identifies macOS", () => {
@@ -44,6 +49,31 @@ describe("normalisePlatform", () => {
   it("falls back to other for unknown values", () => {
     expect(normalisePlatform("freebsd")).toBe("other");
     expect(normalisePlatform("")).toBe("other");
+  });
+});
+
+describe("normaliseArch", () => {
+  it("maps Apple Silicon arch strings to aarch64", () => {
+    expect(normaliseArch("aarch64")).toBe("aarch64");
+    expect(normaliseArch("arm64")).toBe("aarch64");
+    expect(normaliseArch("arm")).toBe("aarch64");
+  });
+
+  it("maps Intel/AMD arch strings to x64", () => {
+    expect(normaliseArch("x86_64")).toBe("x64");
+    expect(normaliseArch("x64")).toBe("x64");
+    expect(normaliseArch("amd64")).toBe("x64");
+    expect(normaliseArch("x86")).toBe("x64");
+  });
+
+  it("is case-insensitive", () => {
+    expect(normaliseArch("AArch64")).toBe("aarch64");
+    expect(normaliseArch("X86_64")).toBe("x64");
+  });
+
+  it("falls back to other for unknown or empty values", () => {
+    expect(normaliseArch("riscv64")).toBe("other");
+    expect(normaliseArch("")).toBe("other");
   });
 });
 
@@ -154,6 +184,88 @@ describe("usePlatform", () => {
 
     expect(result.current).toBe("linux"); // UA guess first
     await waitFor(() => expect(result.current).toBe("other"));
+  });
+});
+
+// useArch mirrors usePlatform but has no UA fallback: it renders "other"
+// synchronously, then upgrades to the authoritative `get_arch` answer.
+// Module-level cache, so each test resets modules + the invoke mock.
+
+describe("useArch", () => {
+  const invokeMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    invokeMock.mockReset();
+    vi.doMock("@tauri-apps/api/core", () => ({
+      invoke: (cmd: string) => invokeMock(cmd),
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock("@tauri-apps/api/core");
+  });
+
+  it("returns 'other' synchronously, then upgrades to the Rust answer", async () => {
+    invokeMock.mockResolvedValueOnce("aarch64");
+
+    const { useArch } = await import("./platform");
+    const { result } = renderHook(() => useArch());
+
+    expect(result.current).toBe("other");
+    await waitFor(() => expect(result.current).toBe("aarch64"));
+    expect(invokeMock).toHaveBeenCalledWith("get_arch");
+  });
+
+  it("settles on 'other' when the Tauri invoke fails (plain browser)", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("tauri unavailable"));
+
+    const { useArch } = await import("./platform");
+    const { result } = renderHook(() => useArch());
+
+    expect(result.current).toBe("other");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current).toBe("other");
+  });
+
+  it("normalises an unknown Rust arch into 'other'", async () => {
+    invokeMock.mockResolvedValueOnce("riscv64");
+
+    const { useArch } = await import("./platform");
+    const { result } = renderHook(() => useArch());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current).toBe("other");
+  });
+
+  it("invokes get_arch only once even when many components subscribe", async () => {
+    invokeMock.mockResolvedValueOnce("x86_64");
+    const { useArch } = await import("./platform");
+
+    renderHook(() => useArch());
+    renderHook(() => useArch());
+    renderHook(() => useArch());
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("re-renders pick up the cached arch without re-invoking", async () => {
+    invokeMock.mockResolvedValueOnce("aarch64");
+    const { useArch } = await import("./platform");
+
+    const first = renderHook(() => useArch());
+    await waitFor(() => expect(first.result.current).toBe("aarch64"));
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    const second = renderHook(() => useArch());
+    expect(second.result.current).toBe("aarch64"); // synchronous, from cache
+    expect(invokeMock).toHaveBeenCalledTimes(1); // not invoked again
   });
 });
 

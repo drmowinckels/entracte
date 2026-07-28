@@ -6,7 +6,12 @@ import { useUpdateCheck } from "../hooks/use-update-check";
 import type { UseSupporter } from "../hooks/use-supporter";
 import type { UseSettings } from "../hooks/use-settings";
 import type { SchedulerSettings } from "../types";
-import { usePlatformCapabilities } from "../../../lib/platform";
+import {
+  useArch,
+  usePlatform,
+  usePlatformCapabilities,
+} from "../../../lib/platform";
+import { primaryInstaller } from "../../../lib/download";
 import { writeToClipboard } from "../utils";
 
 const TOAST_MS = 3000;
@@ -27,6 +32,13 @@ export function AboutTab({
   const [licenseInput, setLicenseInput] = useState("");
   const update = useUpdateCheck();
   const caps = usePlatformCapabilities();
+  const platform = usePlatform();
+  const arch = useArch();
+
+  const downloadInstaller =
+    update.info && update.info.has_update
+      ? primaryInstaller(platform, arch, update.info.latest)
+      : null;
 
   const onVerify = async () => {
     const trimmed = licenseInput.trim();
@@ -94,14 +106,21 @@ export function AboutTab({
           <>
             <p className="about-meta">
               Update available: <strong>{update.info.latest}</strong> (you have{" "}
-              {update.info.current}).{" "}
+              {update.info.current}).
+            </p>
+            <div className="actions inline">
+              {downloadInstaller && (
+                <button onClick={() => openUrl(downloadInstaller.url)}>
+                  Download for {downloadInstaller.label}
+                </button>
+              )}
               <button
-                className="link"
+                className={downloadInstaller ? "secondary" : undefined}
                 onClick={() => openUrl(update.info!.release_url!)}
               >
-                Open release page
+                {downloadInstaller ? "All downloads" : "Open release page"}
               </button>
-            </p>
+            </div>
             {caps.installerUnsignedWarning && (
               <p className="about-meta">
                 The Windows installer isn't Authenticode-signed yet, so
