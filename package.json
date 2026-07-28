@@ -33,7 +33,19 @@
     {
       "name": "JS bundle (entry chunk)",
       "path": "dist/assets/index-*.js",
-      "limit": "120 KB",
+      "limit": "70 KB",
+      "gzip": true
+    },
+    {
+      "name": "vendor: react + react-dom",
+      "path": "dist/assets/react-vendor-*.js",
+      "limit": "65 KB",
+      "gzip": true
+    },
+    {
+      "name": "vendor: zod",
+      "path": "dist/assets/zod-vendor-*.js",
+      "limit": "20 KB",
       "gzip": true
     },
     {

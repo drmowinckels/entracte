@@ -8,6 +8,27 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  // size-limit gates only the entry chunk, so vendor code is split into
+  // sibling chunks to keep the entry budget decoupled from app growth.
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (
+            id.includes("node_modules/react-dom") ||
+            id.includes("node_modules/react/") ||
+            id.includes("node_modules/scheduler")
+          ) {
+            return "react-vendor";
+          }
+          if (id.includes("node_modules/zod")) {
+            return "zod-vendor";
+          }
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
