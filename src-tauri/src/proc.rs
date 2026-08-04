@@ -383,3 +383,114 @@ mod tests {
         );
     }
 }
+
+/// Guards the invariant behind #303: no child process is spawned without
+/// suppressing the Windows console window.
+///
+/// [`tests::suppress_console_keeps_output_capture_working`] proves the *flag*
+/// is the right one, but nothing behavioural proves it is still *applied* on
+/// the paths that matter. Deleting the single call inside
+/// [`spawn_and_capture`], or adding a new probe that calls `Command::spawn`
+/// directly, would bring the flashing console back across the whole app — and
+/// would go unnoticed on macOS and Linux, where all of this is a no-op, which
+/// is exactly where the fix was written. Detecting an absent window needs a
+/// real Windows desktop, so this checks the source instead, in the same spirit
+/// as the settings parity tests.
+#[cfg(test)]
+mod console_suppression_drift {
+    use std::path::{Path, PathBuf};
+
+    /// Files allowed to call `Command::spawn` without applying
+    /// `suppress_console`, each with the reason it is safe. Adding an entry
+    /// should be a deliberate decision about console behaviour, not a way to
+    /// quiet this test.
+    const EXEMPT: &[(&str, &str)] = &[
+        (
+            "proc.rs",
+            "defines suppress_console and applies it inside spawn_and_capture",
+        ),
+        (
+            "camera.rs",
+            "macOS-only `log stream` probe — the spawn sits behind \
+             #[cfg(target_os = \"macos\")] and never compiles on Windows",
+        ),
+    ];
+
+    fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("readable directory entry").path();
+            if path.is_dir() {
+                collect_rs(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    fn source_files() -> Vec<PathBuf> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect_rs(&root, &mut files);
+        assert!(
+            !files.is_empty(),
+            "found no .rs files under {} — has the layout moved? \
+             If so, update this test's root.",
+            root.display()
+        );
+        files
+    }
+
+    #[test]
+    fn spawn_and_capture_still_suppresses_the_console() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/proc.rs");
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+        let start = source
+            .find("fn spawn_and_capture(")
+            .expect("spawn_and_capture is defined in proc.rs");
+        let body = &source[start..];
+        let end = body
+            .find("\n}")
+            .expect("spawn_and_capture has a closing brace");
+        let body = &body[..end];
+        assert!(
+            body.contains("suppress_console("),
+            "spawn_and_capture no longer calls suppress_console — every OS probe \
+             and the hook Test button spawn through it, so dropping that call \
+             brings back the console window flashing every ~10s on Windows (#303)."
+        );
+    }
+
+    #[test]
+    fn direct_spawn_sites_suppress_the_console() {
+        let mut offenders = Vec::new();
+        for path in source_files() {
+            let name = path
+                .file_name()
+                .expect("file has a name")
+                .to_string_lossy()
+                .into_owned();
+            if EXEMPT.iter().any(|(exempt, _)| *exempt == name) {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+            // `thread::spawn` has no leading dot, so this only matches
+            // `some_command.spawn()`.
+            if source.contains(".spawn()") && !source.contains("suppress_console") {
+                offenders.push(name);
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these files spawn a child process without suppressing the Windows \
+             console window: {offenders:?}. On Windows a console-subsystem child \
+             gets its own console window even with stdio redirected, which is what \
+             made a cmd window flash every ~10s (#303). Either route the spawn \
+             through proc::output_timeout, call proc::suppress_console on the \
+             Command first, or add the file to EXEMPT with the reason it is safe."
+        );
+    }
+}
