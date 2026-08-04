@@ -433,13 +433,23 @@ mod console_suppression_drift {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = Vec::new();
         collect_rs(&root, &mut files);
+        let root = root.display().to_string();
         assert!(
             !files.is_empty(),
-            "found no .rs files under {} — has the layout moved? \
-             If so, update this test's root.",
-            root.display()
+            "found no .rs files under {root} — has the layout moved? If so, update this test's root."
         );
         files
+    }
+
+    /// True when `source` spawns a child process without suppressing the
+    /// console. Kept as a pure predicate so the decision itself is testable:
+    /// the directory scan below can only ever exercise the "clean" answer
+    /// while the codebase is clean, which would leave the interesting half
+    /// unverified.
+    fn spawns_without_suppression(source: &str) -> bool {
+        // `thread::spawn` has no leading dot, so this only matches a spawn
+        // invoked on a value — `some_command.spawn()`.
+        source.contains(".spawn()") && !source.contains("suppress_console")
     }
 
     #[test]
@@ -464,33 +474,50 @@ mod console_suppression_drift {
     }
 
     #[test]
+    fn spawns_without_suppression_flags_only_an_unguarded_spawn() {
+        assert!(spawns_without_suppression("let c = cmd.spawn();"));
+        assert!(!spawns_without_suppression(
+            "suppress_console(&mut cmd); let c = cmd.spawn();"
+        ));
+        assert!(!spawns_without_suppression("let x = compute();"));
+        // The scan leans on `thread::spawn` having no leading dot; pin it, or
+        // every threaded module would look like an offender.
+        assert!(!spawns_without_suppression(
+            "thread::spawn(move || loop { check(); });"
+        ));
+    }
+
+    #[test]
     fn direct_spawn_sites_suppress_the_console() {
-        let mut offenders = Vec::new();
-        for path in source_files() {
-            let name = path
-                .file_name()
-                .expect("file has a name")
-                .to_string_lossy()
-                .into_owned();
-            if EXEMPT.iter().any(|(exempt, _)| *exempt == name) {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
-            // `thread::spawn` has no leading dot, so this only matches
-            // `some_command.spawn()`.
-            if source.contains(".spawn()") && !source.contains("suppress_console") {
-                offenders.push(name);
-            }
-        }
+        let checked: Vec<(String, bool)> = source_files()
+            .iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .expect("file has a name")
+                    .to_string_lossy()
+                    .into_owned();
+                let source = std::fs::read_to_string(path)
+                    .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+                let exempt = EXEMPT.iter().any(|(exempt, _)| *exempt == name);
+                let unguarded = !exempt && spawns_without_suppression(&source);
+                (name, unguarded)
+            })
+            .collect();
+        let offenders: Vec<&String> = checked
+            .iter()
+            .filter(|(_, unguarded)| *unguarded)
+            .map(|(name, _)| name)
+            .collect();
+        let offenders = format!("{offenders:?}");
         assert!(
-            offenders.is_empty(),
-            "these files spawn a child process without suppressing the Windows \
-             console window: {offenders:?}. On Windows a console-subsystem child \
-             gets its own console window even with stdio redirected, which is what \
-             made a cmd window flash every ~10s (#303). Either route the spawn \
-             through proc::output_timeout, call proc::suppress_console on the \
-             Command first, or add the file to EXEMPT with the reason it is safe."
+            offenders == "[]",
+            "these files spawn a child process without suppressing the Windows console \
+             window: {offenders}. On Windows a console-subsystem child gets its own \
+             console window even with stdio redirected, which is what made a cmd window \
+             flash every ~10s (#303). Either route the spawn through proc::output_timeout, \
+             call proc::suppress_console on the Command first, or add the file to EXEMPT \
+             with the reason it is safe."
         );
     }
 }
