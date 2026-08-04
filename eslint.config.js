@@ -14,6 +14,7 @@ export default tseslint.config(
       "coverage",
       "node_modules",
       "src-tauri",
+      "target",
       "docs",
       "scripts",
       "*.config.{js,ts}",
