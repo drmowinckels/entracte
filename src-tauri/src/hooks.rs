@@ -237,6 +237,10 @@ fn spawn_hook_with_timeout(command: &str, env: &[(String, String)], timeout: Dur
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // Same reason the stdio above is nulled: a hook is background automation,
+    // not something the user is watching. On Windows a console-subsystem hook
+    // would otherwise flash its own window on every break (#303).
+    crate::proc::suppress_console(&mut cmd);
     for (k, v) in env {
         cmd.env(k, v);
     }

@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more command-prompt window flashing every few seconds (Windows).** Entracte checks a few times a minute whether something is holding the display awake, and that check runs a small built-in Windows tool. Windows gives such a tool its own console window even when nothing is meant to be shown — so a black `cmd` window blinked on screen roughly every ten seconds for as long as Entracte was running, stealing focus for a moment each time. The window is now suppressed, so the check runs invisibly as intended. This applied whether or not you had video detection switched on, and the same suppression now covers hook commands, which could flash a window each time a break started. ([#303](https://github.com/drmowinckels/entracte/issues/303))
+
 ## [0.0.11] — 2026-08-04
 
 ### Fixed

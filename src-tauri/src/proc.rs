@@ -88,6 +88,30 @@ fn read_capped(mut reader: impl Read, cap: Option<usize>) -> Vec<u8> {
 /// Scratch buffer size for the draining read loop.
 const READ_CHUNK: usize = 8 * 1024;
 
+/// Stop Windows from allocating a console window for a console-subsystem
+/// child.
+///
+/// Redirecting stdio is not enough: `powercfg.exe` and `cmd.exe` are console
+/// subsystem binaries, so Windows gives each spawn its own console, which
+/// flashes on screen and steals focus for a few frames. Entracte's detection
+/// probes run on a 10 s loop, so that surfaced as a `cmd` window blinking
+/// every ten seconds for the whole session (#303).
+///
+/// `CREATE_NO_WINDOW` suppresses the console while leaving the child attached
+/// to the pipes we hand it — unlike `DETACHED_PROCESS`, which would also
+/// suppress the window but break output capture. Non-Windows targets have no
+/// console to suppress, so this is a no-op there and callers stay
+/// platform-agnostic.
+pub fn suppress_console(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Spawn `cmd`, capture its output bounded by the wait `timeout` and an
 /// optional per-stream byte `cap`, killing and reaping the child on overrun.
 fn spawn_and_capture(
@@ -98,6 +122,7 @@ fn spawn_and_capture(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    suppress_console(cmd);
     let mut child = cmd.spawn()?;
 
     let child_stdout = child.stdout.take().expect("stdout piped above");
@@ -274,6 +299,35 @@ mod tests {
             cmd.args(["/C", "ping", "-n", "6", "127.0.0.1"]);
             cmd
         }
+    }
+
+    #[test]
+    fn suppress_console_keeps_output_capture_working() {
+        // The probe path applies `suppress_console` before spawning, so the
+        // flag must hide the console *without* detaching the child from our
+        // pipes. `DETACHED_PROCESS` would also hide the window but silently
+        // break capture, so asserting stdout still arrives is what
+        // distinguishes the correct flag from the plausible wrong one.
+        let mut cmd = echo_hello();
+        suppress_console(&mut cmd);
+        let out = cmd.output_timeout(Duration::from_secs(5)).unwrap();
+        assert!(out.status.success());
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("hello"),
+            "stdout was {:?}",
+            out.stdout
+        );
+    }
+
+    #[test]
+    fn suppress_console_returns_the_same_command_for_chaining() {
+        let mut cmd = echo_hello();
+        let ptr = &raw const cmd;
+        let returned = suppress_console(&mut cmd);
+        assert_eq!(
+            ptr, &raw const *returned,
+            "suppress_console must borrow through, not replace the command"
+        );
     }
 
     #[test]
