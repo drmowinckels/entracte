@@ -20,6 +20,7 @@ cask "entracte" do
   depends_on macos: ">= :big_sur"
 
   app "Entracte.app"
+  binary "#{appdir}/Entracte.app/Contents/MacOS/entracte"
 
   zap trash: [
     "~/Library/Application Support/io.drmowinckels.entracte",
