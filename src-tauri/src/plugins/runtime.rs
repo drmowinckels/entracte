@@ -277,6 +277,35 @@ mod tests {
         assert!(build_sandboxed_plugin(&module, &[], &SandboxContext::default()).is_ok());
     }
 
+    /// Guards the reachability argument behind #323. Two unpatched wasmtime
+    /// advisories (RUSTSEC-2026-0269, a WASI filesystem sandbox escape, and
+    /// RUSTSEC-2026-0222) ride in on extism's pinned wasmtime 43.x, which has
+    /// no fix on its line. Neither is reachable here *because* the builder
+    /// sets `with_wasi(false)`: without WASI in the linker there are no
+    /// preopened directories and no `wasi_snapshot_preview1` import to call,
+    /// so the vulnerable path-resolution code is never instantiated.
+    ///
+    /// That argument holds only as long as WASI stays off. Flipping
+    /// `with_wasi(true)` would silently turn a documented non-issue into a
+    /// live sandbox escape, so pin it behaviourally rather than by comment.
+    #[test]
+    fn rejects_a_module_importing_the_wasi_filesystem() {
+        // path_open is the exact entry point RUSTSEC-2026-0269 exploits.
+        let module = wasm(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "path_open"
+                   (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+                 (memory (export "memory") 1)
+                 (func (export "run") (result i32) i32.const 0))"#,
+        );
+        let err = build_sandboxed_plugin(&module, &[], &SandboxContext::default())
+            .expect_err("WASI must not be linked into the plugin sandbox");
+        assert!(
+            err.contains("failed to load"),
+            "a wasi_snapshot_preview1 import must fail the load, got: {err}"
+        );
+    }
+
     #[test]
     fn rejects_a_module_importing_an_ungranted_host_function() {
         // Imports host_process_running but no detect:processes grant.
