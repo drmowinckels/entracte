@@ -918,11 +918,12 @@ mod tests {
         let img = Image::from_bytes(TRAY_ICON_BYTES).unwrap();
         let out = outline_glyph_for_panels(img.rgba(), img.width(), img.height());
         assert_eq!(out.len(), img.rgba().len(), "dimensions must be preserved");
-        let has_fill = out
-            .chunks_exact(4)
+        let pixels = out.as_chunks::<4>().0;
+        let has_fill = pixels
+            .iter()
             .any(|p| p[3] > 0 && p[0] > 0xE0 && p[1] > 0xE0 && p[2] > 0xE0);
-        let has_outline = out
-            .chunks_exact(4)
+        let has_outline = pixels
+            .iter()
             .any(|p| p[3] == 255 && p[0] < 0x30 && p[1] < 0x30 && p[2] < 0x30);
         assert!(
             has_fill,
