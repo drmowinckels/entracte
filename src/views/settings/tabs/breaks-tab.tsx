@@ -347,25 +347,25 @@ export function BreaksTab({
           value={settings.show_current_time}
           onChange={(v) => update("show_current_time", v)}
         />
+        <label className="row">
+          <span>
+            Show break on
+            <InfoTip text="All monitors: the break covers every connected display, so it can't be sidestepped by looking at another screen. Primary monitor: always the main display. Monitor under cursor: wherever your mouse is when the break fires." />
+          </span>
+          <select
+            value={settings.monitor_placement}
+            onChange={(e) =>
+              update("monitor_placement", e.target.value as MonitorPlacement)
+            }
+          >
+            {MONITOR_PLACEMENTS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <Advanced label="Show advanced overlay options">
-          <label className="row">
-            <span>
-              Show break on
-              <InfoTip text="Primary: always the main display. Under cursor: wherever your mouse is when the break fires. All: a break covers every monitor." />
-            </span>
-            <select
-              value={settings.monitor_placement}
-              onChange={(e) =>
-                update("monitor_placement", e.target.value as MonitorPlacement)
-              }
-            >
-              {MONITOR_PLACEMENTS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <WindowedSizeRow
             label="Windowed break size"
             tip="How much of the screen a windowed-mode break fills. Only applies to breaks set to Windowed delivery on the Schedule tab; full-screen overlays always cover the whole monitor."

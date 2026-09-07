@@ -65,7 +65,7 @@ export const SETTINGS_INDEX: SettingsSearchEntry[] = [
     tabId: "breaks",
     anchorId: "settings-overlay",
     keywords:
-      "transparency opacity theme colour color text size high contrast monitor vignette",
+      "transparency opacity theme colour color text size high contrast vignette monitor monitors display displays screen screens multi-monitor dual second external which where placement primary cursor all",
   },
   {
     id: "sound",

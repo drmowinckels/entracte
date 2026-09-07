@@ -407,6 +407,38 @@ describe("BreaksTab postpone configuration", () => {
   });
 });
 
+describe("BreaksTab monitor placement", () => {
+  // `Advanced` renders a <details>, so its children stay in the DOM while
+  // collapsed — asserting the select merely *exists* would pass either
+  // way. What changed for #315 is that it is no longer buried, so assert
+  // on the absence of an advanced-section ancestor instead.
+  it("shows the monitor placement control without expanding advanced options", () => {
+    renderTab(false);
+    const select = selectWithOption("All monitors");
+    expect(select.closest("details.advanced-section")).toBeNull();
+  });
+
+  it("offers All monitors first, as the default placement", () => {
+    renderTab(false);
+    const select = selectWithOption("All monitors");
+    const options = Array.from(select.options).map((o) => o.textContent);
+    expect(options).toEqual([
+      "All monitors",
+      "Primary monitor",
+      "Monitor under cursor",
+    ]);
+  });
+
+  it("changing the placement persists monitor_placement", () => {
+    const update = vi.fn();
+    renderTab(false, update);
+    fireEvent.change(selectWithOption("All monitors"), {
+      target: { value: "active" },
+    });
+    expect(update).toHaveBeenCalledWith("monitor_placement", "active");
+  });
+});
+
 describe("BreaksTab delivery", () => {
   it("renders a delivery-mode select for each break kind", () => {
     renderTab(false);
