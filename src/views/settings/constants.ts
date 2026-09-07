@@ -1,9 +1,9 @@
 import type { BreakSoundMode, HookEvent, MonitorPlacement, Tab } from "./types";
 
 export const MONITOR_PLACEMENTS: { id: MonitorPlacement; label: string }[] = [
+  { id: "all", label: "All monitors" },
   { id: "primary", label: "Primary monitor" },
   { id: "active", label: "Monitor under cursor" },
-  { id: "all", label: "All monitors" },
 ];
 
 export const HOOK_EVENTS: { id: HookEvent; label: string }[] = [

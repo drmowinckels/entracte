@@ -74,12 +74,18 @@ impl DerivedCaches {
 /// `Primary` follows the OS-designated primary display, `Active` picks
 /// whichever monitor the cursor is on at break time, `All` mirrors the
 /// overlay across every connected monitor.
+///
+/// Defaults to `All`. A break the user can sidestep by glancing at a
+/// second screen isn't a break, so covering everything is the behaviour
+/// that matches the app's purpose on a multi-monitor desk (#315). Single
+/// -monitor users are unaffected — `All` and `Primary` are the same
+/// thing when there is one display.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MonitorPlacement {
-    #[default]
     Primary,
     Active,
+    #[default]
     All,
 }
 
@@ -749,7 +755,7 @@ impl Default for Settings {
             overlay_custom_rgb: "20, 24, 32".to_string(),
             overlay_high_contrast: false,
             show_hint: true,
-            monitor_placement: MonitorPlacement::Primary,
+            monitor_placement: MonitorPlacement::All,
             windowed_fraction: 0.8,
             micro_windowed_fraction: None,
             long_windowed_fraction: None,
@@ -1662,9 +1668,23 @@ mod tests {
         assert_eq!(s.tray_countdown_target, "next");
     }
 
+    /// A break confined to one screen is trivially ignored on a
+    /// multi-monitor desk (#315), so covering every display is the
+    /// default. Both the enum's own default and the one baked into
+    /// `Settings::default()` must agree, or a fresh install and a
+    /// settings.json missing the key would disagree.
     #[test]
-    fn monitor_placement_default_is_primary() {
-        assert_eq!(MonitorPlacement::default(), MonitorPlacement::Primary);
+    fn monitor_placement_defaults_to_all() {
+        assert_eq!(MonitorPlacement::default(), MonitorPlacement::All);
+        assert_eq!(Settings::default().monitor_placement, MonitorPlacement::All);
+    }
+
+    /// The default must not silently override a choice already on disk —
+    /// an existing user who picked a single display keeps it.
+    #[test]
+    fn an_explicit_placement_survives_the_new_default() {
+        let s: Settings = serde_json::from_str(r#"{"monitor_placement": "primary"}"#).unwrap();
+        assert_eq!(s.monitor_placement, MonitorPlacement::Primary);
     }
 
     #[test]
