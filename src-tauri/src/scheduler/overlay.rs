@@ -276,6 +276,58 @@ fn monitor_rect(m: &tauri::Monitor) -> MonitorRect {
     }
 }
 
+/// How long to wait for the main thread to answer a geometry read before
+/// giving up. Generous enough to absorb a busy event loop, short enough
+/// that a wedged main thread degrades to "no overlay" rather than
+/// stalling the break loop indefinitely.
+#[cfg(not(test))]
+const GEOMETRY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Read the display layout **on the main thread** and hand back plain data.
+///
+/// `WryHandle::available_monitors` and `primary_monitor` reach straight into
+/// the event loop's `window_target` with no dispatch, and the `unsafe impl
+/// Send` that lets that type cross threads states its own precondition:
+/// "we ensure this type is only used on the main thread". Every caller of
+/// [`fire_break`] runs on a tokio worker (the scheduler run loop, the IPC
+/// handler, and the tray menu all go through `async_runtime::spawn`), so
+/// calling these directly races the GTK main loop on one X connection and
+/// aborts inside libxcb (#333).
+///
+/// Both reads share a single hop so the returned monitor list and primary
+/// come from one consistent snapshot.
+///
+/// Deliberately **not** extended to cover window creation: tauri-runtime-wry
+/// documents that `create_webview` "must be called from a separate thread,
+/// otherwise the channel will introduce a deadlock", so [`ensure_overlay`]
+/// must keep running on the caller's thread. `cursor_position` is left alone
+/// too — it already dispatches through the event loop.
+///
+/// Returns `None` if the main thread is unreachable or too slow, which
+/// degrades to "no overlay this time" rather than risking a hang.
+#[cfg(not(test))]
+fn read_display_geometry<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Option<(Vec<tauri::Monitor>, Option<tauri::Monitor>)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        let all = handle.available_monitors().unwrap_or_default();
+        let primary = handle.primary_monitor().ok().flatten();
+        let _ = tx.send((all, primary));
+    }) {
+        log::warn!("overlay: could not reach the main thread to read monitors: {e}");
+        return None;
+    }
+    match rx.recv_timeout(GEOMETRY_READ_TIMEOUT) {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            log::warn!("overlay: timed out reading monitors on the main thread: {e}");
+            None
+        }
+    }
+}
+
 fn select_overlay_monitors<R: Runtime>(
     app: &AppHandle<R>,
     placement: MonitorPlacement,
@@ -287,19 +339,15 @@ fn select_overlay_monitors<R: Runtime>(
     // exercised by unit tests — it relies on the e2e smoke run for coverage.
     // Treat edits below this line as unit-uncovered by design.
     #[cfg(test)]
-    let all: Vec<tauri::Monitor> = Vec::new();
+    let (all, primary_monitor): (Vec<tauri::Monitor>, Option<tauri::Monitor>) = (Vec::new(), None);
     #[cfg(not(test))]
-    let all = app.available_monitors().unwrap_or_default();
+    let (all, primary_monitor) = read_display_geometry(app).unwrap_or_default();
     if all.is_empty() {
         return Vec::new();
     }
     let rects: Vec<MonitorRect> = all.iter().map(monitor_rect).collect();
 
-    let primary = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .and_then(|p| monitor_index_by_rect(&monitor_rect(&p), &rects));
+    let primary = primary_monitor.and_then(|p| monitor_index_by_rect(&monitor_rect(&p), &rects));
 
     let active = match placement {
         MonitorPlacement::Active => match app.cursor_position() {
