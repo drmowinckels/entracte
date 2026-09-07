@@ -195,3 +195,5 @@ ungranted
 unsandboxed
 acks
 unacked
+RUSTSEC
+preopened
