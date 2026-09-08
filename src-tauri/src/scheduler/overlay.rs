@@ -305,15 +305,22 @@ const GEOMETRY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 ///
 /// Returns `None` if the main thread is unreachable or too slow, which
 /// degrades to "no overlay this time" rather than risking a hang.
+/// Resolving the primary's *index* happens inside the hop too, so the
+/// caller receives only plain data and never re-touches a live handle.
 #[cfg(not(test))]
 fn read_display_geometry<R: Runtime>(
     app: &AppHandle<R>,
-) -> Option<(Vec<tauri::Monitor>, Option<tauri::Monitor>)> {
+) -> Option<(Vec<tauri::Monitor>, Option<usize>)> {
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = app.clone();
     if let Err(e) = app.run_on_main_thread(move || {
         let all = handle.available_monitors().unwrap_or_default();
-        let primary = handle.primary_monitor().ok().flatten();
+        let rects: Vec<MonitorRect> = all.iter().map(monitor_rect).collect();
+        let primary = handle
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .and_then(|p| monitor_index_by_rect(&monitor_rect(&p), &rects));
         let _ = tx.send((all, primary));
     }) {
         log::warn!("overlay: could not reach the main thread to read monitors: {e}");
@@ -335,19 +342,17 @@ fn select_overlay_monitors<R: Runtime>(
     // In unit tests the mock runtime's available_monitors() is unimplemented
     // and panics; return empty so fire_break can be called in tests without
     // opening windows. NOTE: under test `all` is always empty, so the
-    // monitor-selection logic below (rects/primary/active/pick) is not
-    // exercised by unit tests — it relies on the e2e smoke run for coverage.
+    // monitor-selection logic below (rects/active/pick) is not exercised by
+    // unit tests — it relies on the e2e smoke run for coverage.
     // Treat edits below this line as unit-uncovered by design.
     #[cfg(test)]
-    let (all, primary_monitor): (Vec<tauri::Monitor>, Option<tauri::Monitor>) = (Vec::new(), None);
+    let (all, primary): (Vec<tauri::Monitor>, Option<usize>) = (Vec::new(), None);
     #[cfg(not(test))]
-    let (all, primary_monitor) = read_display_geometry(app).unwrap_or_default();
+    let (all, primary) = read_display_geometry(app).unwrap_or_default();
     if all.is_empty() {
         return Vec::new();
     }
     let rects: Vec<MonitorRect> = all.iter().map(monitor_rect).collect();
-
-    let primary = primary_monitor.and_then(|p| monitor_index_by_rect(&monitor_rect(&p), &rects));
 
     let active = match placement {
         MonitorPlacement::Active => match app.cursor_position() {
