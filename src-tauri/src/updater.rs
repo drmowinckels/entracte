@@ -18,6 +18,17 @@ pub const STABLE_ENDPOINT: &str =
 pub const BETA_ENDPOINT: &str =
     "https://github.com/drmowinckels/entracte/releases/download/channel-beta/latest.json";
 
+/// The channel's manifest URL, parsed into a `Url`.
+///
+/// Split out from [`check_channel`] so the parse and its error mapping
+/// are unit-testable; what remains in `check_channel` is live-runtime
+/// glue (`updater_builder`, a network fetch) with no mockable surface.
+pub fn channel_endpoint_url(channel: UpdateChannel) -> Result<tauri::Url, String> {
+    channel_endpoint(channel)
+        .parse()
+        .map_err(|e| format!("invalid updater endpoint for {channel:?}: {e}"))
+}
+
 /// The manifest URL a channel reads from.
 ///
 /// This is the *entire* mechanism separating the two lines. The version
@@ -96,23 +107,28 @@ pub async fn check_for_update(
     app: AppHandle,
     scheduler: tauri::State<'_, crate::scheduler::Scheduler>,
 ) -> Result<UpdateInfo, String> {
-    let channel = scheduler.settings.lock().await.update_channel;
-    check_channel(app, channel).await
+    check_channel(app, active_channel(&scheduler).await).await
+}
+
+/// The channel the running profile is set to.
+///
+/// Extracted from [`check_for_update`] so that "the check follows the
+/// saved channel, not a hardcoded one" is an actually tested claim —
+/// the command itself cannot be unit-tested, because `updater_builder`
+/// panics without the updater plugin and a real check would hit the
+/// network.
+pub async fn active_channel(scheduler: &crate::scheduler::Scheduler) -> UpdateChannel {
+    scheduler.settings.lock().await.update_channel
 }
 
 /// Channel-aware check, split out so the startup path can reuse it
 /// without going through the IPC layer.
 pub async fn check_channel(app: AppHandle, channel: UpdateChannel) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
-    let endpoint = channel_endpoint(channel)
-        .parse()
-        .map_err(|e| format!("invalid updater endpoint: {e}"))?;
-    let updater = app
-        .updater_builder()
-        .endpoints(vec![endpoint])
-        .map_err(|e| e.to_string())?
-        .build()
-        .map_err(|e| e.to_string())?;
+    let endpoints = vec![channel_endpoint_url(channel)?];
+    let builder = app.updater_builder().endpoints(endpoints);
+    let updater = builder.map_err(|e| e.to_string())?.build();
+    let updater = updater.map_err(|e| e.to_string())?;
     let payload = updater
         .check()
         .await
@@ -149,10 +165,11 @@ pub fn update_notification(info: &UpdateInfo) -> Option<(String, String)> {
 /// build neither spawns a task nor fires a real OS notification; the decision
 /// logic lives in the pure, tested `update_notification`.
 #[cfg(not(test))]
-pub fn spawn_startup_check(app: AppHandle, enabled: bool, channel: UpdateChannel) {
-    if !enabled {
+pub fn spawn_startup_check(app: AppHandle, settings: &crate::scheduler::Settings) {
+    if !settings.auto_check_updates {
         return;
     }
+    let channel = settings.update_channel;
     tauri::async_runtime::spawn(async move {
         match check_channel(app.clone(), channel).await {
             Ok(info) => {
@@ -167,11 +184,38 @@ pub fn spawn_startup_check(app: AppHandle, enabled: bool, channel: UpdateChannel
 }
 
 #[cfg(test)]
-pub fn spawn_startup_check(_app: AppHandle, _enabled: bool, _channel: UpdateChannel) {}
+pub fn spawn_startup_check(_app: AppHandle, _settings: &crate::scheduler::Settings) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn active_channel_reads_the_saved_setting() {
+        use crate::scheduler::UpdateChannel;
+        for want in [UpdateChannel::Stable, UpdateChannel::Beta] {
+            let settings = crate::scheduler::Settings {
+                update_channel: want,
+                ..Default::default()
+            };
+            let (_dir, sched) = crate::test_support::test_scheduler(settings);
+            assert_eq!(
+                active_channel(&sched).await,
+                want,
+                "the update check must follow the saved channel"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_url_parses_for_every_channel() {
+        for channel in [UpdateChannel::Stable, UpdateChannel::Beta] {
+            let url = channel_endpoint_url(channel)
+                .unwrap_or_else(|e| panic!("{channel:?} endpoint should parse: {e}"));
+            assert_eq!(url.scheme(), "https", "{channel:?} must be https");
+            assert_eq!(url.as_str(), channel_endpoint(channel));
+        }
+    }
 
     #[test]
     fn channel_endpoint_maps_each_channel_to_its_own_manifest() {
