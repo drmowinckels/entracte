@@ -31,10 +31,16 @@ exclude = [
   #     bodies — returned HTTP 500 on consecutive runs (likely rejecting the
   #     runner IP).
   #   - contributor-covenant.org: the CoC source links — reset mid-request.
+  #   - codecov.io: the coverage badge and its link target in README.md —
+  #     503/504 throughout a codecov outage, which reddened this gate on
+  #     main and on every open PR at once. `max_retries = 5` cannot help
+  #     when the outage outlasts the run, and a badge CDN being down says
+  #     nothing about whether our docs are correct.
   # Same rationale as the publishers above: exclude these canonical URLs
   # rather than accept 500 globally, which would mask real failures.
   '^https?://(www\.)?claude\.com',
   '^https?://(www\.)?contributor-covenant\.org',
+  '^https?://(.*\.)?codecov\.io',
   # Microsoft download / dev pages (Windows 11 ARM image, dev VMs) bot-block
   # link checkers with 403/429 but resolve fine in a browser. Same rationale
   # as the publishers above.
