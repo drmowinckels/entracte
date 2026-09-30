@@ -94,5 +94,8 @@
     "typescript-eslint": "^8.60.0",
     "vite": "^8.0.16",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "markdown-it": "^14.3.2"
   }
 }
