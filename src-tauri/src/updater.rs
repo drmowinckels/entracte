@@ -190,6 +190,56 @@ pub fn spawn_startup_check(_app: AppHandle, _settings: &crate::scheduler::Settin
 mod tests {
     use super::*;
 
+    /// The shipped version lives in five files. A drift between them
+    /// surfaces as a phantom "update available": the updater compares the
+    /// running build's version against the latest GitHub tag, so a build
+    /// that reports an older number than it was released as will offer
+    /// itself an update forever.
+    ///
+    /// This exists because `docs/developer/releases.md` documented only
+    /// two of the five, so following it would have left `Cargo.toml`,
+    /// `Cargo.lock` and `package-lock.json` behind. `Cargo.lock` is not
+    /// checked here — cargo rewrites it from `Cargo.toml` on the next
+    /// build, so it cannot drift independently.
+    #[test]
+    fn shipped_version_agrees_across_every_manifest() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let want = env!("CARGO_PKG_VERSION");
+
+        let read = |rel: &str| -> serde_json::Value {
+            let path = root.join(rel);
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
+        };
+
+        let tauri_conf = read("tauri.conf.json");
+        assert_eq!(
+            tauri_conf["version"].as_str(),
+            Some(want),
+            "tauri.conf.json drifted from Cargo.toml ({want})"
+        );
+
+        let pkg = read("../package.json");
+        assert_eq!(
+            pkg["version"].as_str(),
+            Some(want),
+            "package.json drifted from Cargo.toml ({want})"
+        );
+
+        let lock = read("../package-lock.json");
+        assert_eq!(
+            lock["version"].as_str(),
+            Some(want),
+            "package-lock.json root version drifted from Cargo.toml ({want})"
+        );
+        assert_eq!(
+            lock["packages"][""]["version"].as_str(),
+            Some(want),
+            "package-lock.json packages[\"\"] version drifted from Cargo.toml ({want})"
+        );
+    }
+
     #[tokio::test]
     async fn active_channel_reads_the_saved_setting() {
         use crate::scheduler::UpdateChannel;
