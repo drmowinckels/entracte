@@ -26,6 +26,59 @@ ignore = [
   # https://rustsec.org/advisories/RUSTSEC-2024-0429
   # Tracking: https://github.com/drmowinckels/entracte/issues/84
   "RUSTSEC-2024-0429",
+
+  # The three below are ignored because they are NOT REACHABLE from this
+  # binary, each for a different and separately verifiable reason — not
+  # because they are inconvenient. They were previously left un-ignored,
+  # which meant every audit run reported three known findings and a
+  # genuinely new advisory would have been just another line in that
+  # noise. Each rationale states what would make it reachable again.
+
+  # NOTE: RUSTSEC-2026-0235 (rkyv) is deliberately NOT listed. cargo-deny
+  # reports "no crate matched advisory criteria" for it, so an ignore here
+  # would be dead config and trip `advisory-not-detected`. rkyv is an
+  # *optional* dependency of rust_decimal (via byte-unit <- tauri-plugin-log)
+  # whose feature we do not enable, so it is never compiled:
+  #   cargo tree -i rkyv --target all   =>  "nothing to print"
+  # See https://github.com/drmowinckels/entracte/issues/314.
+
+  # RUSTSEC-2026-0269 / -0222: wasmtime WASI filesystem sandbox escape.
+  # Rides in on extism's pinned wasmtime 43.x, which has no fix on its
+  # line. Not reachable because the plugin sandbox is built with
+  # `with_wasi(false)` (plugins/runtime.rs): with no WASI in the linker
+  # there are no preopened directories and no `wasi_snapshot_preview1`
+  # import to call, so the vulnerable path-resolution code is never
+  # instantiated. Pinned behaviourally, not just by comment — the test
+  # `rejects_a_module_importing_the_wasi_filesystem` fails if WASI is
+  # ever linked back in.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0269
+  # Analysis: https://github.com/drmowinckels/entracte/issues/323
+  "RUSTSEC-2026-0269",
+  "RUSTSEC-2026-0222",
+
+  # RUSTSEC-2026-0316: dynamic record lifting can allocate beyond the
+  # hostcall fuel limit. Same root cause as the two above — extism pins
+  # wasmtime 43.x and the fix exists only on 36.0.16+, 48.0.3+ and
+  # 49.0.1+, never backported to 43. Record *lifting* is component-model
+  # machinery; extism instantiates core wasm modules, not components, so
+  # the affected path is never entered. Note that we do set a fuel limit
+  # (`with_fuel_limit`), so this would matter if components were ever
+  # introduced — reachable again the moment anything runs a component.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0316
+  # Tracking: https://github.com/drmowinckels/entracte/issues/323
+  "RUSTSEC-2026-0316",
+
+  # RUSTSEC-2026-0255: panic-safety UAF/double-free in sized-chunks.
+  # Reaches us only as sized-chunks <- im-rc <- wasm-compose <- wasmtime
+  # <- extism. wasm-compose is wasmtime's *component composition* support,
+  # which Entracte never invokes — extism runs core wasm modules. The bug
+  # additionally requires im-rc containers holding element types whose
+  # `Drop` panics. 0.7.0 does not fix it and the repository is archived
+  # with issues disabled, so there is nothing to upgrade to.
+  # Reachable again if we start composing wasm components.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0255
+  # Analysis: https://github.com/drmowinckels/entracte/issues/336
+  "RUSTSEC-2026-0255",
 ]
 
 [licenses]
