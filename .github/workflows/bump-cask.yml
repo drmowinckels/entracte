@@ -1,10 +1,25 @@
 name: Bump Homebrew cask
 
-# Opens a same-repo PR bumping Casks/entracte.rb (version + both sha256
-# lines) whenever a new non-prerelease GitHub release is published.
-# Uses the default GITHUB_TOKEN — no PAT required because the cask
-# lives in this repo (users tap with `brew tap drmowinckels/entracte
-# https://github.com/drmowinckels/entracte`).
+# Bumps Casks/entracte.rb (version + both sha256 lines) straight on main
+# whenever a GitHub release is published. Uses the default GITHUB_TOKEN —
+# no PAT required because the cask lives in this repo (users tap with
+# `brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte`).
+#
+# This used to open a PR instead, which never worked: Actions is not
+# permitted to create PRs on this repo (`can_approve_pull_request_reviews`
+# is off), so `gh pr create` failed and the job exited 1 on every release
+# from v0.0.2 onward — 11 in a row, unnoticed, leaving the cask stranded
+# behind the latest release. See #349.
+#
+# A generated version+checksum bump has nothing to review, so it commits
+# directly rather than re-introducing a PR gate that needs a repo setting
+# or a PAT. If main ever becomes protected against direct pushes, this
+# needs a PAT or GitHub App token instead.
+#
+# Failures are loud by design: `release.yml` has no dependency on this
+# workflow, so a red run here blocks nothing. The final step therefore
+# opens (or comments on) an issue, because a silent red run is exactly
+# how this went unnoticed for 11 releases.
 
 on:
   release:
@@ -17,7 +32,7 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+  issues: write
 
 concurrency:
   group: bump-cask-${{ github.event.release.tag_name || inputs.tag }}
@@ -57,7 +72,15 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
+      # Must pin to main. On a `release: published` event the default
+      # checkout resolves to the *tag* commit, which is behind main by
+      # every commit merged since the release was cut — pushing that to
+      # main would revert them. The old PR-based flow had the same latent
+      # bug; it was simply never reached because `gh pr create` failed
+      # first.
       - uses: actions/checkout@v7
+        with:
+          ref: main
 
       - name: Fetch SHA256SUMS.txt
         env:
@@ -107,39 +130,111 @@ jobs:
 
           grep -E '^(  version|  sha256|         intel:)' "$cask"
 
-      - name: Commit, push, open PR
+      - name: Commit and push to main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          ARM_SHA: ${{ steps.shas.outputs.arm }}
+          INTEL_SHA: ${{ steps.shas.outputs.intel }}
         run: |
-          version="${{ steps.meta.outputs.version }}"
-          branch="bump-cask/${version}"
-
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git diff --quiet Casks/entracte.rb; then
-            echo "Cask already at ${version} — nothing to bump."
+            echo "Cask already at ${VERSION} — nothing to bump."
+            echo "Cask already at \`${VERSION}\` — nothing to bump." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          git checkout -b "$branch"
           git add Casks/entracte.rb
-          git commit -m "Bump cask to ${version}"
-          git push --force-with-lease origin "$branch"
+          git commit -m "Bump cask to ${VERSION}
 
-          # Idempotent: reuse an open PR for this version if one exists.
-          if gh pr view "$branch" --json number --jq .number >/dev/null 2>&1; then
-            echo "PR for $branch already exists — branch updated in place."
+          Automated bump from ${TAG}."
+
+          # Retry on a lost race: another commit can land on main between
+          # the checkout and the push. Rebase and try again. A conflict
+          # means someone hand-edited the cask concurrently, so the rebase
+          # fails the step rather than guessing which side wins.
+          pushed=""
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              pushed="$attempt"
+              break
+            fi
+            echo "push rejected (attempt ${attempt}) — rebasing onto origin/main"
+            # Check the rebase explicitly instead of leaning on `bash -e`.
+            # A conflict here means someone hand-edited the cask while this
+            # ran; without this guard the step exits 0 and the bump is
+            # silently dropped if the shell ever loses `-e`.
+            if ! git pull --rebase origin main; then
+              git rebase --abort || true
+              echo "::error::cask bump conflicts with a concurrent edit to Casks/entracte.rb — resolve by hand"
+              exit 1
+            fi
+          done
+
+          if [ -z "$pushed" ]; then
+            echo "::error::could not push the cask bump to main after 3 attempts"
+            exit 1
+          fi
+
+          {
+            echo "### Cask bumped to \`${VERSION}\`"
+            echo
+            echo "Pushed to \`main\` as $(git rev-parse --short HEAD) (attempt ${pushed})."
+            echo
+            echo "- version → \`${VERSION}\`"
+            echo "- sha256 arm → \`${ARM_SHA}\`"
+            echo "- sha256 intel → \`${INTEL_SHA}\`"
+            echo
+            echo "\`brew upgrade --cask entracte\` now picks up ${VERSION}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Nothing downstream consumes this workflow's result — `release.yml`
+      # has no dependency on it — so a red run is invisible unless it says
+      # something. That invisibility is why 11 consecutive failures went
+      # unnoticed (#349), so failing loudly is part of the fix, not a nicety.
+      - name: Report a failed bump
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          tag="${TAG:-unknown}"
+          title="bump-cask failed for ${tag}"
+
+          # Build the body in a FILE, not via `body=$(cat <<EOF …)`.
+          # Bash tracks quotes through a heredoc body nested inside `$( )`,
+          # so a lone apostrophe in the prose (e.g. "the release's assets")
+          # makes the whole step a syntax error. Redirecting to a file has
+          # no such coupling. actionlint does not catch it, and this step
+          # only runs under `if: failure()` — a broken error-reporter would
+          # stay invisible until the day it was actually needed.
+          cat > "${RUNNER_TEMP}/bump-cask-failure.md" <<EOF
+          \`bump-cask.yml\` failed for \`${tag}\`.
+
+          **Run:** ${RUN_URL}
+
+          \`Casks/entracte.rb\` is most likely still pointing at the previous
+          release, so \`brew upgrade --cask entracte\` will not pick this one up
+          until it is bumped. To do it by hand, re-run this workflow from the
+          Actions tab (\`workflow_dispatch\` takes a tag), or edit the version
+          and the two \`sha256\` lines to match that release's
+          \`SHA256SUMS.txt\`.
+
+          This issue is filed automatically: the workflow has no downstream
+          consumer, so a red run would otherwise be silent — which is how it
+          failed unnoticed for 11 straight releases (#349).
+          EOF
+
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -1)
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "${RUNNER_TEMP}/bump-cask-failure.md"
+            echo "commented on existing issue #${existing}"
           else
-            gh pr create \
-              --base main \
-              --head "$branch" \
-              --title "Bump cask to ${version}" \
-              --body "Automated cask bump triggered by [\`${{ steps.meta.outputs.tag }}\`](https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.tag }}).
-
-          - version → \`${version}\`
-          - sha256 arm → \`${{ steps.shas.outputs.arm }}\`
-          - sha256 intel → \`${{ steps.shas.outputs.intel }}\`
-
-          Once merged, \`brew upgrade --cask entracte\` picks up the new version."
+            gh issue create --title "$title" --label bug --body-file "${RUNNER_TEMP}/bump-cask-failure.md"
           fi

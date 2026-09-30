@@ -25,6 +25,7 @@
     "audit:spell": "cspell --no-progress --config .github/audit/cspell.json \"**/*.{md,ts,tsx}\"",
     "audit:size": "npm run build && size-limit",
     "audit:links": "lychee --config .github/audit/lychee.toml --root-dir \"$PWD/docs\" \"**/*.md\"",
+    "audit:workflow-shell": "node scripts/audit-workflow-shell.mjs",
     "audit:rust": "cd src-tauri && cargo deny check",
     "doc": "typedoc --options .config/typedoc/typedoc.json",
     "tauri": "tauri"
@@ -93,7 +94,8 @@
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.60.0",
     "vite": "^8.0.16",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "2.9.0"
   },
   "overrides": {
     "markdown-it": "^14.3.2"

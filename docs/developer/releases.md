@@ -8,7 +8,7 @@ Entracte ships from GitHub Actions, triggered by a SemVer tag on `main`. The pip
    - `package.json` `"version"`
    - `src-tauri/tauri.conf.json` `"version"`
 
-   Both currently sit at `0.0.1`. Tauri uses `tauri.conf.json` for the bundle identifier and updater payload; the in-app `check_for_update` command compares the running version against the latest GitHub tag, so a drift here will surface as a phantom "update available".
+   Tauri uses `tauri.conf.json` for the bundle identifier and updater payload; the in-app `check_for_update` command compares the running version against the latest GitHub tag, so a drift here will surface as a phantom "update available".
 
 2. **Commit and merge to `main`** through a PR like any other change.
 
@@ -26,6 +26,16 @@ Entracte ships from GitHub Actions, triggered by a SemVer tag on `main`. The pip
    Publishing flips the GitHub Releases `latest` pointer, which is what `check_for_update` watches — every running install will start seeing the new version on its next poll.
 
 The same pipeline is reachable via the **Run workflow** button on the Actions tab if you need to dry-run against an existing tag without re-tagging.
+
+## Homebrew cask
+
+Publishing the release also fires [`.github/workflows/bump-cask.yml`](https://github.com/drmowinckels/entracte/blob/main/.github/workflows/bump-cask.yml), which rewrites `Casks/entracte.rb` (the `version` line and both DMG `sha256` lines, read from the release's `SHA256SUMS.txt`) and **commits it straight to `main`**. No action is needed from you; `brew upgrade --cask entracte` picks the new version up once that push lands.
+
+It commits directly rather than opening a PR because GitHub Actions is not permitted to create pull requests on this repo, and a generated version-and-checksum bump has nothing to review. If `main` ever becomes protected against direct pushes, this workflow needs a PAT or GitHub App token instead.
+
+**If the bump fails, it files an issue against itself.** Nothing downstream depends on this workflow — a red run blocks neither the release nor any merge — so it announces its own failure rather than waiting to be noticed. That is deliberate: the PR-based version of this step failed on every release from `v0.0.2` to `v0.0.12`, eleven in a row, and the cask sat stranded behind the latest release because nobody was watching the run ([#349](https://github.com/drmowinckels/entracte/issues/349)).
+
+To bump by hand — after a failure, or for a tag that predates the workflow — re-run it from the Actions tab via **Run workflow**, which takes the tag as an input.
 
 ## What the workflow does
 
