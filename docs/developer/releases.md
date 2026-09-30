@@ -27,6 +27,41 @@ Entracte ships from GitHub Actions, triggered by a SemVer tag on `main`. The pip
 
 The same pipeline is reachable via the **Run workflow** button on the Actions tab if you need to dry-run against an existing tag without re-tagging.
 
+## Update channels
+
+Two channels, `stable` and `beta`, chosen per install in **Preferences → About** (`update_channel`). The channel selects which signed manifest the updater reads — see `updater::channel_endpoint`:
+
+| channel  | manifest                                     |
+| -------- | -------------------------------------------- |
+| `stable` | `releases/latest/download/latest.json`       |
+| `beta`   | `releases/download/channel-beta/latest.json` |
+
+**The tag decides everything.** `release.yml` marks a release prerelease iff its tag carries a semver prerelease identifier (`v0.1.1-beta.1` yes, `v0.1.0` no), and that single flag is what keeps the lines apart:
+
+- A **stable** release wrongly flagged prerelease vanishes from `releases/latest`, leaving the stable channel with no manifest at all. That was [#238](https://github.com/drmowinckels/entracte/issues/238).
+- A **beta** release wrongly left unflagged _becomes_ `releases/latest` and is offered to every stable install. The version comparator cannot prevent this: semver ranks `0.1.1-beta.1` above `0.1.0`, so the updater would happily install it.
+
+There is no third safeguard. Separation is entirely the prerelease flag plus the manifest URL, which is why both re-uploaders in `release.yml` restate `prerelease:` rather than relying on the uploader action to preserve it.
+
+### Cutting a beta
+
+Tag it with a prerelease identifier and publish the draft as usual:
+
+```sh
+git tag v0.1.1-beta.1
+git push origin v0.1.1-beta.1
+```
+
+`release.yml` builds it, flags it prerelease, and attaches `latest.json`. On **publish**, [`promote-beta-manifest.yml`](https://github.com/drmowinckels/entracte/blob/main/.github/workflows/promote-beta-manifest.yml) copies that manifest onto the rolling `channel-beta` release, which is what beta installs actually read.
+
+Promotion runs on `release: published` rather than during the build because a draft release's assets are not publicly downloadable — promoting earlier would advertise URLs that 404 for every beta user until someone published the draft. It verifies the manifest's version matches the tag and that every platform entry is signed before promoting, refuses a non-prerelease tag, and files an issue if it fails (nothing downstream would otherwise notice, the lesson of [#349](https://github.com/drmowinckels/entracte/issues/349)).
+
+The `channel-beta` release is itself marked prerelease, and the workflow re-asserts that on every run. If it were ever an ordinary release it would become `releases/latest` and serve the beta manifest to the entire stable channel.
+
+### What betas do not touch
+
+The Homebrew cask tracks stable only (`bump-cask.yml` skips prereleases): a `brew` install cannot see the in-app channel setting, so it has no way to opt out. Offering betas over Homebrew would need a separate `entracte-beta` cask.
+
 ## Homebrew cask
 
 Publishing the release also fires [`.github/workflows/bump-cask.yml`](https://github.com/drmowinckels/entracte/blob/main/.github/workflows/bump-cask.yml), which rewrites `Casks/entracte.rb` (the `version` line and both DMG `sha256` lines, read from the release's `SHA256SUMS.txt`) and **commits it straight to `main`**. No action is needed from you; `brew upgrade --cask entracte` picks the new version up once that push lands.

@@ -219,7 +219,7 @@ export const SETTINGS_INDEX: SettingsSearchEntry[] = [
     label: "About & updates",
     tabId: "about",
     anchorId: "settings-about",
-    keywords: "version update check release",
+    keywords: "version update check release channel beta stable prerelease",
   },
   {
     id: "supporter",

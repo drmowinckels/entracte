@@ -62,6 +62,7 @@ pub use settings::Settings;
 // pre-split flat path so the test doesn't have to know the new module layout.
 #[allow(unused_imports)]
 pub use settings::MonitorPlacement;
+pub use settings::UpdateChannel;
 pub use tray_countdown::{format_countdown, TrayCountdownSnapshot};
 // `SuppressReason` is the tray's view of why breaks are paused; only
 // consumed from `tray::tests` (the tray UI uses it via pattern matching

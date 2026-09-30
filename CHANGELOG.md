@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Choose whether you get beta builds.** A new **Update channel** setting on the About tab. **Stable only** (the default, and what every existing install stays on) offers full releases. **Beta** also offers the weekly test builds, so you get fixes and new features earlier in exchange for less testing than a stable release gets. Switching back to stable stops new betas being offered but does not move you backwards — you keep the build you have until a stable release passes it, which happens as soon as the version your beta was previewing ships. Homebrew installs follow the stable line only, since `brew` cannot see this setting.
+
 ### Fixed
 
 - **The Linux AppImage now carries its icon, so app stores and launchers can list it.** The AppImage was built with a broken internal icon link — it pointed at a path on the machine that built it rather than at the icon inside the package, so anything looking for the icon found nothing. The [AppImage catalog](https://appimage.github.io) rejected Entracte for it (`.DirIcon is missing`), and desktop launchers had nothing to show. The same fault affected the bundled desktop entry. Fixed by updating the build tool; no change to the app itself. ([appimage.github.io#9123](https://github.com/AppImage/appimage.github.io/pull/9123))

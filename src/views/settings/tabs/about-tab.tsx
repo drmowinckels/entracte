@@ -5,7 +5,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useUpdateCheck } from "../hooks/use-update-check";
 import type { UseSupporter } from "../hooks/use-supporter";
 import type { UseSettings } from "../hooks/use-settings";
-import type { SchedulerSettings } from "../types";
+import type { SchedulerSettings, UpdateChannel } from "../types";
+import { UPDATE_CHANNELS } from "../constants";
 import {
   useArch,
   usePlatform,
@@ -101,6 +102,30 @@ export function AboutTab({
             />{" "}
             Automatically check for updates on launch
           </label>
+        )}
+        {settings && (
+          <label className="about-meta about-update-channel">
+            <span>Update channel</span>
+            <select
+              value={settings.update_channel}
+              onChange={(e) =>
+                updateSetting("update_channel", e.target.value as UpdateChannel)
+              }
+            >
+              {UPDATE_CHANNELS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {settings?.update_channel === "beta" && (
+          <p className="about-meta">
+            Beta builds ship weekly and get less testing than stable releases.
+            Switching back to stable won't undo an update you already have —
+            you'll stay on your current build until a stable release passes it.
+          </p>
         )}
         {update.info && update.info.has_update && update.info.release_url && (
           <>

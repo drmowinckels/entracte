@@ -89,6 +89,21 @@ pub enum MonitorPlacement {
     All,
 }
 
+/// Which release line the in-app updater follows.
+///
+/// Defaults to `Stable`. The channel picks the manifest URL, and that is
+/// the *only* thing separating the two lines — the version comparator
+/// cannot help, because a prerelease sorts above the stable it precedes
+/// (`0.1.1-beta.1 > 0.1.0`). A beta manifest reaching a stable install
+/// would be installed. See [`crate::updater::channel_endpoint`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
 /// What the overlay does with audio for a given break kind.
 ///
 /// `Off` plays nothing, `EndChime` plays the configured chime once when
@@ -608,6 +623,12 @@ pub struct Settings {
     /// desktop notification if a newer build is available. Defaults on; the
     /// About tab exposes the toggle and the manual "Check for updates" button.
     pub auto_check_updates: bool,
+    /// Which release line the updater follows. `Stable` only ever sees
+    /// full releases; `Beta` also sees the weekly prerelease builds.
+    /// Switching back to `Stable` does not downgrade — semver ranks a
+    /// prerelease above the stable it precedes, so the build is kept
+    /// until a stable release overtakes it.
+    pub update_channel: UpdateChannel,
     #[serde(default)]
     pub micro_sound: BreakSound,
     #[serde(default)]
@@ -772,6 +793,7 @@ impl Default for Settings {
             long_manual_finish: false,
             autostart_enabled: false,
             auto_check_updates: true,
+            update_channel: UpdateChannel::Stable,
             micro_sound: BreakSound::end_chime("337048"),
             long_sound: BreakSound::end_chime("337048"),
             sound_volume: 0.5,
@@ -2098,6 +2120,33 @@ mod tests {
     const FLAT_FIXTURE: &str = include_str!("fixtures/default_settings_flat.json");
 
     #[test]
+    fn update_channel_defaults_to_stable() {
+        // A new field on an existing struct: every settings.json written
+        // before this shipped has no `update_channel` key, and those
+        // installs must stay on the stable line rather than silently
+        // opting into betas.
+        assert_eq!(UpdateChannel::default(), UpdateChannel::Stable);
+        assert_eq!(Settings::default().update_channel, UpdateChannel::Stable);
+        let from_old_file: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_old_file.update_channel, UpdateChannel::Stable);
+    }
+
+    #[test]
+    fn update_channel_round_trips_over_the_wire_as_lowercase() {
+        let s = Settings {
+            update_channel: UpdateChannel::Beta,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(
+            json.contains(r#""update_channel":"beta""#),
+            "wire form must be lowercase for the TS union"
+        );
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.update_channel, UpdateChannel::Beta);
+    }
+
+    #[test]
     fn flat_fixture_deserialises_into_settings() {
         let s: Settings = serde_json::from_str(FLAT_FIXTURE).unwrap();
         // Spot-check a per-kind pair survived the round-trip into the
@@ -2479,7 +2528,7 @@ mod parity_tests {
     //    versa) surfaces at unit-test time rather than as a runtime Zod
     //    rejection.
 
-    use super::{BreakMode, HintMix, ScheduleMode};
+    use super::{BreakMode, HintMix, ScheduleMode, UpdateChannel};
     use crate::scheduler::routines::{RoutineCategory, RoutineDifficulty};
 
     /// All on-disk strings a Rust enum can serialise to. The caller passes the
@@ -2557,6 +2606,13 @@ mod parity_tests {
         let rust = rust_enum_values(all_variants!(BreakMode: Overlay, Windowed, Notification));
         let ts = ts_union_values(&ts_source(), "BreakDeliveryMode");
         assert_eq!(rust, ts, "BreakMode ↔ BreakDeliveryMode value drift");
+    }
+
+    #[test]
+    fn update_channel_values_match_ts_union() {
+        let rust = rust_enum_values(all_variants!(UpdateChannel: Stable, Beta));
+        let ts = ts_union_values(&ts_source(), "UpdateChannel");
+        assert_eq!(rust, ts, "UpdateChannel value drift");
     }
 
     #[test]

@@ -440,6 +440,13 @@ body,
   font-size: 0.9rem;
 }
 
+.settings .about-update-channel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .settings .loading {
   color: var(--faint-fg);
   padding: 1rem 0;

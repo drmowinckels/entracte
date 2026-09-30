@@ -26,7 +26,7 @@ brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte
 brew install --cask drmowinckels/entracte/entracte
 ```
 
-`brew upgrade --cask entracte` handles updates once Homebrew refreshes the tap. The Cask currently tracks the latest published release (including the `0.0.X` beta line) — once `0.1.0` ships, the next bump snaps everyone to the stable line automatically.
+`brew upgrade --cask entracte` handles updates once Homebrew refreshes the tap. The Cask tracks **stable releases only** — prereleases never bump it, because a `brew` install cannot see the in-app update-channel setting and so has no way to opt out of betas. To run betas, install from the [release page](https://github.com/drmowinckels/entracte/releases) and switch the channel in **Preferences → About**.
 
 ### Windows
 

@@ -1,9 +1,20 @@
-import type { BreakSoundMode, HookEvent, MonitorPlacement, Tab } from "./types";
+import type {
+  BreakSoundMode,
+  HookEvent,
+  MonitorPlacement,
+  Tab,
+  UpdateChannel,
+} from "./types";
 
 export const MONITOR_PLACEMENTS: { id: MonitorPlacement; label: string }[] = [
   { id: "all", label: "All monitors" },
   { id: "primary", label: "Primary monitor" },
   { id: "active", label: "Monitor under cursor" },
+];
+
+export const UPDATE_CHANNELS: { id: UpdateChannel; label: string }[] = [
+  { id: "stable", label: "Stable only" },
+  { id: "beta", label: "Beta (weekly test builds)" },
 ];
 
 export const HOOK_EVENTS: { id: HookEvent; label: string }[] = [
