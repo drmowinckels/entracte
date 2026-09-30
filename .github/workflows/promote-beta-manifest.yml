@@ -1,0 +1,177 @@
+name: Promote beta manifest
+
+# Publishes the beta channel's updater manifest.
+#
+# Beta releases are flagged prerelease so they never become
+# `releases/latest` and so never reach a stable install. That also means
+# the beta channel cannot read `releases/latest/download/latest.json` —
+# it skips prereleases, so the beta channel would silently resolve to the
+# stable manifest (the mirror image of #238). Instead the beta channel
+# reads a fixed, rolling release tagged `channel-beta`, and this workflow
+# copies each published beta's `latest.json` onto it. See
+# `updater::channel_endpoint`.
+#
+# Runs on `release: published`, NOT during the release build: a draft
+# release's assets are not publicly downloadable, so promoting the
+# manifest earlier would advertise URLs that 404 for every beta user
+# until a human published the draft.
+#
+# The rolling release is itself marked prerelease, which is load-bearing:
+# an ordinary release here would become `releases/latest` and feed the
+# beta manifest to the whole stable channel.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Beta release tag to promote (e.g. v0.1.1-beta.1)"
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: promote-beta-manifest
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    # Only prereleases feed the beta channel. A stable release publishes
+    # its manifest to `releases/latest` via release.yml and must never
+    # touch the beta channel.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: meta
+        # Untrusted workflow_dispatch input goes via env, never
+        # interpolated into the shell — same rule as bump-cask.yml.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ]; then
+            tag="$RELEASE_TAG"
+          else
+            tag="$DISPATCH_TAG"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+            echo "::error::refusing to use tag '$tag' — contains characters outside [A-Za-z0-9._-]"
+            exit 1
+          fi
+          # A tag with no semver prerelease identifier is a stable
+          # release; promoting it would point beta users at the stable
+          # build through the wrong channel. Only reachable via
+          # workflow_dispatch, since the job condition already filters
+          # release events.
+          case "$tag" in
+            *-*) ;;
+            *)
+              echo "::error::'$tag' is not a prerelease tag — the beta channel only carries prereleases"
+              exit 1
+              ;;
+          esac
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the release's manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          gh release download "$TAG" --pattern latest.json --dir .
+          cat latest.json
+
+      - name: Check the manifest matches the release
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          manifest_version=$(jq -r '.version' latest.json)
+          if [ "$manifest_version" != "$VERSION" ]; then
+            echo "::error::manifest advertises '${manifest_version}' but the release is '${VERSION}' — refusing to promote a mismatched manifest"
+            exit 1
+          fi
+          # Every platform entry must carry a signature, or the updater
+          # rejects the response and the channel looks broken.
+          missing=$(jq -r '.platforms | to_entries[] | select((.value.signature // "") == "") | .key' latest.json)
+          if [ -n "$missing" ]; then
+            echo "::error::manifest has unsigned platform entries: $(echo "$missing" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "manifest for ${VERSION} looks well-formed"
+
+      - name: Publish onto the rolling channel-beta release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          # `--prerelease` is what stops this rolling release becoming
+          # `releases/latest` and feeding the beta manifest to every
+          # stable install. Created once, then only its asset changes;
+          # the tag is a container, and the manifest's own URLs point at
+          # the versioned beta release.
+          if ! gh release view channel-beta >/dev/null 2>&1; then
+            gh release create channel-beta \
+              --prerelease \
+              --title "Beta channel manifest" \
+              --notes "Rolling updater manifest for the beta channel. Not a release — the only asset is \`latest.json\`, which points at the assets of the most recent beta. Install betas by switching the update channel in Preferences → About."
+          fi
+
+          gh release upload channel-beta latest.json --clobber
+
+          # Re-assert the flag in case the release was ever edited by hand.
+          gh release edit channel-beta --prerelease
+
+          {
+            echo "### Beta channel now points at \`${TAG}\`"
+            echo ""
+            echo "Beta installs pick it up on their next update check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Nothing downstream consumes this workflow, so a red run is
+      # invisible and the beta channel would just silently stop advancing
+      # — the same failure mode that let bump-cask break for eleven
+      # releases (#349). Say so instead.
+      - name: Report a failed promotion
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          tag="${TAG:-unknown}"
+          title="beta manifest promotion failed for ${tag}"
+
+          # Body built in a file, not `body=$(cat <<EOF …)`: bash tracks
+          # quotes through a heredoc nested in `$( )`, so an apostrophe in
+          # the prose would make this step a syntax error — in a step that
+          # only runs when something has already gone wrong.
+          cat > "${RUNNER_TEMP}/promote-failure.md" <<EOF
+          Promoting the beta updater manifest for \`${tag}\` failed.
+
+          **Run:** ${RUN_URL}
+
+          The \`channel-beta\` release is probably still pointing at the previous
+          beta, so beta installs will not see this one. The stable channel is
+          unaffected.
+
+          To retry, re-run this workflow from the Actions tab
+          (\`workflow_dispatch\` takes the tag).
+          EOF
+
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -1)
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "${RUNNER_TEMP}/promote-failure.md"
+          else
+            gh issue create --title "$title" --label bug --body-file "${RUNNER_TEMP}/promote-failure.md"
+          fi

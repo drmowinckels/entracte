@@ -40,13 +40,16 @@ concurrency:
 
 jobs:
   bump-cask:
-    # We deliberately accept prereleases too: there's only one Cask, and
-    # the project is in the 0.0.X beta window. Letting beta releases bump
-    # the Cask means `brew tap … && brew install --cask` actually works
-    # while we're pre-1.0. The moment v0.1.0 stable ships, the next bump
-    # snaps everyone back to the stable line — beta users who stayed on
-    # `brew upgrade` get the stable upgrade at the same time. Add an
-    # `entracte-beta` Cask if we ever need parallel lines.
+    # Stable releases only. This used to accept prereleases as well,
+    # because every 0.0.x release was the only line there was. Now that
+    # the updater has a beta channel (promote-beta-manifest.yml), a
+    # prerelease bumping this cask would push a beta onto everyone who
+    # installed via `brew`, with no way to opt out — `brew` users cannot
+    # see the in-app channel setting. A separate `entracte-beta` cask is
+    # the way to offer betas over Homebrew, if that is ever wanted.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
       - name: Resolve tag and version
@@ -69,6 +72,15 @@ jobs:
             echo "::error::refusing to use tag '$tag' — contains characters outside [A-Za-z0-9._-]"
             exit 1
           fi
+          # The job condition already filters prerelease *events*; this
+          # covers workflow_dispatch, where a human could otherwise type a
+          # beta tag and put a prerelease version into the stable cask.
+          case "$tag" in
+            *-*)
+              echo "::error::'$tag' is a prerelease tag — the stable cask tracks stable releases only (betas go through the in-app beta channel)"
+              exit 1
+              ;;
+          esac
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 

@@ -119,12 +119,22 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Entracte ${{ github.ref_name }}"
           releaseDraft: true
-          # Publish every release as a normal (non-prerelease) release. The
-          # in-app updater checks `releases/latest/download/latest.json`, and
-          # GitHub's `/latest/` skips pre-releases — so marking 0.0.x betas as
-          # pre-release left the update check unable to resolve any manifest
-          # (#238). The 0.0.x version number itself signals the beta line.
-          prerelease: false
+          # Prerelease iff the tag carries a semver prerelease identifier
+          # (`v0.1.1-beta.1` -> true, `v0.1.0` -> false). This flag is what
+          # separates the two update channels, and it cuts both ways:
+          #
+          #   * Marking a STABLE release as prerelease hides it from
+          #     `releases/latest`, leaving the stable channel with no
+          #     manifest to resolve — that was #238, when every 0.0.x
+          #     release was flagged prerelease and the update check broke.
+          #   * Leaving a BETA release unflagged makes it `releases/latest`,
+          #     so every stable install is offered it. The version
+          #     comparator cannot save us there: semver ranks
+          #     `0.1.1-beta.1` above `0.1.0`, so it would be installed.
+          #
+          # The beta channel reads a rolling `channel-beta` release instead
+          # (see promote-beta-manifest.yml and updater::channel_endpoint).
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: ${{ matrix.args }}
           # The publish-updater-manifest job composes the authoritative
           # multi-platform latest.json. Disable tauri-action's own per-run
@@ -376,6 +386,11 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: true
+          # Restated, not inherited: softprops keeps the release's existing
+          # prerelease flag when this input is omitted, but if that ever
+          # changed, a beta would silently become `releases/latest` and be
+          # offered to every stable install.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           tag_name: ${{ github.ref_name }}
           files: latest.json
 
@@ -454,6 +469,8 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: true
+          # See the note on the latest.json uploader above.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           tag_name: ${{ github.ref_name }}
           files: signed/*
 

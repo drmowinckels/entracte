@@ -113,6 +113,7 @@ export const schedulerSettingsSchema = z.object({
   long_manual_finish: z.boolean(),
   autostart_enabled: z.boolean(),
   auto_check_updates: z.boolean(),
+  update_channel: z.enum(["stable", "beta"]),
   micro_sound: breakSoundSchema,
   long_sound: breakSoundSchema,
   sound_volume: z.number(),

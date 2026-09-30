@@ -5,6 +5,9 @@ export type { BreakSound, BreakSoundMode } from "../../lib/break-sound";
 
 export type MonitorPlacement = "primary" | "active" | "all";
 
+/** Which release line the in-app updater follows. */
+export type UpdateChannel = "stable" | "beta";
+
 export type ClockFormat = "12h" | "24h";
 
 // Mirrors the Rust serde enums for the four `*_schedule_mode` /
@@ -167,6 +170,7 @@ export type SchedulerSettings = {
   long_manual_finish: boolean;
   autostart_enabled: boolean;
   auto_check_updates: boolean;
+  update_channel: UpdateChannel;
   micro_sound: BreakSound;
   long_sound: BreakSound;
   sound_volume: number;

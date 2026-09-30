@@ -112,6 +112,82 @@ afterEach(() => {
   };
 });
 
+/** Only the fields the About tab reads; the component ignores the rest. */
+function settingsStub(
+  over: Partial<SchedulerSettings> = {},
+): SchedulerSettings {
+  return {
+    auto_check_updates: true,
+    update_channel: "stable",
+    ...over,
+  } as SchedulerSettings;
+}
+
+describe("AboutTab — update channel", () => {
+  it("renders the channel selector reflecting the saved channel", () => {
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={settingsStub({ update_channel: "beta" })}
+        updateSetting={vi.fn()}
+      />,
+    );
+    const select = screen.getByLabelText(
+      /update channel/i,
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("beta");
+  });
+
+  it("saves the chosen channel", async () => {
+    const updateSetting = vi.fn();
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={settingsStub()}
+        updateSetting={updateSetting}
+      />,
+    );
+    const select = screen.getByLabelText(/update channel/i);
+    await userEvent.selectOptions(select, "beta");
+    expect(updateSetting).toHaveBeenCalledWith("update_channel", "beta");
+  });
+
+  it("warns that leaving beta does not downgrade, only while on beta", () => {
+    // The updater cannot move a beta install back: semver ranks
+    // 0.1.1-beta.1 above 0.1.0, so switching to stable is a no-op until a
+    // stable release overtakes the build. Users have to be told.
+    const { unmount } = render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={settingsStub({ update_channel: "beta" })}
+        updateSetting={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/stay on your current build/i)).toBeTruthy();
+    unmount();
+
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={settingsStub({ update_channel: "stable" })}
+        updateSetting={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/stay on your current build/i)).toBeNull();
+  });
+
+  it("hides the selector until settings have loaded", () => {
+    render(
+      <AboutTab
+        supporter={supporterStub()}
+        settings={null}
+        updateSetting={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText(/update channel/i)).toBeNull();
+  });
+});
+
 describe("AboutTab — Windows SmartScreen advisory", () => {
   it("shows the SmartScreen warning paragraph only when installerUnsignedWarning is set AND an update is available", () => {
     currentCaps = { ...currentCaps, installerUnsignedWarning: true };

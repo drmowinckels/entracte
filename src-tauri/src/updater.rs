@@ -1,6 +1,48 @@
+use crate::scheduler::UpdateChannel;
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;
+
+/// Signed manifest for the stable line. GitHub's `releases/latest`
+/// resolves to the newest **non-prerelease** release, which is what keeps
+/// betas out of it.
+pub const STABLE_ENDPOINT: &str =
+    "https://github.com/drmowinckels/entracte/releases/latest/download/latest.json";
+
+/// Signed manifest for the beta line, published to a rolling
+/// `channel-beta` release. It cannot use `releases/latest`: beta releases
+/// are marked prerelease (so they never hijack the stable pointer), and
+/// `releases/latest` skips prereleases — pointing the beta channel there
+/// would resolve to the stable manifest, which is how #238 broke the
+/// update check when every release was a prerelease.
+pub const BETA_ENDPOINT: &str =
+    "https://github.com/drmowinckels/entracte/releases/download/channel-beta/latest.json";
+
+/// The channel's manifest URL, parsed into a `Url`.
+///
+/// Split out from [`check_channel`] so the parse and its error mapping
+/// are unit-testable; what remains in `check_channel` is live-runtime
+/// glue (`updater_builder`, a network fetch) with no mockable surface.
+pub fn channel_endpoint_url(channel: UpdateChannel) -> Result<tauri::Url, String> {
+    channel_endpoint(channel)
+        .parse()
+        .map_err(|e| format!("invalid updater endpoint for {channel:?}: {e}"))
+}
+
+/// The manifest URL a channel reads from.
+///
+/// This is the *entire* mechanism separating the two lines. The version
+/// comparator cannot assist: semver ranks a prerelease above the stable
+/// release it precedes (`0.1.1-beta.1 > 0.1.0`), so a beta manifest
+/// reaching a stable install would be offered and installed. Keeping
+/// betas out of `releases/latest` — by marking those releases prerelease
+/// in `release.yml` — is therefore load-bearing, not cosmetic.
+pub fn channel_endpoint(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => STABLE_ENDPOINT,
+        UpdateChannel::Beta => BETA_ENDPOINT,
+    }
+}
 
 /// Result of checking the updater endpoint for a newer Entracte build.
 ///
@@ -61,9 +103,32 @@ pub fn build_update_info(running_version: String, update: Option<UpdatePayload>)
 /// SemVer default. Errors stringify the underlying plugin / transport
 /// failure for display in the About tab.
 #[tauri::command]
-pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
+pub async fn check_for_update(
+    app: AppHandle,
+    scheduler: tauri::State<'_, crate::scheduler::Scheduler>,
+) -> Result<UpdateInfo, String> {
+    check_channel(app, active_channel(&scheduler).await).await
+}
+
+/// The channel the running profile is set to.
+///
+/// Extracted from [`check_for_update`] so that "the check follows the
+/// saved channel, not a hardcoded one" is an actually tested claim —
+/// the command itself cannot be unit-tested, because `updater_builder`
+/// panics without the updater plugin and a real check would hit the
+/// network.
+pub async fn active_channel(scheduler: &crate::scheduler::Scheduler) -> UpdateChannel {
+    scheduler.settings.lock().await.update_channel
+}
+
+/// Channel-aware check, split out so the startup path can reuse it
+/// without going through the IPC layer.
+pub async fn check_channel(app: AppHandle, channel: UpdateChannel) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let endpoints = vec![channel_endpoint_url(channel)?];
+    let builder = app.updater_builder().endpoints(endpoints);
+    let updater = builder.map_err(|e| e.to_string())?.build();
+    let updater = updater.map_err(|e| e.to_string())?;
     let payload = updater
         .check()
         .await
@@ -100,12 +165,13 @@ pub fn update_notification(info: &UpdateInfo) -> Option<(String, String)> {
 /// build neither spawns a task nor fires a real OS notification; the decision
 /// logic lives in the pure, tested `update_notification`.
 #[cfg(not(test))]
-pub fn spawn_startup_check(app: AppHandle, enabled: bool) {
-    if !enabled {
+pub fn spawn_startup_check(app: AppHandle, settings: &crate::scheduler::Settings) {
+    if !settings.auto_check_updates {
         return;
     }
+    let channel = settings.update_channel;
     tauri::async_runtime::spawn(async move {
-        match check_for_update(app.clone()).await {
+        match check_channel(app.clone(), channel).await {
             Ok(info) => {
                 if let Some((title, body)) = update_notification(&info) {
                     use tauri_plugin_notification::NotificationExt;
@@ -118,11 +184,93 @@ pub fn spawn_startup_check(app: AppHandle, enabled: bool) {
 }
 
 #[cfg(test)]
-pub fn spawn_startup_check(_app: AppHandle, _enabled: bool) {}
+pub fn spawn_startup_check(_app: AppHandle, _settings: &crate::scheduler::Settings) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn active_channel_reads_the_saved_setting() {
+        use crate::scheduler::UpdateChannel;
+        for want in [UpdateChannel::Stable, UpdateChannel::Beta] {
+            let settings = crate::scheduler::Settings {
+                update_channel: want,
+                ..Default::default()
+            };
+            let (_dir, sched) = crate::test_support::test_scheduler(settings);
+            assert_eq!(
+                active_channel(&sched).await,
+                want,
+                "the update check must follow the saved channel"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_url_parses_for_every_channel() {
+        for channel in [UpdateChannel::Stable, UpdateChannel::Beta] {
+            let url = channel_endpoint_url(channel)
+                .unwrap_or_else(|e| panic!("{channel:?} endpoint should parse: {e}"));
+            assert_eq!(url.scheme(), "https", "{channel:?} must be https");
+            assert_eq!(url.as_str(), channel_endpoint(channel));
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_maps_each_channel_to_its_own_manifest() {
+        assert_eq!(channel_endpoint(UpdateChannel::Stable), STABLE_ENDPOINT);
+        assert_eq!(channel_endpoint(UpdateChannel::Beta), BETA_ENDPOINT);
+        assert_ne!(
+            channel_endpoint(UpdateChannel::Stable),
+            channel_endpoint(UpdateChannel::Beta),
+            "the two channels must not share a manifest"
+        );
+    }
+
+    #[test]
+    fn only_the_stable_channel_uses_the_releases_latest_pointer() {
+        // This is the invariant that keeps betas off stable installs, and
+        // it cannot be delegated to the version comparator: semver ranks
+        // `0.1.1-beta.1` ABOVE `0.1.0`, so a beta manifest read by a
+        // stable install would be offered and installed. Separation is
+        // purely a function of which URL each channel reads.
+        assert!(
+            channel_endpoint(UpdateChannel::Stable).contains("/releases/latest/"),
+            "stable reads GitHub's latest pointer, which skips prereleases"
+        );
+        assert!(
+            !channel_endpoint(UpdateChannel::Beta).contains("/releases/latest/"),
+            "beta must NOT read the latest pointer — it skips prereleases, so \
+             the beta channel would silently resolve to the stable manifest (#238)"
+        );
+    }
+
+    #[test]
+    fn beta_endpoint_targets_the_rolling_channel_release() {
+        // The beta manifest lives on a fixed, rolling tag rather than a
+        // versioned one, so the URL compiled into the binary keeps
+        // resolving as new betas ship.
+        assert!(channel_endpoint(UpdateChannel::Beta).contains("/releases/download/channel-beta/"));
+        assert!(channel_endpoint(UpdateChannel::Beta).ends_with("/latest.json"));
+    }
+
+    #[test]
+    fn both_endpoints_are_parseable_urls() {
+        // `check_channel` parses these into `Url`; a typo here would fail
+        // at runtime on every check rather than at compile time.
+        for channel in [UpdateChannel::Stable, UpdateChannel::Beta] {
+            let raw = channel_endpoint(channel);
+            assert!(
+                raw.parse::<tauri::Url>().is_ok(),
+                "{channel:?} endpoint is not a valid URL: {raw}"
+            );
+            assert!(
+                raw.starts_with("https://"),
+                "{channel:?} endpoint must be https"
+            );
+        }
+    }
 
     #[test]
     fn notification_announces_an_available_update_with_both_versions() {

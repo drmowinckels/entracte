@@ -102,6 +102,22 @@ The System tab covers app/OS integration.
 - **Tray countdown** — show a live `M:SS` / `MM:SS` countdown next to the tray icon, ticking down to the next break. Choose whether it tracks the next micro break, the next long break, or whichever is sooner. Defaults to on, target "next". Cleared while paused (shows "paused") and during an active break. macOS shows the text right next to the menu-bar icon; Linux shows it where the tray applet renders titles (varies by desktop environment). Windows does not support tray titles, so the toggle has no visible effect there.
 - **Show advanced (hooks)** (collapsible) — bind shell commands to break events (`break_start` / `break_end` / `break_postponed` / `break_skipped` / `pause_start` / `pause_end`). Off by default; only enable if you understand the security risk of letting arbitrary commands run. Each hook row has an **event picker**, an **Insert template…** menu of editable starter commands (log to a file, pause/resume music, desktop notification, Slack status, Home Assistant scene — all plain local commands you fill in, no bundled integrations), and a **Test** button that runs the command once and shows its stdout/stderr and exit code so you can see what it does before relying on it. Commands run via argv with no shell, so pipes/redirects/`$ENV` need an explicit `sh -c "…"`; the variables `$ENTRACTE_EVENT`, `$ENTRACTE_KIND`, `$ENTRACTE_DURATION_SECS`, and `$ENTRACTE_OUTCOME` are available. Saving still requires confirming a native dialog.
 
+## Updates
+
+Entracte checks for new versions itself; the controls live on the **About** tab.
+
+- **Check for updates** — checks right now and, if there is a newer build, links to its release page.
+- **Automatically check for updates on launch** — one silent check at startup, with a desktop notification only when something is available. On by default. Being offline is never nagged about.
+- **Update channel** — which release line you follow.
+  - **Stable only** (default) — full releases only.
+  - **Beta (weekly test builds)** — also offers the weekly prerelease builds. You get fixes and new features earlier, in exchange for less testing than a stable release gets.
+
+::: tip Switching back to stable does not downgrade you
+Leaving the beta channel stops you being offered _new_ betas; it does not move you back. You keep the build you have until a stable release overtakes it — which happens as soon as the stable version your beta was previewing ships. If you want to return to stable immediately, reinstall from the [release page](https://github.com/drmowinckels/entracte/releases).
+:::
+
+Homebrew installs update through `brew upgrade --cask entracte` instead, and that tap follows the stable line only — the channel setting does not affect it.
+
 ## Insights
 
 The Insights tab gathers all stats.

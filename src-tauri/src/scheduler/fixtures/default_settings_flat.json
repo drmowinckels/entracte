@@ -46,6 +46,7 @@
   "long_manual_finish": false,
   "autostart_enabled": false,
   "auto_check_updates": true,
+  "update_channel": "stable",
   "micro_sound": {
     "mode": "end_chime",
     "sound_id": "337048",
