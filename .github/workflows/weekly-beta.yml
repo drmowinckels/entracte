@@ -1,0 +1,191 @@
+name: Weekly beta
+
+# Cuts a beta release once a week, but only when something actually changed.
+#
+# Betas feed the in-app beta channel (see promote-beta-manifest.yml and
+# `updater::channel_endpoint`). They are prereleases of the next patch:
+# with 0.0.13 released, the line is v0.0.14-beta.1, -beta.2, … and the
+# counter restarts once 0.0.14 ships. `scripts/next-beta-version.mjs` owns
+# that arithmetic and is unit-tested, because reusing a released tag or
+# skipping the line are both bad outcomes for a shell one-liner to risk.
+#
+# A quiet week builds nothing. Every beta costs an Apple notarisation and a
+# SignPath review slot, so "no commits since the last beta" exits before the
+# release pipeline is touched.
+#
+# Two things here are non-obvious and load-bearing:
+#
+# 1. A tag pushed with GITHUB_TOKEN does NOT trigger `release.yml`. GitHub
+#    documents that "events triggered by the GITHUB_TOKEN will not create a
+#    new workflow run", and a tag push is a push event — so relying on
+#    release.yml's `on: push: tags` would silently do nothing. The exception
+#    the docs name is `workflow_dispatch`, which "always creates workflow
+#    runs", so the release is dispatched explicitly against the new tag.
+#    That is also the flow documented for re-running a release against an
+#    existing tag, so it is a supported path rather than a workaround.
+#
+# 2. The tag cannot simply point at main. `release.yml` builds whatever
+#    version is in the manifests, so tagging main would produce artifacts
+#    labelled with the *stable* version — and beta users would never be
+#    offered them, because the updater compares versions and 0.0.13 is not
+#    greater than 0.0.13. So the beta version is committed on a detached
+#    HEAD and the tag points there. main keeps the stable version.
+
+on:
+  schedule:
+    # Mondays 08:00 UTC — early enough that a bad beta has the working week
+    # to surface, rather than landing on a Friday.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Cut a beta even if nothing changed since the last one"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # push the beta tag
+  actions: write # dispatch release.yml against it
+  issues: write # report a failed run
+
+concurrency:
+  group: weekly-beta
+  cancel-in-progress: false
+
+jobs:
+  cut-beta:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history and tags: the version arithmetic reads every tag, and
+      # the quiet-week check counts commits since one of them.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: Work out the next beta
+        id: plan
+        run: |
+          tags=$(git tag -l 'v*')
+          version=$(printf '%s\n' "$tags" | node scripts/next-beta-version.mjs)
+          since=$(printf '%s\n' "$tags" | node scripts/next-beta-version.mjs --since)
+          tag="v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::${tag} already exists — refusing to move a released tag"
+            exit 1
+          fi
+
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "since=${since}"
+          } >> "$GITHUB_OUTPUT"
+          echo "next beta ${tag}, measured against ${since}"
+
+      - name: Skip a quiet week
+        id: changed
+        env:
+          SINCE: ${{ steps.plan.outputs.since }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          count=$(git rev-list --count "${SINCE}..HEAD")
+          echo "${count} commit(s) on main since ${SINCE}"
+
+          if [ "$count" -eq 0 ] && [ "$FORCE" != "true" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### No beta this week"
+              echo ""
+              echo "No commits on \`main\` since \`${SINCE}\`, so there is nothing to ship."
+              echo "Skipped before building, so this cost no notarisation or signing capacity."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit the beta version and tag it
+        if: steps.changed.outputs.proceed == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          node scripts/set-version.mjs "$VERSION"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Detached on purpose: this commit exists only to carry the beta
+          # version for the build. Pushing it to main would leave the stable
+          # line claiming to be a prerelease.
+          git checkout -q --detach
+          git add package.json package-lock.json src-tauri/tauri.conf.json \
+                  src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -q -m "Beta ${VERSION}"
+
+          git tag -a "$TAG" -m "Beta ${VERSION}"
+          # Pushing the tag carries its commit with it; no branch is updated.
+          git push origin "refs/tags/${TAG}"
+          echo "pushed ${TAG} at $(git rev-parse --short HEAD)"
+
+      - name: Dispatch the release build
+        if: steps.changed.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          # `workflow_dispatch` is the documented exception to "GITHUB_TOKEN
+          # events do not start workflows", so this is what actually makes the
+          # release run. A plain tag push here would be silently inert.
+          gh workflow run release.yml --ref "$TAG"
+          {
+            echo "### Beta \`${TAG}\` tagged"
+            echo ""
+            echo "Release build dispatched against the tag. The draft still needs"
+            echo "publishing by hand; publishing is what promotes the manifest to"
+            echo "the beta channel."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Nothing consumes this workflow's result, so a red run is invisible and
+      # the beta line would just quietly stop — the failure mode that let
+      # bump-cask break for eleven releases (#349).
+      - name: Report a failed run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          tag="${TAG:-unknown}"
+          title="weekly beta failed (${tag})"
+
+          # Body built in a file, not `body=$(cat <<EOF …)`: bash tracks quotes
+          # through a heredoc nested in `$( )`, so an apostrophe in the prose
+          # would make this step a syntax error — in a step that only runs once
+          # something else has already gone wrong.
+          cat > "${RUNNER_TEMP}/weekly-beta-failure.md" <<EOF
+          The weekly beta run failed before tagging \`${tag}\`.
+
+          **Run:** ${RUN_URL}
+
+          No beta shipped this week. The stable channel is unaffected, and beta
+          installs stay on the previous beta.
+
+          To retry, re-run this workflow from the Actions tab. It takes a
+          \`force\` input for the case where nothing changed but a beta is
+          wanted anyway.
+          EOF
+
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -1)
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "${RUNNER_TEMP}/weekly-beta-failure.md"
+          else
+            gh issue create --title "$title" --label bug --body-file "${RUNNER_TEMP}/weekly-beta-failure.md"
+          fi
