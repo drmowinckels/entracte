@@ -4,7 +4,9 @@ Entracte ships from GitHub Actions, triggered by a SemVer tag on `main`. The pip
 
 ## Cutting a release
 
-1. **Bump the version** in **five** places — they must stay in lockstep:
+1. **Bump the version** with `npm run version:set -- <version>` (e.g. `npm run version:set -- 0.0.14`). It rewrites every file that carries the version and fails loudly if any of them does not contain exactly the expected number of version fields, so a partial bump is not possible.
+
+   It covers **five** places, which is why doing it by hand is discouraged:
    - `package.json` `"version"`
    - `package-lock.json` — both the root `"version"` **and** `packages[""].version`
    - `src-tauri/tauri.conf.json` `"version"`
@@ -62,6 +64,17 @@ git push origin v0.1.1-beta.1
 Promotion runs on `release: published` rather than during the build because a draft release's assets are not publicly downloadable — promoting earlier would advertise URLs that 404 for every beta user until someone published the draft. It verifies the manifest's version matches the tag and that every platform entry is signed before promoting, refuses a non-prerelease tag, and files an issue if it fails (nothing downstream would otherwise notice, the lesson of [#349](https://github.com/drmowinckels/entracte/issues/349)).
 
 The `channel-beta` release is itself marked prerelease, and the workflow re-asserts that on every run. If it were ever an ordinary release it would become `releases/latest` and serve the beta manifest to the entire stable channel.
+
+### Weekly betas
+
+[`weekly-beta.yml`](https://github.com/drmowinckels/entracte/blob/main/.github/workflows/weekly-beta.yml) cuts one automatically on Mondays, and **skips quiet weeks** — if `main` has no commits since the last beta it exits before building, because each beta costs an Apple notarisation and a SignPath review slot. It takes a `force` input for the case where you want one anyway.
+
+Two parts of it are easy to get wrong if you ever rewrite it:
+
+- **The tag cannot point at `main`.** `release.yml` builds whatever version is in the manifests, so a tag on `main` produces artifacts labelled with the _stable_ version — and beta users are never offered them, because the updater compares versions and `0.0.13 > 0.0.13` is false. The workflow commits the beta version on a detached `HEAD` and tags that, leaving `main` on the stable version.
+- **The tag push does not start the release.** GitHub does not create workflow runs for events triggered by `GITHUB_TOKEN`, and a tag push is a push event, so `release.yml`'s `on: push: tags` stays inert. `workflow_dispatch` is the documented exception, so the workflow dispatches `release.yml` against the new tag explicitly. Swapping that back to a plain tag push would silently stop producing betas.
+
+The version arithmetic lives in [`scripts/next-beta-version.mjs`](https://github.com/drmowinckels/entracte/blob/main/scripts/next-beta-version.mjs) and is unit-tested: betas are prereleases of the next patch (`v0.0.14-beta.1`, `-beta.2`, …) and the counter restarts once that patch ships as a stable release.
 
 ### What betas do not touch
 
