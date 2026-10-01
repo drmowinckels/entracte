@@ -198,3 +198,5 @@ unacked
 RUSTSEC
 preopened
 dryrun
+worktree
+worktrees
