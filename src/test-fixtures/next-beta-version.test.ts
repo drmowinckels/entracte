@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 
-// @ts-expect-error -- plain .mjs build script, no type declarations
 import {
   nextBetaVersion,
   lastReleasedTag,

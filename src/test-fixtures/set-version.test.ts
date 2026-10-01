@@ -9,7 +9,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// @ts-expect-error -- plain .mjs build script, no type declarations
 import { applyVersion, edits, VERSION_RE } from "../../scripts/set-version.mjs";
 
 /**
@@ -164,8 +163,9 @@ describe("set-version", () => {
     // Rebuilding the matcher with only the `g` flag silently dropped `m`,
     // which made `^version = "` match nothing and report 0 fields.
     const cargo = edits("1.2.3", "entracte-desktop").find(
-      (e: { file: string }) => e.file === "src-tauri/Cargo.toml",
+      (e) => e.file === "src-tauri/Cargo.toml",
     );
+    if (!cargo) throw new Error("no Cargo.toml edit was produced");
     expect(cargo.find.flags).toContain("m");
   });
 
