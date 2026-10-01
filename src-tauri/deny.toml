@@ -19,12 +19,28 @@ unmaintained = "workspace"
 unsound = "all"
 ignore = [
   # RUSTSEC-2024-0429: glib's VariantStrIter has unsound Iterator /
-  # DoubleEndedIterator impls. No patched glib version exists yet; it is a
-  # transitive dependency via Tauri's Linux GTK3 backend and cannot be
-  # upgraded independently of Tauri. Remove this ignore once a patched glib
-  # is published and pulled into a Tauri release.
+  # DoubleEndedIterator impls. Affects >=0.15.0,<0.20.0; we are on 0.18.5.
+  #
+  # A patch DOES exist (glib >=0.20.0) — the earlier note here claiming
+  # otherwise was out of date. We still cannot take it: 0.18.5 arrives as
+  # glib <- atk <- gtk <- libappindicator <- tray-icon <- tauri, so the
+  # whole GTK3 stack has to move and that is Tauri's call, not ours.
+  #
+  # Not reachable regardless. The five affected functions are all
+  # VariantStrIter iterator methods (next / nth / last / next_back /
+  # nth_back), and the only way to obtain a VariantStrIter is
+  # `Variant::array_iter_str()`. Nothing calls it: across every crate in
+  # the Linux dependency graph — tauri, gtk, gio, gdk, atk, pango, cairo,
+  # libappindicator, tray-icon, wry, webkit2gtk — only glib itself even
+  # mentions the type, and glib's own references are a doc comment and unit
+  # tests. Entracte never uses the glib crate at all; the GVariant values
+  # it reads come from `gsettings` / `gdbus` as TEXT over a shell-out and
+  # are parsed by hand (see dnd.rs, media.rs).
+  #
+  # Reachable again if anything starts calling `array_iter_str`, or if
+  # Entracte takes a direct glib dependency.
   # https://rustsec.org/advisories/RUSTSEC-2024-0429
-  # Tracking: https://github.com/drmowinckels/entracte/issues/84
+  # Analysis: https://github.com/drmowinckels/entracte/issues/84
   "RUSTSEC-2024-0429",
 
   # The three below are ignored because they are NOT REACHABLE from this
