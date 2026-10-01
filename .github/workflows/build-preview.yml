@@ -99,11 +99,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Guard the Scoop portable zip (#359). The release job packages it with
-      # pwsh, which `audit:workflow-shell` cannot check (it parses bash only)
-      # and which nothing else runs before a real release — so a wrong exe
-      # path or an empty archive would first surface at release time, with the
-      # Windows bundles already built. Same class of bug as the AppImage icon
-      # below: invisible unless something looks inside the archive.
+      # pwsh, which `audit:workflow-shell` cannot check (it parses bash only),
+      # so a wrong exe path or an empty archive would otherwise first surface
+      # at release time, with the Windows bundles already built. Same class of
+      # bug as the AppImage icon below: invisible unless something looks inside
+      # the archive.
+      #
+      # This job is opt-in (`build:installers`), so this is a pre-release
+      # smoke test to run when the packaging changes — not a per-PR gate.
       #
       # `--debug` here, so the exe is under target/debug.
       - name: Verify the portable zip can be packaged
