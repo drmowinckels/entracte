@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      allow_version_mismatch:
+        description: "Build even if the tag disagrees with the manifests (throwaway dry-run tags only)"
+        type: boolean
+        default: false
 
 # Default to least-privilege. Each job below escalates explicitly when it
 # needs to upload artifacts / draft releases / request an OIDC token.
@@ -29,6 +34,68 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # `publish-updater-manifest` takes latest.json's `version` from the
+      # TAG, while the bundles are named from the manifests. If those
+      # disagree, the manifest advertises a version the installed build does
+      # not report: the updater offers the update, installs a build that
+      # still calls itself the old version, and offers the same update again
+      # — forever, for everyone on that channel.
+      #
+      # Observed concretely on a dry-run tag (v0.0.14-dryrun.1 produced a
+      # manifest advertising 0.0.14-dryrun.1 pointing at Entracte_0.0.13_*
+      # bundles), which is why this is a hard gate rather than a comment.
+      # `shipped_version_agrees_across_every_manifest` covers the manifests
+      # agreeing with each other; only the tag can be checked here.
+      - name: Refuse a tag that disagrees with the manifests
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          ALLOW_MISMATCH: ${{ inputs.allow_version_mismatch }}
+        run: |
+          set -euo pipefail
+          case "$REF_NAME" in
+            v*) version="${REF_NAME#v}" ;;
+            *)
+              echo "::error::'${REF_NAME}' is not a v-prefixed tag; release.yml expects v<version>"
+              exit 1
+              ;;
+          esac
+
+          conf=$(jq -r '.version' src-tauri/tauri.conf.json)
+          crate=$(sed -n -E 's/^version = "(.*)"$/\1/p' src-tauri/Cargo.toml | head -1)
+
+          # Collect first, annotate after: when the override is in play this
+          # run succeeds, and ::error:: annotations on a green run read as a
+          # failure that did not happen.
+          problems=""
+          if [ "$conf" != "$version" ]; then
+            problems="${problems}tag says ${version}, src-tauri/tauri.conf.json says ${conf}"$'\n'
+          fi
+          if [ "$crate" != "$version" ]; then
+            problems="${problems}tag says ${version}, src-tauri/Cargo.toml says ${crate}"$'\n'
+          fi
+
+          if [ -z "$problems" ]; then
+            echo "tag ${REF_NAME} matches the manifests (${version})"
+            exit 0
+          fi
+
+          # Deliberately only reachable via workflow_dispatch: a real release
+          # arrives as a tag push, which has no way to set this input.
+          if [ "${ALLOW_MISMATCH:-false}" = "true" ]; then
+            printf '%s' "$problems" | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::warning::${line}"
+            done
+            echo "::warning::accepted via allow_version_mismatch. The updater manifest from this run advertises ${version} while the bundles report ${conf}, so installing it would loop on the same update. Dry-run only — never publish this draft."
+            exit 0
+          fi
+
+          printf '%s' "$problems" | while IFS= read -r line; do
+            [ -n "$line" ] && echo "::error::${line}"
+          done
+          echo "::error::refusing to build. Run 'npm run version:set -- ${version}', commit, and retag. For a throwaway dry-run tag, dispatch this workflow with allow_version_mismatch=true instead."
+          exit 1
+
       - name: Refuse placeholder pubkey
         run: |
           set -euo pipefail
