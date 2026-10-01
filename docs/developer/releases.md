@@ -4,11 +4,16 @@ Entracte ships from GitHub Actions, triggered by a SemVer tag on `main`. The pip
 
 ## Cutting a release
 
-1. **Bump the version** in two places — they must stay in lockstep:
+1. **Bump the version** in **five** places — they must stay in lockstep:
    - `package.json` `"version"`
+   - `package-lock.json` — both the root `"version"` **and** `packages[""].version`
    - `src-tauri/tauri.conf.json` `"version"`
+   - `src-tauri/Cargo.toml` `version`
+   - `src-tauri/Cargo.lock` — the `entracte` package entry (cargo rewrites this from `Cargo.toml` on the next build, so building once is enough)
 
-   Tauri uses `tauri.conf.json` for the bundle identifier and updater payload; the in-app `check_for_update` command compares the running version against the latest GitHub tag, so a drift here will surface as a phantom "update available".
+   Tauri uses `tauri.conf.json` for the bundle identifier and updater payload; the in-app `check_for_update` command compares the running version against the latest GitHub tag, so a drift here will surface as a phantom "update available" that never resolves.
+
+   This list previously named only the first and third, which would have left the Rust crate and the npm lockfile behind. The test `updater::tests::shipped_version_agrees_across_every_manifest` now fails on any mismatch, so a partial bump is caught by `cargo test` rather than discovered after a release.
 
 2. **Commit and merge to `main`** through a PR like any other change.
 

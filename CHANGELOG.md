@@ -7,6 +7,8 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+## [0.0.13] — 2026-10-01
+
 ### Added
 
 - **Choose whether you get beta builds.** A new **Update channel** setting on the About tab. **Stable only** (the default, and what every existing install stays on) offers full releases. **Beta** also offers the weekly test builds, so you get fixes and new features earlier in exchange for less testing than a stable release gets. Switching back to stable stops new betas being offered but does not move you backwards — you keep the build you have until a stable release passes it, which happens as soon as the version your beta was previewing ships. Homebrew installs follow the stable line only, since `brew` cannot see this setting.
