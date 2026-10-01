@@ -77,6 +77,13 @@ brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte
 brew install --cask drmowinckels/entracte/entracte
 ```
 
+**Windows** — via Scoop (the bucket lives in this repo too):
+
+```powershell
+scoop bucket add entracte https://github.com/drmowinckels/entracte
+scoop install entracte/entracte
+```
+
 **Linux / Windows** — download the `.deb`, `.rpm`, `.AppImage`, `.msi`, or `.exe` from the [Releases page](https://github.com/drmowinckels/entracte/releases) (pick the latest tag; pre-releases — the `0.0.X` beta line — don't surface under `releases/latest`).
 
 > **Windows users:** the `.msi` / `.exe` aren't code-signed yet — SignPath Foundation turned down our first application on visibility grounds (the project is too new). SmartScreen will warn you when you run the installer; click **More info → Run anyway** to proceed. See [the install guide](https://entracte.drmowinckels.io/guide/install#windows) for how you can [help us get there](https://entracte.drmowinckels.io/guide/install#help-us-get-windows-signed) — stars, forks, mentions, and contributions all count.

@@ -198,3 +198,10 @@ unacked
 RUSTSEC
 preopened
 dryrun
+Scoop
+scoop
+checkver
+autoupdate
+pwsh
+APPDATA
+Chocolatey

@@ -86,7 +86,7 @@ The version arithmetic lives in [`scripts/next-beta-version.mjs`](https://github
 
 ### What betas do not touch
 
-The Homebrew cask tracks stable only (`bump-cask.yml` skips prereleases): a `brew` install cannot see the in-app channel setting, so it has no way to opt out. Offering betas over Homebrew would need a separate `entracte-beta` cask.
+The Homebrew cask tracks stable only (`bump-cask.yml` skips prereleases): a `brew` install cannot see the in-app channel setting, so it has no way to opt out. Offering betas over Homebrew would need a separate `entracte-beta` cask. The Scoop bucket is stable-only for exactly the same reason (`bump-scoop.yml` refuses prerelease tags, and its `checkver` reads `releases/latest`, which GitHub excludes prereleases from).
 
 ## Homebrew cask
 
@@ -97,6 +97,14 @@ It commits directly rather than opening a PR because GitHub Actions is not permi
 **If the bump fails, it files an issue against itself.** Nothing downstream depends on this workflow — a red run blocks neither the release nor any merge — so it announces its own failure rather than waiting to be noticed. That is deliberate: the PR-based version of this step failed on every release from `v0.0.2` to `v0.0.12`, eleven in a row, and the cask sat stranded behind the latest release because nobody was watching the run ([#349](https://github.com/drmowinckels/entracte/issues/349)).
 
 To bump by hand — after a failure, or for a tag that predates the workflow — re-run it from the Actions tab via **Run workflow**, which takes the tag as an input.
+
+## Scoop bucket
+
+Publishing also fires [`.github/workflows/bump-scoop.yml`](https://github.com/drmowinckels/entracte/blob/main/.github/workflows/bump-scoop.yml), the Windows counterpart ([#359](https://github.com/drmowinckels/entracte/issues/359)). It regenerates `bucket/entracte.json` from [`scripts/scoop-manifest.mjs`](https://github.com/drmowinckels/entracte/blob/main/scripts/scoop-manifest.mjs), reading the `Entracte_<version>_x64-portable.zip` checksum out of the release's `SHA256SUMS.txt`, and commits it straight to `main` — same reasoning, same failure-reports-itself step, same `ref: main` checkout (a `release: published` checkout defaults to the _tag_, which is behind `main` by everything merged since).
+
+Scoop's bucket is a `bucket/` directory in an ordinary repository, so unlike a Homebrew tap it needs no second repo and no cross-repo token. The manifest points at the portable zip rather than the `.msi` / `.exe`, because Scoop extracts archives rather than running installers. `build-windows-unsigned` builds that zip by staging `src-tauri/target/release/entracte.exe` as `Entracte.exe` next to the `LICENSE` and compressing it; the asset name is spelled in three places (`release.yml`, `bump-scoop.yml`, the generator) and [`src/test-fixtures/scoop-manifest.test.ts`](https://github.com/drmowinckels/entracte/blob/main/src/test-fixtures/scoop-manifest.test.ts) pins them together, because drift there is a 404 that only surfaces on a user's machine.
+
+The zip does not pass through SignPath: its signing policy covers the two bundles, so the exe inside stays Authenticode-unsigned even once SignPath is approved. That matches what every Windows artifact ships as today, and the install guide says so.
 
 ## What the workflow does
 

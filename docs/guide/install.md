@@ -32,6 +32,7 @@ brew install --cask drmowinckels/entracte/entracte
 
 - `Entracte_<version>_x64-setup.exe` — NSIS installer
 - `Entracte_<version>_x64_en-US.msi` — MSI for managed deployment
+- `Entracte_<version>_x64-portable.zip` — the bare app, no installer (what Scoop installs)
 
 ::: warning Currently unsigned
 Windows installers are **not code-signed yet**. When you run the installer, Windows SmartScreen will show a blue "Windows protected your PC" dialog naming an "unknown publisher". To continue: click **More info**, then **Run anyway**.
@@ -43,6 +44,23 @@ We applied to the [SignPath Foundation](https://signpath.org/) free OSS code-sig
 
 Double-click the installer; once past the SmartScreen prompt, the standard Windows installation wizard takes over.
 
+#### Scoop
+
+The project ships its own [Scoop](https://scoop.sh/) bucket, hosted in this repo — a bucket is just a repository with a `bucket/` directory, so no second repo is needed:
+
+```powershell
+scoop bucket add entracte https://github.com/drmowinckels/entracte
+scoop install entracte/entracte
+```
+
+`scoop update entracte` handles updates. Scoop installs the portable zip rather than either installer — it extracts archives instead of running setup programs — and puts the CLI on `PATH` as `entracte`, so `entracte pause 30m` and friends work from any shell. Scoop also verifies the download against the SHA-256 in the manifest, which is read from the release's own `SHA256SUMS.txt`; the exe itself is unsigned, same as the installers above, so no SmartScreen prompt appears but no publisher is attested either.
+
+Your settings live in `%APPDATA%\io.drmowinckels.entracte`, outside Scoop's app directory, so `scoop uninstall entracte` leaves them in place.
+
+One caveat of a portable install: the NSIS installer bootstraps the Microsoft Edge WebView2 Runtime, and extracting an archive cannot. Windows 11 and up-to-date Windows 10 already have it; if Entracte's window opens blank, install the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) and relaunch.
+
+Like the Homebrew cask, the bucket tracks **stable releases only** — a `scoop` install cannot see the in-app update-channel setting, so it has no way to opt out of betas. For betas, install from the [release page](https://github.com/drmowinckels/entracte/releases) and switch the channel in **Preferences → About**.
+
 #### Help us get Windows signed
 
 SignPath Foundation rejected our first application on the grounds that Entracte doesn't yet show enough public adoption to qualify. They don't judge the code — they look at the project's external footprint. Concrete things that move the needle:
@@ -51,7 +69,7 @@ SignPath Foundation rejected our first application on the grounds that Entracte 
 - 🗣️ Talk about it where you hang out — Reddit (r/macapps, r/windows, r/productivity), Mastodon, Bluesky, blog posts, YouTube, Hacker News. Independent mentions are weighted heavily.
 - 🐛 [File a bug](https://github.com/drmowinckels/entracte/issues/new?template=bug_report.yml), [request a feature](https://github.com/drmowinckels/entracte/issues/new?template=feature_request.yml), or [send some praise](https://github.com/drmowinckels/entracte/issues/new?template=praise.yml) — engagement counts.
 - 🔧 [Contribute a fix](https://github.com/drmowinckels/entracte/blob/main/CONTRIBUTING.md) — being able to point at a contributor list demonstrates a real community.
-- 📦 If you maintain a package repo (Scoop, Chocolatey, winget), packaging Entracte for it adds another data point.
+- 📦 If you maintain a package repo (Chocolatey, winget — [Scoop is covered](#scoop)), packaging Entracte for it adds another data point.
 
 Once we have evidence to satisfy SignPath's criteria, we'll reapply. The CI signing pipeline is already wired up — the day approval comes through, the very next release ships signed with no code changes required. The bring-up notes live in [.github/SIGNPATH_SETUP.md](https://github.com/drmowinckels/entracte/blob/main/.github/SIGNPATH_SETUP.md).
 
