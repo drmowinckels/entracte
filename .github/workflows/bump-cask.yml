@@ -211,6 +211,11 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Without GH_REPO, `gh issue` has no base repository to resolve: the
+          # only step that can fail before the checkout is the tag validation
+          # above, and at that point there is no git remote to infer one from —
+          # so the loud-failure mechanism would itself be silent.
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.meta.outputs.tag }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |

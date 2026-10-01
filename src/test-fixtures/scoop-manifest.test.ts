@@ -48,6 +48,15 @@ describe("Scoop manifest (#359)", () => {
     expect(manifest.bin).toEqual([["Entracte.exe", "entracte"]]);
   });
 
+  it("does not promise CLI output Windows cannot give (#364)", () => {
+    // The release binary is GUI-subsystem, so it never attaches to the calling
+    // console: action commands land, anything that prints is silent. The note
+    // must not read as "the CLI works", which is what the first draft said.
+    const notes = manifest.notes.join(" ");
+    expect(notes).toMatch(/silent on Windows/);
+    expect(notes).not.toMatch(/`entracte help` lists/);
+  });
+
   it("warns about the WebView2 bootstrap a portable install gives up", () => {
     // The NSIS installer installs the runtime if it is missing; extracting a
     // zip cannot, and the symptom is a blank window rather than an error.
@@ -59,6 +68,19 @@ describe("Scoop manifest (#359)", () => {
     expect(template.replace(/\$version/g, "0.0.14")).toBe(
       manifest.architecture["64bit"].url,
     );
+  });
+
+  it("lets autoupdate read the hash instead of downloading the zip", () => {
+    // Scoop would otherwise fetch the whole archive just to digest it, when
+    // the release already publishes the checksum.
+    const hash = manifest.autoupdate.architecture["64bit"].hash.url;
+    expect(hash.replace(/\$version/g, "0.0.14")).toBe(
+      "https://github.com/drmowinckels/entracte/releases/download/v0.0.14/SHA256SUMS.txt",
+    );
+  });
+
+  it("declares the Scoop schema so editors and linters can validate it", () => {
+    expect(manifest.$schema).toMatch(/ScoopInstaller\/Scoop\/.*schema\.json$/);
   });
 
   it("tracks stable releases only, with checkver agreeing", () => {

@@ -3,6 +3,7 @@
 export declare function assetName(version: string): string;
 
 export interface ScoopManifest {
+  $schema: string;
   version: string;
   description: string;
   homepage: string;
@@ -12,7 +13,9 @@ export interface ScoopManifest {
   shortcuts: string[][];
   notes: string[];
   checkver: { url: string; regex: string };
-  autoupdate: { architecture: { "64bit": { url: string } } };
+  autoupdate: {
+    architecture: { "64bit": { url: string; hash: { url: string } } };
+  };
 }
 
 export declare function buildManifest(input: {

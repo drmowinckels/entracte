@@ -98,6 +98,33 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Guard the Scoop portable zip (#359). The release job packages it with
+      # pwsh, which `audit:workflow-shell` cannot check (it parses bash only)
+      # and which nothing else runs before a real release — so a wrong exe
+      # path or an empty archive would first surface at release time, with the
+      # Windows bundles already built. Same class of bug as the AppImage icon
+      # below: invisible unless something looks inside the archive.
+      #
+      # `--debug` here, so the exe is under target/debug.
+      - name: Verify the portable zip can be packaged
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'portable-check'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item src-tauri/target/debug/entracte.exe (Join-Path $stage 'Entracte.exe')
+          Copy-Item LICENSE $stage
+          $zip = Join-Path $env:RUNNER_TEMP 'portable-check.zip'
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try { $names = $archive.Entries.FullName } finally { $archive.Dispose() }
+          Write-Output "portable zip contents: $($names -join ', ')"
+          if ($names -notcontains 'Entracte.exe') {
+            throw "no Entracte.exe at the zip root - the Scoop manifest bin/shortcuts would break"
+          }
+
       # Guard the AppImage's required AppDir files. tauri-bundler < 2.9.4
       # wrote `.DirIcon` and the `.desktop` entry as ABSOLUTE symlinks
       # pointing into the build machine's AppDir, so once the AppImage is

@@ -10,7 +10,7 @@
 // Usage:
 //   node scripts/scoop-manifest.mjs 0.0.14 <sha256-of-the-portable-zip>
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -50,6 +50,8 @@ export function buildManifest({ version, hash }) {
     throw new Error(`not a lowercase sha256 digest: ${hash}`);
   }
   return {
+    $schema:
+      "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
     version,
     description:
       "Cross-platform break reminder named after the theatre interval between acts",
@@ -67,7 +69,11 @@ export function buildManifest({ version, hash }) {
     bin: [["Entracte.exe", "entracte"]],
     shortcuts: [["Entracte.exe", "Entracte"]],
     notes: [
-      "Entracte runs from the tray; `entracte help` lists the CLI.",
+      // No claim that the CLI prints anything: the Windows build is a
+      // GUI-subsystem binary, so it never attaches to the calling console and
+      // every CLI code path is silent (#364). The action commands do reach the
+      // running app, which is what this note promises and no more.
+      "Entracte runs from the tray. `entracte pause 30m` and `entracte resume` reach the running app from any shell; commands that print (help, status) stay silent on Windows until #364 lands.",
       // The NSIS installer bootstraps WebView2; a plain extraction cannot.
       // Windows 11 and up-to-date Windows 10 already ship the runtime, so this
       // is a note rather than a `depends` on a bucket we do not control.
@@ -82,6 +88,11 @@ export function buildManifest({ version, hash }) {
       architecture: {
         "64bit": {
           url: downloadUrl("v$version", assetName("$version")),
+          // Point Scoop's updater at the release's own checksum file instead
+          // of letting it download the whole archive to hash it. Scoop's
+          // default text-file mode matches `<sha256>  <basename>`, which is
+          // exactly what `shasum -a 256` writes into SHA256SUMS.txt.
+          hash: { url: downloadUrl("v$version", "SHA256SUMS.txt") },
         },
       },
     },
@@ -98,10 +109,9 @@ if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
   }
   // Resolved against this module, not the process CWD: the manifest has one
   // home, and a run from the wrong directory should not quietly write a
-  // second one somewhere else.
-  writeFileSync(
-    new URL("../bucket/entracte.json", import.meta.url),
-    renderManifest(buildManifest({ version, hash })),
-    "utf8",
-  );
+  // second one somewhere else. `bucket/` is only tracked by virtue of its
+  // README, so create it rather than ENOENT at release time if that moves.
+  const out = new URL("../bucket/entracte.json", import.meta.url);
+  mkdirSync(new URL("./", out), { recursive: true });
+  writeFileSync(out, renderManifest(buildManifest({ version, hash })), "utf8");
 }
