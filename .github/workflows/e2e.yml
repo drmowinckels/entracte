@@ -139,7 +139,21 @@ jobs:
           # Fire a break: the CLI call only sends the IPC request and returns;
           # the overlay is built in the app process and may not render under
           # xvfb, so we assert the request is accepted, not that it's visible.
-          echo "--- trigger micro ---"
-          "$BIN" trigger micro
+          #
+          # Repeated deliberately. Overlay creation is the only step that
+          # makes the app do a burst of display-server work, and on Linux/X11
+          # that used to race the idle probe's Xlib calls and abort the whole
+          # process (#333). One trigger detected that only by luck; several,
+          # each followed by a liveness check, turn a regression into a
+          # reliable failure instead of a ~7%-of-runs flake.
+          for kind in micro long micro; do
+            echo "--- trigger $kind ---"
+            "$BIN" trigger "$kind"
+            if ! "$BIN" status > alive.json 2>alive.err; then
+              echo "::error::app stopped answering IPC after 'trigger $kind' — it most likely died building the overlay"
+              cat alive.err || true
+              exit 1
+            fi
+          done
 
           echo "smoke test passed on $RUNNER_OS"

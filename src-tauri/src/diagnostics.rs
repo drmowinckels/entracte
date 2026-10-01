@@ -297,7 +297,20 @@ fn format_runtime_snapshot(s: &RuntimeSnapshot) -> String {
     )
 }
 
+/// Describe every attached monitor.
+///
+/// Marshalled onto the main thread: `primary_monitor` and
+/// `available_monitors` reach into the event loop's `window_target` with no
+/// dispatch, so calling them from the `build_diagnostics_report` command's
+/// task — a tokio worker — races the GTK main loop on one X connection and
+/// aborts the process inside libxcb (#333). `MonitorFacts` is plain data, so
+/// the hop hands back something safe to use afterwards. An unreachable main
+/// thread degrades to "no monitors listed" rather than wedging the report.
 fn gather_monitors<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
+    crate::display::on_main_thread(app, |handle| read_monitor_facts(handle)).unwrap_or_default()
+}
+
+fn read_monitor_facts<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
     let primary = app.primary_monitor().ok().flatten();
     let primary_key = primary
         .as_ref()

@@ -276,13 +276,6 @@ fn monitor_rect(m: &tauri::Monitor) -> MonitorRect {
     }
 }
 
-/// How long to wait for the main thread to answer a geometry read before
-/// giving up. Generous enough to absorb a busy event loop, short enough
-/// that a wedged main thread degrades to "no overlay" rather than
-/// stalling the break loop indefinitely.
-#[cfg(not(test))]
-const GEOMETRY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
 /// Read the display layout **on the main thread** and hand back plain data.
 ///
 /// `WryHandle::available_monitors` and `primary_monitor` reach straight into
@@ -295,7 +288,9 @@ const GEOMETRY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// aborts inside libxcb (#333).
 ///
 /// Both reads share a single hop so the returned monitor list and primary
-/// come from one consistent snapshot.
+/// come from one consistent snapshot. Resolving the primary's *index*
+/// happens inside the hop too, so the caller receives only plain data and
+/// never re-touches a live handle.
 ///
 /// Deliberately **not** extended to cover window creation: tauri-runtime-wry
 /// documents that `create_webview` "must be called from a separate thread,
@@ -305,15 +300,11 @@ const GEOMETRY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 ///
 /// Returns `None` if the main thread is unreachable or too slow, which
 /// degrades to "no overlay this time" rather than risking a hang.
-/// Resolving the primary's *index* happens inside the hop too, so the
-/// caller receives only plain data and never re-touches a live handle.
 #[cfg(not(test))]
 fn read_display_geometry<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Option<(Vec<tauri::Monitor>, Option<usize>)> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let handle = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
+    crate::display::on_main_thread(app, |handle| {
         let all = handle.available_monitors().unwrap_or_default();
         let rects: Vec<MonitorRect> = all.iter().map(monitor_rect).collect();
         let primary = handle
@@ -321,18 +312,8 @@ fn read_display_geometry<R: Runtime>(
             .ok()
             .flatten()
             .and_then(|p| monitor_index_by_rect(&monitor_rect(&p), &rects));
-        let _ = tx.send((all, primary));
-    }) {
-        log::warn!("overlay: could not reach the main thread to read monitors: {e}");
-        return None;
-    }
-    match rx.recv_timeout(GEOMETRY_READ_TIMEOUT) {
-        Ok(snapshot) => Some(snapshot),
-        Err(e) => {
-            log::warn!("overlay: timed out reading monitors on the main thread: {e}");
-            None
-        }
-    }
+        (all, primary)
+    })
 }
 
 fn select_overlay_monitors<R: Runtime>(

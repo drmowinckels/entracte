@@ -4,6 +4,7 @@ mod chores_store;
 pub mod cli;
 mod config;
 mod diagnostics;
+mod display;
 mod dnd;
 mod hooks;
 mod ipc;
@@ -118,6 +119,11 @@ fn repoint_stale_autostart_agent(app: &tauri::App) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything can open an X display: Entracte polls the X11 idle
+    // counter from a tokio worker while GTK owns the main thread, and libX11
+    // only serialises that if threading was initialised first (#333).
+    let _ = display::init_display_threading();
+
     let log_level = if cfg!(debug_assertions) {
         log::LevelFilter::Debug
     } else {
