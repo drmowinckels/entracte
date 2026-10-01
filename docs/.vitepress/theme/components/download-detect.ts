@@ -46,6 +46,10 @@ const RULES: {
   { test: /_x64\.dmg$/, os: "macos", rank: 1, label: "Intel", arch: "x64" },
   { test: /-setup\.exe$/, os: "windows", rank: 0, label: "Installer (.exe)" },
   { test: /\.msi$/, os: "windows", rank: 1, label: "MSI" },
+  // The portable zip the Scoop bucket installs (#359). Ranked last for
+  // Windows: it is the right choice for Scoop and for anyone who wants no
+  // installer, but it does not bootstrap the WebView2 runtime.
+  { test: /_x64-portable\.zip$/, os: "windows", rank: 2, label: "Portable (.zip)" },
   { test: /\.AppImage$/, os: "linux", rank: 0, label: "AppImage" },
   { test: /\.deb$/, os: "linux", rank: 1, label: "Debian / Ubuntu (.deb)" },
   { test: /\.rpm$/, os: "linux", rank: 2, label: "Fedora / openSUSE (.rpm)" },
