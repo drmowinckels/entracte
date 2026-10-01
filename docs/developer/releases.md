@@ -32,6 +32,14 @@ Entracte ships from GitHub Actions, triggered by a SemVer tag on `main`. The pip
 
 The same pipeline is reachable via the **Run workflow** button on the Actions tab if you need to dry-run against an existing tag without re-tagging.
 
+::: warning A dry-run on a throwaway tag needs `allow_version_mismatch`
+`release.yml` refuses to build when the tag disagrees with the version in the manifests, because `latest.json` takes its version from the **tag** while the bundles are named from the **manifests**. A mismatch produces a manifest advertising a version the installed build does not report, so the updater offers the update, installs a build that still calls itself the old version, and offers the same update again — indefinitely, for everyone on that channel.
+
+A throwaway tag like `v9.9.9-test.1` is a mismatch by definition, so dispatch the workflow with **`allow_version_mismatch: true`**. The run then warns instead of failing. **Never publish that draft** — delete the tag and the draft once you have inspected the assets and `latest.json`.
+
+The input only exists on `workflow_dispatch`; a real release arrives as a tag push and cannot set it.
+:::
+
 ## Update channels
 
 Two channels, `stable` and `beta`, chosen per install in **Preferences → About** (`update_channel`). The channel selects which signed manifest the updater reads — see `updater::channel_endpoint`:
