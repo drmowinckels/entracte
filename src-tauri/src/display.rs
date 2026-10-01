@@ -115,19 +115,34 @@ where
 {
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
+    let dispatched = app.run_on_main_thread(move || {
         let _ = tx.send(read(&handle));
-    }) {
-        log::warn!("display: could not reach the main thread for a display read: {e}");
-        return None;
+    });
+    match dispatched {
+        Ok(()) => hop_outcome(rx.recv_timeout(MAIN_THREAD_READ_TIMEOUT)),
+        Err(e) => unreachable_main_thread(&e.to_string()),
     }
-    match rx.recv_timeout(MAIN_THREAD_READ_TIMEOUT) {
+}
+
+/// Interpret the hop's answer: the value if the main thread sent one, else a
+/// warning and `None`. Split out so the timeout arm — which no test can
+/// provoke through a live runtime — is still exercised directly.
+fn hop_outcome<T>(outcome: Result<T, std::sync::mpsc::RecvTimeoutError>) -> Option<T> {
+    match outcome {
         Ok(value) => Some(value),
         Err(e) => {
             log::warn!("display: timed out reading display state on the main thread: {e}");
             None
         }
     }
+}
+
+/// Report a main thread that never took the task — the event loop is gone, so
+/// there is nothing to wait for. Split out for the same reason as
+/// [`hop_outcome`]: unreachable through a live runtime, reachable in a test.
+fn unreachable_main_thread<T>(err: &str) -> Option<T> {
+    log::warn!("display: could not reach the main thread for a display read: {err}");
+    None
 }
 
 #[cfg(test)]
@@ -149,6 +164,32 @@ mod tests {
     #[test]
     fn init_display_threading_succeeds_on_this_platform() {
         assert!(init_display_threading());
+    }
+
+    #[test]
+    fn hop_outcome_passes_a_received_value_through() {
+        assert_eq!(hop_outcome(Ok(7u32)), Some(7));
+    }
+
+    #[test]
+    fn hop_outcome_gives_up_on_a_timeout() {
+        assert_eq!(
+            hop_outcome::<u32>(Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+            None
+        );
+    }
+
+    #[test]
+    fn hop_outcome_gives_up_when_the_sender_is_gone() {
+        assert_eq!(
+            hop_outcome::<u32>(Err(std::sync::mpsc::RecvTimeoutError::Disconnected)),
+            None
+        );
+    }
+
+    #[test]
+    fn unreachable_main_thread_yields_nothing() {
+        assert_eq!(unreachable_main_thread::<u32>("event loop closed"), None);
     }
 
     // Windows is excluded from the mock-runtime rig (see `test_support`).
