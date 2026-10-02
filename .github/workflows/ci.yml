@@ -6,7 +6,11 @@ name: Checks
 # triggers — paths-ignore only skips when every changed file is ignored.
 #
 # Spell-check / link-check / dependency audits live in audit.yml with
-# NO paths-ignore filter, so docs-only PRs still get those gates.
+# NO paths-ignore filter, so docs-only PRs still get those gates. The
+# cross-file packaging pins (src/test-fixtures/scoop-manifest.test.ts, which
+# reads release.yml AND docs/.vitepress/.../download-detect.ts) live there too
+# for the same reason: both of those paths are ignored here, so a rename in
+# either would otherwise skip the one test that catches it (#359).
 #
 # `workflow_dispatch` ignores path filters, so a manual rerun always
 # runs the full suite if needed.

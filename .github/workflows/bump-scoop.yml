@@ -1,0 +1,267 @@
+name: Bump Scoop manifest
+
+# Regenerates bucket/entracte.json straight on main whenever a GitHub release
+# is published, so `scoop update entracte` picks it up (#359).
+#
+# Deliberately shaped like bump-cask.yml, because the constraints are the same:
+#
+#   * It commits directly to main. Actions is not permitted to create pull
+#     requests on this repo (`can_approve_pull_request_reviews` is off), which
+#     is what left the cask stranded behind eleven releases (#349). A generated
+#     version-and-checksum bump has nothing to review anyway.
+#   * It checks out `ref: main` explicitly. On a `release: published` event the
+#     default checkout resolves to the *tag* commit, so pushing that to main
+#     would revert everything merged since the release was cut.
+#   * It fails loudly. Nothing downstream consumes this workflow, so a red run
+#     is invisible unless it says something — the final step files (or comments
+#     on) an issue.
+#
+# It runs on `release: published`, not on the tag push that builds the release:
+# `release.yml` produces a DRAFT whose assets 404 for everyone but the
+# maintainer, so bumping then would advertise a download nobody could fetch.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to bump from (e.g. v0.1.2)"
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: bump-scoop-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  bump-scoop:
+    # Stable releases only, for the same reason the cask is stable-only: a
+    # `scoop` install cannot see the in-app update-channel setting, so a beta
+    # pushed through this bucket would reach its users with no way to opt out.
+    # Offering betas over Scoop would need a second `entracte-beta` manifest.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag and version
+        id: meta
+        # Pipe untrusted workflow_dispatch input via env, never interpolate
+        # `${{ inputs.tag }}` into the shell directly — a tag like
+        # `v1.0.0; rm -rf /` would otherwise be evaluated.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ]; then
+            tag="$RELEASE_TAG"
+          else
+            tag="$DISPATCH_TAG"
+          fi
+
+          # Shape validation, not just an injection guard. `release.yml` only
+          # builds `v*` tags, and scripts/scoop-manifest.mjs reconstructs the
+          # download URL as `v${version}`, so anything that is not
+          # `vMAJOR.MINOR.PATCH[-prerelease]` would produce a manifest pointing
+          # at a URL that does not exist. Prereleases are admitted here only so
+          # the next check can reject them with a message that explains why.
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "::error::refusing to use tag '$tag' — expected vMAJOR.MINOR.PATCH (release.yml only builds v-prefixed semver tags)"
+            exit 1
+          fi
+          # The job condition already filters prerelease *events*; this covers
+          # workflow_dispatch, where a human could otherwise type a beta tag
+          # and put a prerelease version into the stable bucket.
+          case "$tag" in
+            *-*)
+              echo "::error::'$tag' is a prerelease tag — the Scoop bucket tracks stable releases only (betas go through the in-app beta channel)"
+              exit 1
+              ;;
+          esac
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      # Must pin to main, and with full history: the commit step rebases if
+      # main moved while the release was being published, and a shallow clone
+      # has no merge base to rebase onto.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      # One step, so the asset name is spelled once: it is also spelled in
+      # release.yml (which builds the zip) and scripts/scoop-manifest.mjs (which
+      # tells Scoop where to get it), and scoop-manifest.test.ts pins the three
+      # against each other — drift is a 404 that only surfaces on a user's
+      # machine. Downloads land in RUNNER_TEMP, never the checkout, because the
+      # next step commits out of this working tree.
+      - name: Regenerate bucket/entracte.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          # Lower-cased deliberately: release.yml's pwsh step spells the asset
+          # with `${version}` too, and the test pins the two spellings together.
+          version: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset="Entracte_${version}_x64-portable.zip"
+          sums="${RUNNER_TEMP}/SHA256SUMS.txt"
+          zip="${RUNNER_TEMP}/${asset}"
+
+          gh release download "$TAG" -D "$RUNNER_TEMP" \
+            --pattern "SHA256SUMS.txt" --pattern "$asset"
+
+          # `gh release download` exits 0 as long as ONE pattern matched, so a
+          # missing zip has to be named here rather than left to a confusing
+          # error further down. release.yml packages the zip with
+          # `continue-on-error`, deliberately, so that a packaging failure
+          # cannot cost the release its signed .msi / .exe — this is the alarm
+          # that trade-off relies on.
+          for f in "$sums" "$zip"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::release ${TAG} has no $(basename "$f") — did the release build the portable zip? (release.yml packages it with continue-on-error)"
+              exit 1
+            fi
+          done
+
+          # The hash goes into the manifest straight from the bytes, because
+          # that is what Scoop will re-digest: this hash is the ONLY integrity
+          # check `scoop install` performs.
+          hash=$(sha256sum "$zip" | cut -d' ' -f1)
+
+          # SHA256SUMS.txt is then a cross-check rather than the source. It is
+          # composed once, over whatever was on the draft at that moment, so a
+          # later `--clobber` re-upload or a partial re-run of `checksums` would
+          # leave it describing a file the release no longer has. Disagreement
+          # means one of the two is stale and neither can be trusted.
+          published=$(awk -v f="$asset" '$2 == f { print $1 }' "$sums")
+          if [ -z "$published" ]; then
+            echo "::error::${asset} is on release ${TAG} but has no line in SHA256SUMS.txt — the checksums job did not see it"
+            echo "SHA256SUMS.txt contents:"
+            cat "$sums"
+            exit 1
+          fi
+          if [ "$published" != "$hash" ]; then
+            echo "::error::SHA256SUMS.txt says ${published} for ${asset}, but the asset on the release digests to ${hash} — one of the two is stale; refusing to publish"
+            exit 1
+          fi
+
+          node scripts/scoop-manifest.mjs "$version" "$hash"
+          cat bucket/entracte.json
+
+      - name: Commit and push to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Stage FIRST, then ask whether anything changed. On the very first
+          # release the manifest is untracked, and `git diff` reports no change
+          # about a file git has never heard of — which would make the one run
+          # that matters most a silent no-op.
+          git add bucket/entracte.json
+          if git diff --cached --quiet; then
+            echo "Manifest already at ${VERSION} — nothing to bump."
+            echo "Scoop manifest already at \`${VERSION}\` — nothing to bump." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git commit -m "chore(scoop): point the bucket at ${TAG}"
+
+          # Retry on a lost race: another commit can land on main between the
+          # checkout and the push. Rebase and try again. A conflict means
+          # someone hand-edited the manifest concurrently, so the rebase fails
+          # the step rather than guessing which side wins.
+          pushed=""
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              pushed="$attempt"
+              break
+            fi
+            echo "push rejected (attempt ${attempt}) — rebasing onto origin/main"
+            if ! git pull --rebase origin main; then
+              git rebase --abort || true
+              echo "::error::Scoop manifest bump conflicts with a concurrent edit to bucket/entracte.json — resolve by hand"
+              exit 1
+            fi
+          done
+
+          if [ -z "$pushed" ]; then
+            echo "::error::could not push the Scoop manifest bump to main after 3 attempts"
+            exit 1
+          fi
+
+          {
+            echo "### Scoop manifest bumped to \`${VERSION}\`"
+            echo
+            echo "Pushed to \`main\` as $(git rev-parse --short HEAD) (attempt ${pushed})."
+            echo
+            echo "\`scoop update entracte\` now picks up ${VERSION}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Same reasoning as bump-cask.yml: nothing downstream consumes this
+      # workflow's result, so a red run is invisible unless it says something.
+      - name: Report a failed bump
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Without GH_REPO, `gh issue` has no base repository to resolve: the
+          # only step that can fail before the checkout is the tag validation
+          # above, and at that point there is no git remote to infer one from —
+          # so the loud-failure mechanism would itself be silent.
+          GH_REPO: ${{ github.repository }}
+          # Taken from the event, NOT from `steps.meta.outputs.tag`: the tag
+          # validation in that step is the one thing that can fail before the
+          # output is published, which is exactly when this reporter runs — and
+          # "failed for unknown" is not a bug report anyone can act on. Same
+          # derivation the `concurrency` group above uses.
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          tag="${TAG:-unknown}"
+          title="bump-scoop failed for ${tag}"
+
+          # Build the body in a FILE, not via `body=$(cat <<EOF …)`. Bash
+          # tracks quotes through a heredoc body nested inside `$( )`, so a
+          # lone apostrophe in the prose makes the whole step a syntax error —
+          # and actionlint does not catch it (see scripts/audit-workflow-shell.mjs).
+          cat > "${RUNNER_TEMP}/bump-scoop-failure.md" <<EOF
+          \`bump-scoop.yml\` failed for \`${tag}\`.
+
+          **Run:** ${RUN_URL}
+
+          \`bucket/entracte.json\` is most likely still pointing at the previous
+          release (or missing entirely, if this was the first one), so
+          \`scoop update entracte\` will not pick this one up until it is bumped.
+          To do it by hand, re-run this workflow from the Actions tab
+          (\`workflow_dispatch\` takes a tag), or run
+          \`node scripts/scoop-manifest.mjs <version> <sha256>\` with the
+          \`Entracte_<version>_x64-portable.zip\` checksum from that release's
+          \`SHA256SUMS.txt\` and commit the result.
+
+          This issue is filed automatically: the workflow has no downstream
+          consumer, so a red run would otherwise be silent — the lesson of #349.
+          EOF
+
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -1)
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "${RUNNER_TEMP}/bump-scoop-failure.md"
+            echo "commented on existing issue #${existing}"
+          else
+            gh issue create --title "$title" --label bug --body-file "${RUNNER_TEMP}/bump-scoop-failure.md"
+          fi

@@ -93,6 +93,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: main
+          # Full history, like bump-scoop.yml: the commit step below rebases if
+          # main moved while the release was being published, and a shallow
+          # clone has no merge base to rebase onto.
+          fetch-depth: 0
 
       - name: Fetch SHA256SUMS.txt
         env:
@@ -211,7 +215,17 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.meta.outputs.tag }}
+          # Without GH_REPO, `gh issue` has no base repository to resolve: the
+          # only step that can fail before the checkout is the tag validation
+          # above, and at that point there is no git remote to infer one from —
+          # so the loud-failure mechanism would itself be silent.
+          GH_REPO: ${{ github.repository }}
+          # Taken from the event, NOT from `steps.meta.outputs.tag`: the tag
+          # validation in that step is the one thing that can fail before the
+          # output is published, which is exactly when this reporter runs — and
+          # "failed for unknown" is not a bug report anyone can act on. Same
+          # derivation the `concurrency` group above uses.
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           tag="${TAG:-unknown}"

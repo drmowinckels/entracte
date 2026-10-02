@@ -7,6 +7,10 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ## [Unreleased]
 
+### Added
+
+- **Install Entracte with Scoop on Windows.** `scoop bucket add entracte https://github.com/drmowinckels/entracte` then `scoop install entracte/entracte` — no installer to click through, and `entracte` lands on your `PATH`, so `entracte pause 30m` works from any shell. (Commands that print something back are still silent on Windows; that is [#364](https://github.com/drmowinckels/entracte/issues/364).) Releases now also carry a portable `Entracte_<version>_x64-portable.zip` for anyone who wants the app without an installer at all; Scoop is what it is built for. The bucket tracks stable releases only, like the Homebrew cask, because a `scoop` install cannot see the in-app update-channel setting. ([#359](https://github.com/drmowinckels/entracte/issues/359))
+
 ## [0.0.13] — 2026-10-01
 
 ### Added

@@ -318,6 +318,63 @@ jobs:
           path: unsigned/
           if-no-files-found: error
 
+      # Portable zip for the Scoop bucket (#359). Scoop extracts an archive
+      # rather than running an installer, so neither Windows bundle suits it:
+      # pointing it at the NSIS setup would shell out to the installer, whose
+      # own install location fights Scoop's `~/scoop/apps` layout. Tauri has
+      # no portable target and does not need one — the app is a single
+      # self-contained exe (WebView2 comes from the OS), so staging the Cargo
+      # output under the product name and zipping it is the whole job.
+      #
+      # The rename matters: Cargo emits `entracte.exe` (no `mainBinaryName` in
+      # tauri.conf.json, so tauri-bundler leaves the Cargo name alone), and the
+      # manifest's `bin`/`shortcuts` name what is inside the zip.
+      #
+      # Uploaded as its own artifact rather than added to `windows-unsigned`,
+      # which is submitted to SignPath — its signing policy covers the `.msi`
+      # / `.exe` bundles, so slipping an archive into that artifact would be
+      # asking it to validate something it was not configured for. The
+      # consequence is that the exe inside the zip stays Authenticode-unsigned
+      # even once SignPath is wired; that is the same status every Windows
+      # artifact has today, and the install docs say so.
+      #
+      # Deliberately LAST in this job, and `continue-on-error`: everything
+      # above it produces the signed Windows distribution. A Scoop
+      # nice-to-have must not be able to fail this job, because that would
+      # skip `sign-windows` entirely and leave the release with no `.msi`, no
+      # `.exe` and no `.sig` at all. When it does fail, `bump-scoop.yml`
+      # notices the missing checksum and files an issue — that is what its
+      # "did the release build the portable zip?" guard is for.
+      - name: Package the portable zip
+        shell: pwsh
+        continue-on-error: true
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:REF_NAME -replace '^v', ''
+          $stage = Join-Path $env:RUNNER_TEMP 'portable'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item src-tauri/target/release/entracte.exe (Join-Path $stage 'Entracte.exe')
+          # LICENSE *and* NOTICE: Apache-2.0 4(d) requires a redistribution to
+          # carry the NOTICE text, and an extracted zip is the one Entracte
+          # artifact where nothing else can carry it.
+          Copy-Item LICENSE $stage
+          Copy-Item NOTICE $stage
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          # Spelled identically in bump-scoop.yml and scripts/scoop-manifest.mjs;
+          # src/test-fixtures/scoop-manifest.test.ts pins the three together.
+          Compress-Archive -Path "$stage/*" `
+            -DestinationPath "portable/Entracte_${version}_x64-portable.zip" -Force
+
+      # SHA-pinned. Update via dependabot.yml.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        continue-on-error: true
+        with:
+          name: windows-portable
+          path: portable/
+          if-no-files-found: error
+
   # Compose the signed `latest.json` manifest that `tauri-plugin-updater`
   # fetches from the configured endpoint. macOS `.app.tar.gz`, Linux
   # `.AppImage`, and Windows `.msi` all ship with Tauri-signed `.sig`
@@ -518,6 +575,19 @@ jobs:
           name: windows-unsigned
           path: unsigned
 
+      # The Scoop portable zip (#359). It never goes through SignPath, so it
+      # rides along here to land on the same draft release — which also puts it
+      # in `SHA256SUMS.txt`, where bump-scoop.yml reads its hash.
+      #
+      # `continue-on-error`, matching the packaging step: if the zip was not
+      # built, that must not cost the release its signed `.msi` / `.exe`.
+      # SHA-pinned. Update via dependabot.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: windows-portable
+          path: portable
+
       - name: Assemble release bundle (binaries + Tauri .sig sidecars)
         shell: bash
         run: |
@@ -527,6 +597,21 @@ jobs:
           # SignPath path `signed/` already contains the signed binaries
           # but not the sidecars, on the no-SignPath path it's empty.
           cp unsigned/*.sig signed/
+          # Unconditional, like the sidecars: SignPath emits only the signed
+          # binaries it was asked for, so the zip is never in its output. A
+          # missing zip warns rather than failing the step — see the
+          # `continue-on-error` note on the packaging step.
+          #
+          # `compgen -G` rather than `shopt -s nullglob`: nullglob is
+          # process-global, and the `.msi` / `.exe` copy below depends on an
+          # unmatched glob staying literal so `cp` fails loudly. Left on, a
+          # missing `.msi` would silently vanish from the argument list and
+          # ship a release with only the `.exe`.
+          if compgen -G 'portable/*.zip' > /dev/null; then
+            cp portable/*.zip signed/
+          else
+            echo "::warning::no portable zip on this run — the Scoop manifest bump will fail and file an issue"
+          fi
           if [ "${{ steps.signpath.outputs.available }}" != "true" ]; then
             cp unsigned/*.msi unsigned/*.exe signed/
           fi
