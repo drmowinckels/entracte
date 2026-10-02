@@ -58,30 +58,105 @@ ignore = [
   #   cargo tree -i rkyv --target all   =>  "nothing to print"
   # See https://github.com/drmowinckels/entracte/issues/314.
 
-  # RUSTSEC-2026-0269 / -0222: wasmtime WASI filesystem sandbox escape.
-  # Rides in on extism's pinned wasmtime 43.x, which has no fix on its
-  # line. Not reachable because the plugin sandbox is built with
-  # `with_wasi(false)` (plugins/runtime.rs): with no WASI in the linker
-  # there are no preopened directories and no `wasi_snapshot_preview1`
-  # import to call, so the vulnerable path-resolution code is never
-  # instantiated. Pinned behaviourally, not just by comment — the test
-  # `rejects_a_module_importing_the_wasi_filesystem` fails if WASI is
-  # ever linked back in.
+  # The three wasmtime advisories below all arrive the same way and none of
+  # them can be patched: wasmtime 43.0.2 enters the graph ONLY through
+  # extism, which is our plugin sandbox (#156):
+  #
+  #   cargo tree -i wasmtime --target all
+  #     wasmtime 43.0.2 <- extism 1.30.0 <- entracte
+  #                     <- wasi-common 43.0.2 <- extism
+  #                     <- wiggle 43.0.2 <- extism / wasi-common
+  #
+  # extism 1.30.0 is the LATEST published extism (2026-06-04) and pins
+  # `wasmtime = "43"`. 43.x is not an LTS line and gets no security
+  # backports, so every one of these advisories lists fixes on other majors
+  # and nothing on 43. We cannot bump wasmtime without extism, and jumping
+  # extism's pin two-plus majors by `[patch.crates-io]` is an invasive,
+  # poorly-tested change bought for findings we cannot reach. So: ignores
+  # with arguments, and #323 tracks the structural problem.
+  #
+  # The trust boundary here is REAL — plugin wasm is third-party — so each
+  # argument below is about the host side of the sandbox, verified against
+  # the vendored extism 1.30.0 source, not assumed.
+
+  # RUSTSEC-2026-0269 (HIGH): filesystem sandbox escape when paths or
+  # symlinks contain trailing slashes. GHSA-vqjp-4c8c-hfgg names the
+  # affected crate as `wasmtime-wasi`, which is ABSENT from our Cargo.lock
+  # entirely — extism links WASI preview1 (`wasi-common`) instead. Do not
+  # lean on that distinction, though: preview1 resolves paths through the
+  # same cap-std/cap-primitives machinery the advisory's root cause lives
+  # in, so treat the preview1 surface as sharing the flaw.
+  #
+  # What actually makes it unreachable is that WASI is OFF: the sandbox is
+  # built `with_wasi(false)` (plugins/runtime.rs), per the "No ambient
+  # authority" decision in docs/developer/plugin-api-design.md. With no
+  # WASI in the linker there are no preopened directories and no
+  # `wasi_snapshot_preview1` import to call — the escape needs a guest with
+  # write (or symlinked read) access to a preopened directory, and there
+  # are none. A module that imports it fails to LINK rather than running.
+  #
+  # Pinned behaviourally, not by comment: the test
+  # `rejects_a_module_importing_the_wasi_filesystem` builds a module
+  # importing `path_open` — the advisory's own entry point — and fails if
+  # WASI is ever linked back in.
+  # Reachable again the moment anything passes `with_wasi(true)`.
   # https://rustsec.org/advisories/RUSTSEC-2026-0269
   # Analysis: https://github.com/drmowinckels/entracte/issues/323
   "RUSTSEC-2026-0269",
+
+  # RUSTSEC-2026-0222 (low): stores can mix up type indices between
+  # engines. NOT a WASI issue, so the argument above does not cover it —
+  # it has its own, stronger one. GHSA-hgjw-h833-99q9 states plainly that
+  # the bug is "not triggerable by guest WebAssembly programs": it needs
+  # the EMBEDDER to create two `Engine`s and hand an object from one to a
+  # `Store` of the other (via `Instance::new`, `InstancePre::instantiate`,
+  # `Tag::new`, `StructRefPre::new`, `Store::debug_register_module`, …).
+  # Untrusted plugin wasm therefore cannot reach it at all.
+  #
+  # And nothing on the host side mixes engines. Entracte never names
+  # `wasmtime` — not the crate, not `Engine` (our only `Engine` imports are
+  # base64's). extism threads exactly ONE engine per plugin: `Engine::new`
+  # once in `CompiledPlugin::new`, stored on the struct, and every derived
+  # object comes from that same handle — `Store::new(&compiled.engine, …)`,
+  # `Linker::new(engine)`, `FuncType::new(&engine, …)`,
+  # `linker.instantiate_pre(main)` — with a store reset cloning
+  # `self.store.engine()` rather than making a new one.
+  #
+  # Reachable again if a second `Engine` ever exists in one process and
+  # objects cross between them, i.e. if Entracte takes a direct wasmtime
+  # dependency or extism's engine handling changes.
+  # https://rustsec.org/advisories/RUSTSEC-2026-0222
+  # Analysis: https://github.com/drmowinckels/entracte/issues/323
   "RUSTSEC-2026-0222",
 
   # RUSTSEC-2026-0316: dynamic record lifting can allocate beyond the
-  # hostcall fuel limit. Same root cause as the two above — extism pins
-  # wasmtime 43.x and the fix exists only on 36.0.16+, 48.0.3+ and
-  # 49.0.1+, never backported to 43. Record *lifting* is component-model
-  # machinery; extism instantiates core wasm modules, not components, so
-  # the affected path is never entered. Note that we do set a fuel limit
-  # (`with_fuel_limit`), so this would matter if components were ever
-  # introduced — reachable again the moment anything runs a component.
+  # hostcall fuel limit. Fixed on 36.0.16+, 48.0.3+ and 49.0.1+, never
+  # backported to 43. Per GHSA-jqpg-j7w6-42pr the bug is specific to the
+  # COMPONENT MODEL's dynamically-typed `wasmtime::component::Val` API
+  # (hosts using `bindgen!`-generated static bindings are unaffected): a
+  # guest returns an awkwardly-shaped value and the host allocates ~100x
+  # more memory than it meters. A DoS, not an escape.
+  #
+  # extism never touches the component model. A case-insensitive grep for
+  # "component" across the vendored extism 1.30.0 `src/` matches nothing at
+  # all — not even in its own tests — and `extism::Val` is `pub type Val =
+  # wasmtime::Val` — the CORE value type, a different type from
+  # `wasmtime::component::Val` that the advisory concerns. Plugins are core
+  # wasm modules; the component lifting path is never entered.
+  #
+  # To be precise, that is about CALL SITES, not about the code being absent:
+  # extism takes `wasmtime/default`, so the component machinery is compiled in
+  # (hence `wasmtime-internal-component-macro`, `-component-util` and
+  # `wasm-compose` in Cargo.lock). Seeing those crates in the lockfile is
+  # expected and does not weaken the argument — nothing calls into them.
+  #
+  # Pinned behaviourally by `rejects_a_wasm_component`, which feeds
+  # `build_sandboxed_plugin` a component preamble and asserts it fails to
+  # load. Worth stating that we DO set `with_fuel_limit(DEFAULT_FUEL)`, so
+  # this is exactly the mitigation the advisory bypasses — it would
+  # genuinely bite the day anything runs a component.
   # https://rustsec.org/advisories/RUSTSEC-2026-0316
-  # Tracking: https://github.com/drmowinckels/entracte/issues/323
+  # Analysis: https://github.com/drmowinckels/entracte/issues/323
   "RUSTSEC-2026-0316",
 
   # RUSTSEC-2026-0255: panic-safety UAF/double-free in sized-chunks.

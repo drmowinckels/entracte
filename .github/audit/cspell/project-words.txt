@@ -198,3 +198,4 @@ unacked
 RUSTSEC
 preopened
 dryrun
+triggerable
