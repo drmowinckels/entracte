@@ -138,11 +138,17 @@ ignore = [
   # more memory than it meters. A DoS, not an escape.
   #
   # extism never touches the component model. A case-insensitive grep for
-  # "component" across the vendored extism 1.30.0 `src/` matches nothing
-  # outside its own tests, and `extism::Val` is `pub type Val =
+  # "component" across the vendored extism 1.30.0 `src/` matches nothing at
+  # all — not even in its own tests — and `extism::Val` is `pub type Val =
   # wasmtime::Val` — the CORE value type, a different type from
   # `wasmtime::component::Val` that the advisory concerns. Plugins are core
   # wasm modules; the component lifting path is never entered.
+  #
+  # To be precise, that is about CALL SITES, not about the code being absent:
+  # extism takes `wasmtime/default`, so the component machinery is compiled in
+  # (hence `wasmtime-internal-component-macro`, `-component-util` and
+  # `wasm-compose` in Cargo.lock). Seeing those crates in the lockfile is
+  # expected and does not weaken the argument — nothing calls into them.
   #
   # Pinned behaviourally by `rejects_a_wasm_component`, which feeds
   # `build_sandboxed_plugin` a component preamble and asserts it fails to

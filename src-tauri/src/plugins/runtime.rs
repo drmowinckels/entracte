@@ -205,9 +205,11 @@ pub fn build_sandboxed_plugin(
         // `{e:#}` not `{e}`: extism returns an `anyhow::Error` whose outermost
         // message is generic ("failed to parse WebAssembly module"), with the
         // actual reason — the unresolved import's name, the malformed section,
-        // "expected a core wasm module" — only in the cause chain. A plugin
-        // author needs that reason, and so does the next person reading this
-        // error in a log.
+        // "expected a core wasm module" — only in the cause chain. The plugin
+        // author needs that reason: this string's only sink is the install
+        // failure shown in Settings → Plugins (`install_plugin`), and the
+        // detector-eval path discards it entirely, so if it is not in here it
+        // is nowhere.
         .map_err(|e| format!("plugin failed to load in the sandbox: {e:#}"))
 }
 
@@ -285,8 +287,9 @@ mod tests {
 
     /// Guards the first of the two reachability invariants behind #323:
     /// **WASI stays off**. RUSTSEC-2026-0269 is a filesystem sandbox escape in
-    /// wasmtime's WASI path resolution, riding in on extism's pinned wasmtime
-    /// 43.x, which has no fix on its line. It is not reachable here *because*
+    /// wasmtime's WASI path resolution, unpatched on the wasmtime line extism
+    /// pins (the version analysis lives in `src-tauri/deny.toml`, which is where
+    /// it stays current). It is not reachable here *because*
     /// the builder sets `with_wasi(false)`: without WASI in the linker there
     /// are no preopened directories and no `wasi_snapshot_preview1` import to
     /// call, so the vulnerable path-resolution code is never instantiated.
@@ -322,22 +325,28 @@ mod tests {
     ///
     /// Like the WASI invariant above, that holds only while it holds, so pin it
     /// behaviourally: a component binary must fail to load, and must fail
-    /// *because* it is a component. The two inputs below are byte-identical
-    /// apart from the 4-byte version/layer field, which is the only thing
-    /// distinguishing the two formats — so the core module loading while the
-    /// component is rejected shows the rejection is about the format and not
-    /// about the bytes being short or malformed.
+    /// *because* it is a component. Both inputs are bare preambles, so they are
+    /// byte-identical apart from the 4-byte version/layer field that is the only
+    /// thing distinguishing the two formats — the core module loading while the
+    /// component is rejected therefore shows the rejection is about the format
+    /// and not about the bytes being short or malformed. The assertion below
+    /// keeps that control honest rather than leaving it to the reader.
     #[test]
     fn rejects_a_wasm_component() {
-        const CORE_MODULE: [u8; 8] = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-        const COMPONENT: [u8; 8] = [0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00];
+        let core_module = wasm("(module)");
+        let component = wasm("(component)");
+        assert_eq!(
+            (&core_module[..4], core_module.len()),
+            (&component[..4], component.len()),
+            "the two inputs must differ only in the version/layer field"
+        );
 
         assert!(
-            build_sandboxed_plugin(&CORE_MODULE, &[], &SandboxContext::default()).is_ok(),
+            build_sandboxed_plugin(&core_module, &[], &SandboxContext::default()).is_ok(),
             "the core-module preamble must load, or this test proves nothing"
         );
 
-        let err = build_sandboxed_plugin(&COMPONENT, &[], &SandboxContext::default())
+        let err = build_sandboxed_plugin(&component, &[], &SandboxContext::default())
             .expect_err("a wasm component must not load in the plugin sandbox");
         assert!(
             err.contains("component"),
