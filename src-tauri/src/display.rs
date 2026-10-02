@@ -41,6 +41,11 @@
 //! threads states its own precondition: "we ensure this type is only used
 //! on the main thread". [`on_main_thread`] is how every such read upholds
 //! it, in one place.
+//!
+//! Both of those mechanisms report themselves, because a silent fix for an
+//! intermittent abort is one you get to debug twice: the locking state lands
+//! in the startup banner via [`threading_state`], and a hop that gives up
+//! warns with the name of the read it abandoned.
 
 use tauri::{AppHandle, Runtime};
 
@@ -50,40 +55,69 @@ use tauri::{AppHandle, Runtime};
 /// the caller indefinitely.
 const MAIN_THREAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Enable libX11's internal locking for this process. Must run before the
-/// windowing system opens its `Display` — see the module docs for why.
-///
-/// A no-op on macOS and Windows, which have no Xlib. Returns whether
-/// threading is usable, so a caller could report it; nothing acts on the
-/// answer today because a failure means libX11 is unusable and the app is
-/// about to fail to start a window anyway.
-#[cfg(target_os = "linux")]
-pub(crate) fn init_display_threading() -> bool {
-    // SAFETY: `XInitThreads` takes no arguments and touches only libX11's
-    // process-global locking state. It is documented as the first Xlib
-    // call a multi-threaded program may make, and this runs before the
-    // Tauri runtime (and therefore GTK) opens any display.
-    threading_init_result(unsafe { x11::xlib::XInitThreads() })
+/// Whether libX11's internal locking is on for this process. Only meaningful
+/// on Linux/X11; callers off Linux report "n/a" themselves, the way the
+/// banner already handles [`crate::window::WaylandFix`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum XlibLocking {
+    On,
+    Off,
+    /// [`init_display_threading`] has not run yet.
+    Unknown,
 }
 
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn init_display_threading() -> bool {
-    true
-}
-
-/// Map `XInitThreads`' return code (non-zero on success) to a flag,
-/// warning when libX11 refused. Pure so both outcomes are unit-testable
-/// on every OS without an X server.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn threading_init_result(code: std::os::raw::c_int) -> bool {
-    if code == 0 {
-        log::warn!(
-            "display: XInitThreads() failed — Xlib locking stays off, so a concurrent X call \
-             from the idle probe can abort the process (#333)"
-        );
-        return false;
+impl XlibLocking {
+    /// Short stable token for logs and the startup banner, so a bug report
+    /// shows whether #333's prerequisite actually took effect.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Unknown => "unknown",
+        }
     }
-    true
+}
+
+/// Recorded by [`init_display_threading`] so the startup banner can report
+/// it. It has to be recorded rather than logged on the spot: that function
+/// runs as the very first statement of `run()`, before `tauri_plugin_log` is
+/// installed, so a `log::warn!` there would go nowhere.
+static THREADING: std::sync::OnceLock<XlibLocking> = std::sync::OnceLock::new();
+
+/// Enable libX11's internal locking for this process and record the outcome
+/// for [`threading_state`]. A no-op off Linux, which has no Xlib.
+///
+/// Must run before the windowing system opens its `Display` — see the module
+/// docs for why, and the call site in `run()` for why that placement is
+/// sufficient.
+pub(crate) fn init_display_threading() {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: `XInitThreads` takes no arguments, returns a plain `int`,
+        // and dereferences nothing of ours — it only flips libX11's
+        // process-global locking state — so the call has no soundness
+        // precondition beyond libX11 being linked, which the `x11` crate
+        // guarantees on this target. Calling it late is documented as
+        // ineffective, not unsound, so the ordering rule is correctness and
+        // lives at the call site.
+        let _ = THREADING.set(threading_init_result(unsafe { x11::xlib::XInitThreads() }));
+    }
+}
+
+/// Map `XInitThreads`' return code (non-zero on success). Pure so both
+/// outcomes are unit-testable on every OS without an X server.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn threading_init_result(code: std::os::raw::c_int) -> XlibLocking {
+    if code == 0 {
+        XlibLocking::Off
+    } else {
+        XlibLocking::On
+    }
+}
+
+/// This process' Xlib locking state, for the startup banner.
+pub(crate) fn threading_state() -> XlibLocking {
+    THREADING.get().copied().unwrap_or(XlibLocking::Unknown)
 }
 
 /// Run `read` on the windowing system's main thread and hand back its
@@ -101,13 +135,21 @@ fn threading_init_result(code: std::os::raw::c_int) -> bool {
 /// otherwise the channel will introduce a deadlock", so the overlay
 /// builder has to stay on the caller's thread.
 ///
-/// `read` must return plain data, never a live handle, so the value is
-/// safe to use after the hop. Safe to call from the main thread too:
-/// `send_user_message` runs the task inline there instead of queueing it.
+/// `read` must return plain data, never a live handle, so the value is safe
+/// to use after the hop. The `T: Send` bound cannot enforce that — a live
+/// `WebviewWindow` would satisfy it — so it stays a convention callers have
+/// to honour.
 ///
-/// Returns `None` if the main thread is unreachable or too slow, which
-/// lets callers degrade rather than risk a hang.
-pub(crate) fn on_main_thread<R, T, F>(app: &AppHandle<R>, read: F) -> Option<T>
+/// Safe to call from the main thread as well as off it, which matters because
+/// both happen: `tauri-runtime-wry`'s `send_user_message` compares the
+/// calling thread to the event loop's and runs the task *inline* when they
+/// match, rather than queueing it, so the value is already in the channel
+/// before `recv_timeout` is reached. No self-deadlock.
+///
+/// Returns `None` if the main thread is unreachable or too slow, which lets
+/// callers degrade rather than risk a hang. `what` names the read in that
+/// warning, because the consequences differ sharply between call sites.
+pub(crate) fn on_main_thread<R, T, F>(app: &AppHandle<R>, what: &'static str, read: F) -> Option<T>
 where
     R: Runtime,
     T: Send + 'static,
@@ -119,29 +161,27 @@ where
         let _ = tx.send(read(&handle));
     });
     match dispatched {
-        Ok(()) => hop_outcome(rx.recv_timeout(MAIN_THREAD_READ_TIMEOUT)),
-        Err(e) => unreachable_main_thread(&e.to_string()),
+        Ok(()) => hop_outcome(what, rx.recv_timeout(MAIN_THREAD_READ_TIMEOUT)),
+        Err(e) => gave_up(what, e),
     }
 }
 
 /// Interpret the hop's answer: the value if the main thread sent one, else a
-/// warning and `None`. Split out so the timeout arm — which no test can
+/// warning and `None`. Split out so the give-up arm — which no test can
 /// provoke through a live runtime — is still exercised directly.
-fn hop_outcome<T>(outcome: Result<T, std::sync::mpsc::RecvTimeoutError>) -> Option<T> {
+fn hop_outcome<T>(what: &str, outcome: Result<T, std::sync::mpsc::RecvTimeoutError>) -> Option<T> {
     match outcome {
         Ok(value) => Some(value),
-        Err(e) => {
-            log::warn!("display: timed out reading display state on the main thread: {e}");
-            None
-        }
+        Err(e) => gave_up(what, e),
     }
 }
 
-/// Report a main thread that never took the task — the event loop is gone, so
-/// there is nothing to wait for. Split out for the same reason as
-/// [`hop_outcome`]: unreachable through a live runtime, reachable in a test.
-fn unreachable_main_thread<T>(err: &str) -> Option<T> {
-    log::warn!("display: could not reach the main thread for a display read: {err}");
+/// Report a read the main thread never answered and degrade to `None`.
+/// `why` distinguishes the cases on its own: a `RecvTimeoutError` says
+/// whether the wait timed out or the task was dropped, and a dispatch error
+/// says the event loop is gone.
+fn gave_up<T>(what: &str, why: impl std::fmt::Display) -> Option<T> {
+    log::warn!("display: gave up reading {what} on the main thread: {why}");
     None
 }
 
@@ -150,46 +190,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn threading_init_result_accepts_a_non_zero_code() {
-        assert!(threading_init_result(1));
+    fn threading_init_result_reads_a_non_zero_code_as_locking_on() {
+        assert_eq!(threading_init_result(1), XlibLocking::On);
     }
 
     #[test]
-    fn threading_init_result_rejects_zero() {
-        assert!(!threading_init_result(0));
+    fn threading_init_result_reads_zero_as_locking_off() {
+        assert_eq!(threading_init_result(0), XlibLocking::Off);
     }
 
-    // The real `XInitThreads` only exists on Linux; everywhere else
-    // `init_display_threading` is the constant-true stub.
     #[test]
-    fn init_display_threading_succeeds_on_this_platform() {
-        assert!(init_display_threading());
+    fn xlib_locking_renders_a_short_banner_token() {
+        assert_eq!(XlibLocking::On.as_str(), "on");
+        assert_eq!(XlibLocking::Off.as_str(), "off");
+        assert_eq!(XlibLocking::Unknown.as_str(), "unknown");
+    }
+
+    // One test for both halves of the global, so it cannot race another
+    // test for the write-once slot. On the ubuntu coverage job this also
+    // exercises the real `XInitThreads` FFI line.
+    #[test]
+    fn init_display_threading_records_this_platform_state() {
+        init_display_threading();
+        if cfg!(target_os = "linux") {
+            assert_eq!(threading_state(), XlibLocking::On);
+        } else {
+            assert_eq!(threading_state(), XlibLocking::Unknown);
+        }
     }
 
     #[test]
     fn hop_outcome_passes_a_received_value_through() {
-        assert_eq!(hop_outcome(Ok(7u32)), Some(7));
+        assert_eq!(hop_outcome("monitors", Ok(7u32)), Some(7));
     }
 
     #[test]
     fn hop_outcome_gives_up_on_a_timeout() {
-        assert_eq!(
-            hop_outcome::<u32>(Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
-            None
-        );
+        let timed_out = Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+        assert_eq!(hop_outcome::<u32>("monitors", timed_out), None);
     }
 
     #[test]
     fn hop_outcome_gives_up_when_the_sender_is_gone() {
-        assert_eq!(
-            hop_outcome::<u32>(Err(std::sync::mpsc::RecvTimeoutError::Disconnected)),
-            None
-        );
+        let dropped = Err(std::sync::mpsc::RecvTimeoutError::Disconnected);
+        assert_eq!(hop_outcome::<u32>("monitors", dropped), None);
     }
 
     #[test]
-    fn unreachable_main_thread_yields_nothing() {
-        assert_eq!(unreachable_main_thread::<u32>("event loop closed"), None);
+    fn gave_up_yields_nothing() {
+        assert_eq!(gave_up::<u32>("monitors", "event loop closed"), None);
     }
 
     // Windows is excluded from the mock-runtime rig (see `test_support`).
@@ -198,6 +247,9 @@ mod tests {
     fn on_main_thread_returns_the_read_value() {
         let (_dir, app, _sched) =
             crate::test_support::mock_app_with_scheduler(crate::scheduler::Settings::default());
-        assert_eq!(on_main_thread(app.handle(), |_| 42u32), Some(42));
+        assert_eq!(
+            on_main_thread(app.handle(), "a number", |_| 42u32),
+            Some(42)
+        );
     }
 }

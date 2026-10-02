@@ -136,20 +136,39 @@ jobs:
           grep -q '"paused": false' resumed.json || {
             echo "::error::status did not reflect the resume"; exit 1; }
 
+          # #333's prerequisite, asserted deterministically rather than by
+          # racing it: the debug build logs the startup banner to stdout, and
+          # the banner carries the Xlib locking state this process actually
+          # got. `xlib=off` or `xlib=unknown` means the fix did not take.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "--- xlib locking ---"
+            grep -o 'xlib=[a-z]*' app.out || true
+            grep -q 'xlib=on' app.out || {
+              echo "::error::startup banner does not report xlib=on — Xlib locking was not initialised (#333)"
+              exit 1; }
+          fi
+
           # Fire a break: the CLI call only sends the IPC request and returns;
           # the overlay is built in the app process and may not render under
           # xvfb, so we assert the request is accepted, not that it's visible.
-          #
-          # Repeated deliberately. Overlay creation is the only step that
-          # makes the app do a burst of display-server work, and on Linux/X11
-          # that used to race the idle probe's Xlib calls and abort the whole
-          # process (#333). One trigger detected that only by luck; several,
-          # each followed by a liveness check, turn a regression into a
-          # reliable failure instead of a ~7%-of-runs flake.
+          # Repeated because overlay creation is the only step that makes the
+          # app do a burst of display-server work — the one that used to abort
+          # the process (#333). The settle is Linux-only and precedes the
+          # probe because the abort lands after `trigger` has already
+          # returned; `app_responds` retries so a merely busy app does not
+          # read as a dead one.
+          app_responds() {
+            for _ in 1 2 3 4 5; do
+              if "$BIN" status > alive.json 2>alive.err; then return 0; fi
+              sleep 2
+            done
+            return 1
+          }
           for kind in micro long micro; do
             echo "--- trigger $kind ---"
             "$BIN" trigger "$kind"
-            if ! "$BIN" status > alive.json 2>alive.err; then
+            [ "$RUNNER_OS" != "Linux" ] || sleep 3
+            if ! app_responds; then
               echo "::error::app stopped answering IPC after 'trigger $kind' — it most likely died building the overlay"
               cat alive.err || true
               exit 1

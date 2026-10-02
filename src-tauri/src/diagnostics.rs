@@ -81,26 +81,50 @@ impl EnvFacts {
     }
 }
 
+/// Everything the startup banner reports, gathered by
+/// [`log_startup_banner`] so [`startup_banner`] stays pure.
+struct StartupFacts<'a> {
+    version: &'a str,
+    os: &'a str,
+    display: &'a str,
+    webview: &'a str,
+    /// `None` when the main-thread monitor read gave up — rendered as
+    /// `monitors=?`, which is a different fact from `monitors=0`.
+    monitor_count: Option<usize>,
+    idle: &'a Result<u64, String>,
+    wlfix: &'a str,
+    /// This process' Xlib locking state, from
+    /// [`crate::display::threading_state`]. The only place a failed
+    /// `XInitThreads()` becomes visible, since it runs before any logger
+    /// exists (#333).
+    xlib: &'a str,
+}
+
 /// Compact one-line environment summary logged once at startup, so the
 /// log file (and therefore every diagnostics report's log tail) always
 /// opens with the context a bug report needs — even if the user never
 /// generates a report. Pure so the formatting is unit-testable.
-fn startup_banner(
-    version: &str,
-    os: &str,
-    display: &str,
-    webview: &str,
-    monitor_count: usize,
-    idle: &Result<u64, String>,
-    wlfix: &str,
-) -> String {
-    let idle = match idle {
+fn startup_banner(facts: &StartupFacts<'_>) -> String {
+    let StartupFacts {
+        version,
+        os,
+        display,
+        webview,
+        wlfix,
+        xlib,
+        ..
+    } = facts;
+    let idle = match facts.idle {
         Ok(secs) => format!("{secs}s"),
         Err(e) => format!("unavailable ({e})"),
     };
+    let monitors = match facts.monitor_count {
+        Some(n) => n.to_string(),
+        None => "?".to_string(),
+    };
     format!(
         "startup: Entracte {version} | os={os} | display={display} | webview={webview} \
-         | monitors={monitor_count} | idle={idle} | wlfix={wlfix}"
+         | monitors={monitors} | idle={idle} | wlfix={wlfix} | xlib={xlib}"
     )
 }
 
@@ -110,24 +134,30 @@ pub fn log_startup_banner<R: Runtime>(app: &AppHandle<R>) {
     let os = std::env::consts::OS;
     let display = display_server(os, &EnvFacts::from_env());
     let webview = tauri::webview_version().unwrap_or_else(|_| "unknown".to_string());
-    let monitor_count = gather_monitors(app).len();
+    let monitor_count = gather_monitors(app).map(|m| m.len());
     let idle = crate::scheduler::idle::idle_secs();
     let wlfix = if cfg!(target_os = "linux") {
         crate::window::wayland_fix_strategy().as_str()
     } else {
         "n/a"
     };
+    let xlib = if cfg!(target_os = "linux") {
+        crate::display::threading_state().as_str()
+    } else {
+        "n/a"
+    };
     log::info!(
         "{}",
-        startup_banner(
-            &app.package_info().version.to_string(),
+        startup_banner(&StartupFacts {
+            version: &app.package_info().version.to_string(),
             os,
-            &display,
-            &webview,
+            display: &display,
+            webview: &webview,
             monitor_count,
-            &idle,
+            idle: &idle,
             wlfix,
-        )
+            xlib,
+        })
     );
 }
 
@@ -163,7 +193,12 @@ pub struct MonitorFacts {
     pub primary: bool,
 }
 
-fn format_monitors(monitors: &[MonitorFacts]) -> String {
+fn format_monitors(monitors: Option<&[MonitorFacts]>) -> String {
+    let Some(monitors) = monitors else {
+        return "_(monitor list unavailable \u{2014} the windowing main thread did not answer; \
+                see the log for a `display:` warning)_"
+            .to_string();
+    };
     if monitors.is_empty() {
         return "_(no monitors reported \u{2014} headless or windowing system unavailable)_"
             .to_string();
@@ -297,17 +332,16 @@ fn format_runtime_snapshot(s: &RuntimeSnapshot) -> String {
     )
 }
 
-/// Describe every attached monitor.
+/// Describe every attached monitor, or `None` if the windowing main thread
+/// could not be asked — see [`crate::display::on_main_thread`] for why the
+/// read has to happen there and why calling it from either of this function's
+/// callers (an `async` command task and the main-thread `setup` hook) is safe.
 ///
-/// Marshalled onto the main thread: `primary_monitor` and
-/// `available_monitors` reach into the event loop's `window_target` with no
-/// dispatch, so calling them from the `build_diagnostics_report` command's
-/// task — a tokio worker — races the GTK main loop on one X connection and
-/// aborts the process inside libxcb (#333). `MonitorFacts` is plain data, so
-/// the hop hands back something safe to use afterwards. An unreachable main
-/// thread degrades to "no monitors listed" rather than wedging the report.
-fn gather_monitors<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
-    crate::display::on_main_thread(app, |handle| read_monitor_facts(handle)).unwrap_or_default()
+/// `None` is kept distinct from `Some(vec![])` all the way to the rendered
+/// report: "we could not ask" and "there are no monitors" are different
+/// facts, and conflating them sends the reader after the wrong bug.
+fn gather_monitors<R: Runtime>(app: &AppHandle<R>) -> Option<Vec<MonitorFacts>> {
+    crate::display::on_main_thread(app, "diagnostics monitors", read_monitor_facts)
 }
 
 fn read_monitor_facts<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
@@ -321,15 +355,18 @@ fn read_monitor_facts<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorFacts> {
         .map(|m| {
             let pos = m.position();
             let size = m.size();
-            let key = (m.name().cloned(), pos.x, pos.y);
+            let name = m.name().cloned();
+            let primary = primary_key.as_ref().is_some_and(|(pname, px, py)| {
+                pname.as_deref() == name.as_deref() && *px == pos.x && *py == pos.y
+            });
             MonitorFacts {
-                name: m.name().cloned(),
+                name,
                 width: size.width,
                 height: size.height,
                 x: pos.x,
                 y: pos.y,
                 scale: m.scale_factor(),
-                primary: primary_key.as_ref() == Some(&key),
+                primary,
             }
         })
         .collect()
@@ -439,7 +476,7 @@ fn environment_section<R: Runtime>(app: &AppHandle<R>) -> String {
         os,
         &env,
         &webview,
-        &monitors,
+        monitors.as_deref(),
         &now.format("%Y-%m-%d %H:%M:%S").to_string(),
         &now.format("%:z").to_string(),
         build_profile,
@@ -453,7 +490,7 @@ fn format_environment(
     os: &str,
     env: &EnvFacts,
     webview: &str,
-    monitors: &[MonitorFacts],
+    monitors: Option<&[MonitorFacts]>,
     local_now: &str,
     utc_offset: &str,
     build_profile: &str,
@@ -716,34 +753,40 @@ mod tests {
 
     #[test]
     fn startup_banner_is_a_compact_one_liner_with_idle_state() {
-        let ok = startup_banner(
-            "0.0.1",
-            "macos",
-            "Cocoa (native)",
-            "WKWebView",
-            2,
-            &Ok(3),
-            "n/a",
-        );
+        let ok = startup_banner(&StartupFacts {
+            version: "0.0.1",
+            os: "macos",
+            display: "Cocoa (native)",
+            webview: "WKWebView",
+            monitor_count: Some(2),
+            idle: &Ok(3),
+            wlfix: "n/a",
+            xlib: "n/a",
+        });
         assert!(ok.starts_with("startup: Entracte 0.0.1"));
         assert!(ok.contains("os=macos"));
         assert!(ok.contains("display=Cocoa (native)"));
         assert!(ok.contains("monitors=2"));
         assert!(ok.contains("idle=3s"));
         assert!(ok.contains("wlfix=n/a"));
+        assert!(ok.contains("xlib=n/a"));
         assert!(!ok.contains('\n'), "banner must be a single line");
 
-        let bad = startup_banner(
-            "0.0.1",
-            "linux",
-            "Wayland",
-            "WebKitGTK",
-            1,
-            &Err("Status not OK".into()),
-            "maximize",
-        );
+        let bad = startup_banner(&StartupFacts {
+            version: "0.0.1",
+            os: "linux",
+            display: "Wayland",
+            webview: "WebKitGTK",
+            monitor_count: None,
+            idle: &Err("Status not OK".into()),
+            wlfix: "maximize",
+            xlib: "off",
+        });
         assert!(bad.contains("idle=unavailable (Status not OK)"));
         assert!(bad.contains("wlfix=maximize"));
+        assert!(bad.contains("xlib=off"));
+        // Not `monitors=0`: a read that never answered is not "no monitors".
+        assert!(bad.contains("monitors=?"));
     }
 
     #[test]
@@ -785,7 +828,7 @@ mod tests {
 
     #[test]
     fn format_monitors_lists_each_with_primary_marker() {
-        let out = format_monitors(&[
+        let out = format_monitors(Some(&[
             MonitorFacts {
                 name: Some("eDP-1".into()),
                 width: 2560,
@@ -804,7 +847,7 @@ mod tests {
                 scale: 1.0,
                 primary: false,
             },
-        ]);
+        ]));
         assert!(out.contains("`eDP-1` (primary): 2560\u{00d7}1440 @ (0, 0), scale 2.00"));
         assert!(out.contains("`unnamed`: 1920\u{00d7}1080 @ (2560, 0), scale 1.00"));
         assert!(!out.contains("unnamed (primary)"));
@@ -812,8 +855,15 @@ mod tests {
 
     #[test]
     fn format_monitors_notes_when_none_reported() {
-        let out = format_monitors(&[]);
+        let out = format_monitors(Some(&[]));
         assert!(out.contains("no monitors reported"));
+    }
+
+    #[test]
+    fn format_monitors_distinguishes_an_unanswered_read_from_no_monitors() {
+        let unavailable = format_monitors(None);
+        assert!(unavailable.contains("monitor list unavailable"));
+        assert!(!unavailable.contains("no monitors reported"));
     }
 
     #[test]
@@ -829,7 +879,7 @@ mod tests {
             "linux",
             &env,
             "WebKitGTK 2.44",
-            &[],
+            Some(&[]),
             "2026-05-29 10:00:00",
             "+02:00",
             "release",
@@ -843,7 +893,7 @@ mod tests {
             "macos",
             &EnvFacts::default(),
             "WKWebView",
-            &[],
+            Some(&[]),
             "2026-05-29 10:00:00",
             "-07:00",
             "debug",

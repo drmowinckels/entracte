@@ -278,33 +278,23 @@ fn monitor_rect(m: &tauri::Monitor) -> MonitorRect {
 
 /// Read the display layout **on the main thread** and hand back plain data.
 ///
-/// `WryHandle::available_monitors` and `primary_monitor` reach straight into
-/// the event loop's `window_target` with no dispatch, and the `unsafe impl
-/// Send` that lets that type cross threads states its own precondition:
-/// "we ensure this type is only used on the main thread". Every caller of
-/// [`fire_break`] runs on a tokio worker (the scheduler run loop, the IPC
-/// handler, and the tray menu all go through `async_runtime::spawn`), so
-/// calling these directly races the GTK main loop on one X connection and
-/// aborts inside libxcb (#333).
+/// Every caller of [`fire_break`] runs on a tokio worker (the scheduler run
+/// loop, the IPC handler, and the tray menu all go through
+/// `async_runtime::spawn`), which is exactly the thread the monitor getters
+/// must not be called from — see [`crate::display::on_main_thread`] for the
+/// mechanism, the `create_webview` exclusion that keeps [`ensure_overlay`] off
+/// the main thread, and the degrade-to-`None` behaviour (here: no overlay this
+/// time, rather than risking a hang).
 ///
-/// Both reads share a single hop so the returned monitor list and primary
-/// come from one consistent snapshot. Resolving the primary's *index*
-/// happens inside the hop too, so the caller receives only plain data and
-/// never re-touches a live handle.
-///
-/// Deliberately **not** extended to cover window creation: tauri-runtime-wry
-/// documents that `create_webview` "must be called from a separate thread,
-/// otherwise the channel will introduce a deadlock", so [`ensure_overlay`]
-/// must keep running on the caller's thread. `cursor_position` is left alone
-/// too — it already dispatches through the event loop.
-///
-/// Returns `None` if the main thread is unreachable or too slow, which
-/// degrades to "no overlay this time" rather than risking a hang.
+/// Both reads share a single hop so the returned monitor list and primary come
+/// from one consistent snapshot. Resolving the primary's *index* happens inside
+/// the hop too, so the caller receives only plain data and never re-touches a
+/// live handle.
 #[cfg(not(test))]
 fn read_display_geometry<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Option<(Vec<tauri::Monitor>, Option<usize>)> {
-    crate::display::on_main_thread(app, |handle| {
+    crate::display::on_main_thread(app, "overlay monitors", |handle| {
         let all = handle.available_monitors().unwrap_or_default();
         let rects: Vec<MonitorRect> = all.iter().map(monitor_rect).collect();
         let primary = handle
