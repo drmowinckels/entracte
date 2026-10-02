@@ -208,15 +208,16 @@ mod tests {
 
     // One test for both halves of the global, so it cannot race another
     // test for the write-once slot. On the ubuntu coverage job this also
-    // exercises the real `XInitThreads` FFI line.
+    // exercises the real `XInitThreads` FFI line. The expectation is split
+    // with `#[cfg]` rather than `if cfg!()` so the arm for the other
+    // platform is not compiled — and so does not read as an uncovered line.
     #[test]
     fn init_display_threading_records_this_platform_state() {
         init_display_threading();
-        if cfg!(target_os = "linux") {
-            assert_eq!(threading_state(), XlibLocking::On);
-        } else {
-            assert_eq!(threading_state(), XlibLocking::Unknown);
-        }
+        #[cfg(target_os = "linux")]
+        assert_eq!(threading_state(), XlibLocking::On);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(threading_state(), XlibLocking::Unknown);
     }
 
     #[test]
