@@ -118,14 +118,22 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item src-tauri/target/debug/entracte.exe (Join-Path $stage 'Entracte.exe')
           Copy-Item LICENSE $stage
+          Copy-Item NOTICE $stage
           $zip = Join-Path $env:RUNNER_TEMP 'portable-check.zip'
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $archive = [IO.Compression.ZipFile]::OpenRead($zip)
           try { $names = $archive.Entries.FullName } finally { $archive.Dispose() }
           Write-Output "portable zip contents: $($names -join ', ')"
-          if ($names -notcontains 'Entracte.exe') {
+          # `-cnotcontains`, not `-notcontains`: PowerShell's default string
+          # comparison is case-INsensitive, so `-notcontains` would accept an
+          # `entracte.exe` that never got renamed and pass on exactly the bug
+          # this step exists to catch.
+          if ($names -cnotcontains 'Entracte.exe') {
             throw "no Entracte.exe at the zip root - the Scoop manifest bin/shortcuts would break"
+          }
+          if ($names -cnotcontains 'NOTICE') {
+            throw "no NOTICE at the zip root - Apache-2.0 4(d) requires it in a redistribution"
           }
 
       # Guard the AppImage's required AppDir files. tauri-bundler < 2.9.4

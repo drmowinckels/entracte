@@ -27,14 +27,18 @@ zip, so until then `scoop install` reports no manifest (see
 The portable `Entracte_<version>_x64-portable.zip` from the GitHub release, not
 either Windows installer: Scoop extracts archives rather than running setup
 programs, and the NSIS installer's own location would fight Scoop's
-`~/scoop/apps` layout.
+`~/scoop/apps` layout. The archive holds `Entracte.exe` plus the `LICENSE` and
+`NOTICE`.
 
 The exe inside is not Authenticode-signed — the same status as every Windows
 artifact Entracte ships until SignPath Foundation approves the project (see the
 [install guide](https://entracte.drmowinckels.io/guide/install#windows)), and it
 is not submitted for signing even once that lands, because SignPath's policy
-covers the two bundles rather than an archive. Scoop verifies the SHA-256 in the manifest against the download, and that hash
-comes from the release's own `SHA256SUMS.txt`.
+covers the two bundles rather than an archive.
+
+Scoop verifies the SHA-256 in the manifest against the download. That hash
+comes from the release's own `SHA256SUMS.txt`, and `bump-scoop.yml` re-digests
+the published asset to confirm the two agree before committing the manifest.
 
 Your settings live in `%APPDATA%\io.drmowinckels.entracte`, outside the Scoop
 app directory, so `scoop uninstall` leaves them alone.

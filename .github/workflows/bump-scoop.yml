@@ -63,9 +63,15 @@ jobs:
           else
             tag="$DISPATCH_TAG"
           fi
-          # Basic shape validation: anything not in [A-Za-z0-9._-] is rejected.
-          if ! printf '%s' "$tag" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-            echo "::error::refusing to use tag '$tag' — contains characters outside [A-Za-z0-9._-]"
+
+          # Shape validation, not just an injection guard. `release.yml` only
+          # builds `v*` tags, and scripts/scoop-manifest.mjs reconstructs the
+          # download URL as `v${version}`, so anything that is not
+          # `vMAJOR.MINOR.PATCH[-prerelease]` would produce a manifest pointing
+          # at a URL that does not exist. Prereleases are admitted here only so
+          # the next check can reject them with a message that explains why.
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "::error::refusing to use tag '$tag' — expected vMAJOR.MINOR.PATCH (release.yml only builds v-prefixed semver tags)"
             exit 1
           fi
           # The job condition already filters prerelease *events*; this covers
@@ -92,34 +98,61 @@ jobs:
         with:
           node-version: lts/*
 
-      # Releases already carry SHA256SUMS.txt (composed by release.yml's
-      # `checksums` job over every asset on the draft), so the hash is read
-      # from there rather than re-downloading and hashing the zip.
-      - name: Fetch SHA256SUMS.txt
+      # One step, so the asset name is spelled once: it is also spelled in
+      # release.yml (which builds the zip) and scripts/scoop-manifest.mjs (which
+      # tells Scoop where to get it), and scoop-manifest.test.ts pins the three
+      # against each other — drift is a 404 that only surfaces on a user's
+      # machine. Downloads land in RUNNER_TEMP, never the checkout, because the
+      # next step commits out of this working tree.
+      - name: Regenerate bucket/entracte.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          gh release download "$TAG" --pattern "SHA256SUMS.txt"
-
-      - name: Regenerate bucket/entracte.json
-        env:
-          TAG: ${{ steps.meta.outputs.tag }}
+          # Lower-cased deliberately: release.yml's pwsh step spells the asset
+          # with `${version}` too, and the test pins the two spellings together.
+          version: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          version="${TAG#v}"
-          # Spelled the same way in release.yml (which builds the zip) and in
-          # scripts/scoop-manifest.mjs (which tells Scoop where to get it);
-          # scoop-manifest.test.ts pins all three against each other, because
-          # drift here is a 404 that only surfaces on a user's machine.
           asset="Entracte_${version}_x64-portable.zip"
+          sums="${RUNNER_TEMP}/SHA256SUMS.txt"
+          zip="${RUNNER_TEMP}/${asset}"
 
-          hash=$(awk -v f="$asset" '$2 == f { print $1 }' SHA256SUMS.txt)
-          if [ -z "$hash" ]; then
-            echo "::error::no checksum for ${asset} in SHA256SUMS.txt — did the release build the portable zip?"
+          gh release download "$TAG" -D "$RUNNER_TEMP" \
+            --pattern "SHA256SUMS.txt" --pattern "$asset"
+
+          # `gh release download` exits 0 as long as ONE pattern matched, so a
+          # missing zip has to be named here rather than left to a confusing
+          # error further down. release.yml packages the zip with
+          # `continue-on-error`, deliberately, so that a packaging failure
+          # cannot cost the release its signed .msi / .exe — this is the alarm
+          # that trade-off relies on.
+          for f in "$sums" "$zip"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::release ${TAG} has no $(basename "$f") — did the release build the portable zip? (release.yml packages it with continue-on-error)"
+              exit 1
+            fi
+          done
+
+          # The hash goes into the manifest straight from the bytes, because
+          # that is what Scoop will re-digest: this hash is the ONLY integrity
+          # check `scoop install` performs.
+          hash=$(sha256sum "$zip" | cut -d' ' -f1)
+
+          # SHA256SUMS.txt is then a cross-check rather than the source. It is
+          # composed once, over whatever was on the draft at that moment, so a
+          # later `--clobber` re-upload or a partial re-run of `checksums` would
+          # leave it describing a file the release no longer has. Disagreement
+          # means one of the two is stale and neither can be trusted.
+          published=$(awk -v f="$asset" '$2 == f { print $1 }' "$sums")
+          if [ -z "$published" ]; then
+            echo "::error::${asset} is on release ${TAG} but has no line in SHA256SUMS.txt — the checksums job did not see it"
             echo "SHA256SUMS.txt contents:"
-            cat SHA256SUMS.txt
+            cat "$sums"
+            exit 1
+          fi
+          if [ "$published" != "$hash" ]; then
+            echo "::error::SHA256SUMS.txt says ${published} for ${asset}, but the asset on the release digests to ${hash} — one of the two is stale; refusing to publish"
             exit 1
           fi
 
@@ -190,7 +223,12 @@ jobs:
           # above, and at that point there is no git remote to infer one from —
           # so the loud-failure mechanism would itself be silent.
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.meta.outputs.tag }}
+          # Taken from the event, NOT from `steps.meta.outputs.tag`: the tag
+          # validation in that step is the one thing that can fail before the
+          # output is published, which is exactly when this reporter runs — and
+          # "failed for unknown" is not a bug report anyone can act on. Same
+          # derivation the `concurrency` group above uses.
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           tag="${TAG:-unknown}"

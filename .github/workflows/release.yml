@@ -356,7 +356,11 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP 'portable'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item src-tauri/target/release/entracte.exe (Join-Path $stage 'Entracte.exe')
+          # LICENSE *and* NOTICE: Apache-2.0 4(d) requires a redistribution to
+          # carry the NOTICE text, and an extracted zip is the one Entracte
+          # artifact where nothing else can carry it.
           Copy-Item LICENSE $stage
+          Copy-Item NOTICE $stage
           New-Item -ItemType Directory -Force -Path portable | Out-Null
           # Spelled identically in bump-scoop.yml and scripts/scoop-manifest.mjs;
           # src/test-fixtures/scoop-manifest.test.ts pins the three together.
@@ -597,10 +601,14 @@ jobs:
           # binaries it was asked for, so the zip is never in its output. A
           # missing zip warns rather than failing the step — see the
           # `continue-on-error` note on the packaging step.
-          shopt -s nullglob
-          zips=(portable/*.zip)
-          if [ ${#zips[@]} -gt 0 ]; then
-            cp "${zips[@]}" signed/
+          #
+          # `compgen -G` rather than `shopt -s nullglob`: nullglob is
+          # process-global, and the `.msi` / `.exe` copy below depends on an
+          # unmatched glob staying literal so `cp` fails loudly. Left on, a
+          # missing `.msi` would silently vanish from the argument list and
+          # ship a release with only the `.exe`.
+          if compgen -G 'portable/*.zip' > /dev/null; then
+            cp portable/*.zip signed/
           else
             echo "::warning::no portable zip on this run — the Scoop manifest bump will fail and file an issue"
           fi

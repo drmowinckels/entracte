@@ -11,7 +11,7 @@
 //   node scripts/scoop-manifest.mjs 0.0.14 <sha256-of-the-portable-zip>
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { argv } from "node:process";
+import { argv, exit } from "node:process";
 import { pathToFileURL } from "node:url";
 
 const REPO = "https://github.com/drmowinckels/entracte";
@@ -24,7 +24,7 @@ const API = "https://api.github.com/repos/drmowinckels/entracte";
 // GitHub already excludes prereleases from, and this regex is shared with the
 // manifest generator so the two can never disagree about what a version
 // looks like.
-const VERSION = String.raw`\d+\.\d+\.\d+`;
+const VERSION_PATTERN = String.raw`\d+\.\d+\.\d+`;
 
 /**
  * The portable-zip asset `release.yml` uploads. Scoop extracts an archive
@@ -41,7 +41,7 @@ export const assetName = (version) => `Entracte_${version}_x64-portable.zip`;
 const downloadUrl = (tag, file) => `${REPO}/releases/download/${tag}/${file}`;
 
 export function buildManifest({ version, hash }) {
-  if (!new RegExp(`^${VERSION}$`).test(version)) {
+  if (!new RegExp(`^${VERSION_PATTERN}$`).test(version)) {
     throw new Error(
       `not a bare stable version (drop any leading "v"; the bucket tracks stable releases only): ${version}`,
     );
@@ -80,9 +80,14 @@ export function buildManifest({ version, hash }) {
       "Needs the Microsoft Edge WebView2 Runtime, preinstalled on Windows 11 and on current Windows 10. If the window stays blank, install it from https://developer.microsoft.com/microsoft-edge/webview2/",
       "Your settings live in %APPDATA%\\io.drmowinckels.entracte, outside the Scoop app directory — uninstalling leaves them in place.",
     ],
+    // `checkver`/`autoupdate` are not used by anything in this repo —
+    // bump-scoop.yml regenerates the manifest outright, and `scoop update
+    // <app>` does not evaluate them. They are here for the Scoop-side tooling
+    // that does (`scoop checkver -u`, a bucket excavator), and so a fork or a
+    // downstream bucket can track releases without this workflow.
     checkver: {
       url: `${API}/releases/latest`,
-      regex: String.raw`"tag_name":\s*"v(${VERSION})"`,
+      regex: String.raw`"tag_name":\s*"v(${VERSION_PATTERN})"`,
     },
     autoupdate: {
       architecture: {
@@ -105,7 +110,10 @@ export const renderManifest = (manifest) =>
 if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
   const [version, hash] = argv.slice(2);
   if (!version || !hash) {
-    throw new Error("usage: node scripts/scoop-manifest.mjs <version> <sha256>");
+    // Matches set-version.mjs: a usage mistake gets a one-line message and a
+    // distinct exit code, not a stack trace.
+    console.error("usage: scoop-manifest.mjs <version> <sha256>");
+    exit(2);
   }
   // Resolved against this module, not the process CWD: the manifest has one
   // home, and a run from the wrong directory should not quietly write a

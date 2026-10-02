@@ -205,3 +205,4 @@ autoupdate
 pwsh
 APPDATA
 Chocolatey
+cnotcontains
