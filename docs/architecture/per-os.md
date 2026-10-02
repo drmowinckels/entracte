@@ -16,6 +16,18 @@ Three signals — Do Not Disturb, camera in use, and idle time — are read dire
 - **Linux DnD** — would need per-DE handling (GNOME `gsettings`, KDE DBus). The setting checkbox is currently greyed with a `(macOS/Windows only)` suffix.
 - **Wayland idle** — `user-idle`'s X11 implementation is reliable; Wayland is not. X11-only Linux support is the practical short-term limit.
 
+## Xlib threading (Linux/X11)
+
+Entracte is a multi-threaded X client by construction. GTK and WebKit own the main thread, while the scheduler run loop — a `tauri::async_runtime` task, so a tokio worker — polls the idle counter once a second, and on X11 `user-idle` answers that by calling `XOpenDisplay` / `XScreenSaverQueryInfo` / `XCloseDisplay` straight from the calling thread.
+
+libX11 leaves its internal locking inert until `XInitThreads()` is called, and the call only takes effect if it happens before any `Display` is opened. Without it the two threads corrupt the X request queue and libxcb aborts the whole process with `[xcb] Unknown request in queue while dequeuing` / `xcb_xlib_threads_sequence_lost` (#333). `run()` therefore calls [`display::init_display_threading()`](https://github.com/drmowinckels/entracte/blob/main/src-tauri/src/display.rs) as its first statement, before the Tauri builder exists. It is a no-op on macOS and Windows.
+
+That is too early for a logger to exist, so a refusal from libX11 cannot be warned about on the spot. The outcome is recorded instead and reported in the startup banner as `xlib=on|off|unknown` (`n/a` off Linux) — so if #333 ever recurs, the first line of the log says whether locking was actually on. The Linux smoke job asserts `xlib=on` in that banner, which is a deterministic check on the fix rather than a repeated attempt to provoke the old race.
+
+Locking makes concurrent X access safe, not correct. A few `tauri` getters — `available_monitors`, `primary_monitor`, `monitor_from_point`, `display_handle` — reach into the event loop's `window_target` with no dispatch at all, and the `unsafe impl Send` that lets that type cross threads documents its own precondition: it may only be used on the main thread. Every such read goes through `display::on_main_thread()`, which hops to the main thread and returns plain data. Window _creation_ must not: `tauri-runtime-wry` requires `create_webview` to be called off the main thread or the event-loop channel deadlocks, so `ensure_overlay` stays on the caller's thread.
+
+The hop is safe to call from the main thread as well as off it — `tauri-runtime-wry`'s `send_user_message` runs the task inline when the caller already _is_ the event loop's thread, which is how the startup banner's monitor count works — and it gives up after two seconds rather than hang, logging the name of the abandoned read. A monitor list that could not be read is then rendered as "unavailable", never as "no monitors": the two are different bugs.
+
 ## Activation policy
 
 macOS uses `ActivationPolicy::Accessory` — no Dock icon, no app menu in the menu bar. The tray icon is the only entry point. The tray uses `trayIconTemplate.png` as a template image so AppKit auto-tints it for light/dark menu bars. Don't replace it with a coloured PNG.
