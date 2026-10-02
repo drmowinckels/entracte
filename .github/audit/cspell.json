@@ -2,7 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
   "version": "0.2",
   "language": "en,en-GB",
-  "files": ["**/*.{md,ts,tsx,rs,json,toml,yml,yaml}"],
+  "globRoot": "../..",
+  "files": ["**/*.{md,ts,tsx}"],
   "ignorePaths": [
     "**/node_modules/**",
     "**/dist/**",
@@ -12,7 +13,7 @@
     "**/Cargo.lock",
     "**/package-lock.json",
     "**/.vitepress/cache/**",
-    "**/.claude/**",
+    ".claude/**",
     "**/icons/**",
     "**/public/**",
     "**/*.svg",
