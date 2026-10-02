@@ -1,17 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(__dirname, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const configPath = resolve(repoRoot, ".github/audit/cspell.json");
 
-const cspellConfig = JSON.parse(
-  readFileSync(resolve(repoRoot, ".github/audit/cspell.json"), "utf8"),
-) as { globRoot: string; files: string[]; ignorePaths: string[] };
+const cspellConfig = JSON.parse(readFileSync(configPath, "utf8")) as {
+  globRoot: string;
+  files: string[];
+  ignorePaths: string[];
+};
 
 const spellScript = (
-  JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8") as string)
+  JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"))
     .scripts as Record<string, string>
 )["audit:spell"];
+
+// The quoted glob `audit:spell` passes on the command line. cspell REPLACES the
+// config's `files` with a CLI glob rather than intersecting the two, so this
+// string — not `files` — is what decides the real scope.
+const scriptGlob = /"([^"]*\*[^"]*)"/.exec(spellScript)?.[1];
 
 // Two ways this config has already gone wrong, both silent:
 //
@@ -23,34 +32,34 @@ const spellScript = (
 //    `.claude` directory at the repo root" rather than "any path with
 //    `.claude` in it".
 //
-// 2. The config's `files` claimed `rs,json,toml,yml,yaml` while the CLI glob
-//    in `audit:spell` passed only `md,ts,tsx`, so a reader would reasonably
-//    believe Rust and the workflows were spell-checked when nothing checked
-//    them. The narrower of the two wins, so the declaration has to match.
+// 2. `files` declared `rs,json,toml,yml,yaml` while the CLI glob passed only
+//    `md,ts,tsx`. Because the CLI glob replaces `files`, the declaration was
+//    documentation only — and documentation that lied about Rust being
+//    spell-checked. Keeping the two in step is what stops it lying again; it
+//    is not what bounds the scope.
+//
+// These assertions pin the config shape. They cannot catch a *different* way of
+// checking nothing, because that needs a real cspell run; the durable place for
+// that is a minimum-file-count guard on the gate itself rather than an ~8s
+// subprocess in this suite.
 
 describe("cspell config", () => {
   it("anchors the .claude ignore so a worktree run is not silently empty", () => {
-    expect(cspellConfig.globRoot).toBe("../..");
+    // Asserted by where it resolves, not by how it is spelled, so moving the
+    // config or writing the same root differently is not a spurious failure.
+    expect(resolve(dirname(configPath), cspellConfig.globRoot)).toBe(repoRoot);
     expect(cspellConfig.ignorePaths).toContain(".claude/**");
     const unanchored = cspellConfig.ignorePaths.filter((p) =>
-      /^\*\*\/\.claude/.test(p),
+      p.startsWith("**/.claude"),
     );
     expect(unanchored).toEqual([]);
   });
 
-  it("declares exactly the extensions the audit script actually checks", () => {
-    const extensions = (globs: string) =>
-      [...globs.matchAll(/\*\*\/\*\.\{([^}]+)\}/g)]
-        .flatMap((m) => m[1].split(","))
-        .map((e) => e.trim())
-        .sort();
-
-    expect(extensions(cspellConfig.files.join(" "))).toEqual(
-      extensions(spellScript),
-    );
-  });
-
-  it("passes a glob to cspell, since the config's files alone check nothing", () => {
-    expect(spellScript).toMatch(/\*\*\/\*\.\{/);
+  it("declares exactly the glob the audit script passes", () => {
+    expect(
+      scriptGlob,
+      "audit:spell must pass a glob; the config's files alone check nothing",
+    ).toBeDefined();
+    expect(cspellConfig.files).toEqual([scriptGlob]);
   });
 });
