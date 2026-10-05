@@ -198,6 +198,8 @@ unacked
 RUSTSEC
 preopened
 dryrun
+worktree
+worktrees
 Scoop
 scoop
 checkver
