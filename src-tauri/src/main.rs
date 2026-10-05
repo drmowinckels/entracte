@@ -1,30 +1,33 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use entracte_lib::cli::{self, Invocation};
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
-    match argv.get(1).map(|s| s.as_str()) {
-        Some("help" | "-h" | "--help") => {
-            print!("{}", entracte_lib::cli::help_text());
-            return;
-        }
-        Some("log") => {
-            entracte_lib::cli::stream_log();
-            return;
-        }
-        _ => {}
+    let invocation = cli::classify(&argv);
+
+    // The `windows_subsystem = "windows"` binary starts with no console, so any
+    // CLI output would go to a closed handle (#364). Attach to the parent's
+    // console on the paths that print — never on the tray-app launch, or
+    // starting Entracte from Explorer would flash a console window.
+    #[cfg(windows)]
+    if invocation.produces_console_output() {
+        cli::attach_parent_console();
     }
 
-    match entracte_lib::cli::parse_cli(&argv) {
-        Err(e) => {
+    match invocation {
+        Invocation::Help => print!("{}", cli::help_text()),
+        Invocation::Log => cli::stream_log(),
+        Invocation::ParseError(e) => {
             eprintln!("entracte: {e:?}");
             eprintln!();
-            eprintln!("{}", entracte_lib::cli::help_text());
+            eprintln!("{}", cli::help_text());
             std::process::exit(2);
         }
-        Ok(Some(cmd)) if cmd.runs_locally() => {
-            std::process::exit(entracte_lib::cli::run_local_ipc(cmd));
+        Invocation::Local(cmd) => {
+            std::process::exit(cli::run_local_ipc(cmd));
         }
-        _ => entracte_lib::run(),
+        Invocation::LaunchApp => entracte_lib::run(),
     }
 }
