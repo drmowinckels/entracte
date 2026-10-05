@@ -204,6 +204,7 @@ preopened
 dryrun
 worktree
 worktrees
+triggerable
 Scoop
 scoop
 checkver
