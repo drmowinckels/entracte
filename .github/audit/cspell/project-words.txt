@@ -73,6 +73,10 @@ XDG
 DBus
 Wayland
 Xorg
+Xlib
+xlib
+libxcb
+XInitThreads
 opencode
 hovancik
 hashlib
