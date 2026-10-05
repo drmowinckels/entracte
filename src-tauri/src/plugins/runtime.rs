@@ -202,7 +202,15 @@ pub fn build_sandboxed_plugin(
 
     builder
         .build()
-        .map_err(|e| format!("plugin failed to load in the sandbox: {e}"))
+        // `{e:#}` not `{e}`: extism returns an `anyhow::Error` whose outermost
+        // message is generic ("failed to parse WebAssembly module"), with the
+        // actual reason — the unresolved import's name, the malformed section,
+        // "expected a core wasm module" — only in the cause chain. The plugin
+        // author needs that reason: this string's only sink is the install
+        // failure shown in Settings → Plugins (`install_plugin`), and the
+        // detector-eval path discards it entirely, so if it is not in here it
+        // is nowhere.
+        .map_err(|e| format!("plugin failed to load in the sandbox: {e:#}"))
 }
 
 /// Build a detector from its module + granted capabilities, run its `detect()`
@@ -277,13 +285,14 @@ mod tests {
         assert!(build_sandboxed_plugin(&module, &[], &SandboxContext::default()).is_ok());
     }
 
-    /// Guards the reachability argument behind #323. Two unpatched wasmtime
-    /// advisories (RUSTSEC-2026-0269, a WASI filesystem sandbox escape, and
-    /// RUSTSEC-2026-0222) ride in on extism's pinned wasmtime 43.x, which has
-    /// no fix on its line. Neither is reachable here *because* the builder
-    /// sets `with_wasi(false)`: without WASI in the linker there are no
-    /// preopened directories and no `wasi_snapshot_preview1` import to call,
-    /// so the vulnerable path-resolution code is never instantiated.
+    /// Guards the first of the two reachability invariants behind #323:
+    /// **WASI stays off**. RUSTSEC-2026-0269 is a filesystem sandbox escape in
+    /// wasmtime's WASI path resolution, unpatched on the wasmtime line extism
+    /// pins (the version analysis lives in `src-tauri/deny.toml`, which is where
+    /// it stays current). It is not reachable here *because*
+    /// the builder sets `with_wasi(false)`: without WASI in the linker there
+    /// are no preopened directories and no `wasi_snapshot_preview1` import to
+    /// call, so the vulnerable path-resolution code is never instantiated.
     ///
     /// That argument holds only as long as WASI stays off. Flipping
     /// `with_wasi(true)` would silently turn a documented non-issue into a
@@ -301,8 +310,47 @@ mod tests {
         let err = build_sandboxed_plugin(&module, &[], &SandboxContext::default())
             .expect_err("WASI must not be linked into the plugin sandbox");
         assert!(
-            err.contains("failed to load"),
-            "a wasi_snapshot_preview1 import must fail the load, got: {err}"
+            err.contains("wasi_snapshot_preview1::path_open"),
+            "the wasi_snapshot_preview1 import must be left unresolved, got: {err}"
+        );
+    }
+
+    /// Guards the second reachability invariant behind #323: **no components**.
+    /// RUSTSEC-2026-0316 ("dynamic record lifting can allocate beyond the
+    /// hostcall fuel limit") is a component-model bug — it lives in wasmtime's
+    /// dynamically-typed `wasmtime::component::Val` API, which hosts reach only
+    /// by instantiating a component. extism never touches the component model:
+    /// `extism::Val` is a type alias for the *core* `wasmtime::Val`, and a
+    /// plugin is always a core wasm module.
+    ///
+    /// Like the WASI invariant above, that holds only while it holds, so pin it
+    /// behaviourally: a component binary must fail to load, and must fail
+    /// *because* it is a component. Both inputs are bare preambles, so they are
+    /// byte-identical apart from the 4-byte version/layer field that is the only
+    /// thing distinguishing the two formats — the core module loading while the
+    /// component is rejected therefore shows the rejection is about the format
+    /// and not about the bytes being short or malformed. The assertion below
+    /// keeps that control honest rather than leaving it to the reader.
+    #[test]
+    fn rejects_a_wasm_component() {
+        let core_module = wasm("(module)");
+        let component = wasm("(component)");
+        assert_eq!(
+            (&core_module[..4], core_module.len()),
+            (&component[..4], component.len()),
+            "the two inputs must differ only in the version/layer field"
+        );
+
+        assert!(
+            build_sandboxed_plugin(&core_module, &[], &SandboxContext::default()).is_ok(),
+            "the core-module preamble must load, or this test proves nothing"
+        );
+
+        let err = build_sandboxed_plugin(&component, &[], &SandboxContext::default())
+            .expect_err("a wasm component must not load in the plugin sandbox");
+        assert!(
+            err.contains("component"),
+            "a component must be rejected as a component, got: {err}"
         );
     }
 
@@ -312,8 +360,8 @@ mod tests {
         let module = trap_if_true_module("host_process_running");
         let err = build_sandboxed_plugin(&module, &[], &SandboxContext::default()).unwrap_err();
         assert!(
-            err.contains("failed to load"),
-            "ungranted import should fail the load, got: {err}"
+            err.contains("extism:host/user::host_process_running"),
+            "the ungranted import must be left unresolved, got: {err}"
         );
     }
 

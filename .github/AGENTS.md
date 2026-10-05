@@ -188,7 +188,7 @@ The `audit` CI job runs the always-hard-fail ones (knip / cspell / size-limit / 
 
 ## CI / deployment
 
-Three workflows in [.github/workflows/](workflows/):
+The main workflows in [.github/workflows/](workflows/):
 
 - **[ci.yml](workflows/ci.yml)** — runs on every push / PR. Four jobs in parallel:
   - **frontend** (ubuntu): `tsc --noEmit`, `npm run coverage`, `npm run build`, `audit:a11y`. Uploads `coverage/lcov.info` to Codecov with flag `frontend`.
@@ -197,7 +197,8 @@ Three workflows in [.github/workflows/](workflows/):
   - **advisory** (ubuntu): cargo-deny + lychee + npm audit, results posted as a sticky PR comment. Step-level `continue-on-error: true` keeps the comment posting even when an audit fails; a final step re-fails the job on lychee breakage so broken links block merges.
 - **[docs.yml](workflows/docs.yml)** — runs on push to `main` when `docs/**`, `src/**`, `src-tauri/**`, or `.config/typedoc/**` change. Builds the VitePress site + rustdoc + TypeDoc, deploys to GitHub Pages.
 - **[docs-preview.yml](workflows/docs-preview.yml)** — runs on `pull_request` against the same path set. Mirrors the production docs build and pushes the result to Netlify as a per-PR preview, then sticky-comments the URL on the PR. Requires `NETLIFY_AUTH_TOKEN` (user token) and `NETLIFY_SITE_ID` (per-site) repo secrets. Skips fork PRs (no secret access). Production deploys stay on GitHub Pages via `docs.yml` — Netlify is preview-only.
-- **[release.yml](workflows/release.yml)** — runs on `v*` tag push (or `workflow_dispatch`). Full bundle via `tauri-action` across all platforms, creates a draft GitHub release.
+- **[release.yml](workflows/release.yml)** — runs on `v*` tag push (or `workflow_dispatch`). Full bundle via `tauri-action` across all platforms, creates a draft GitHub release. It stays in `ci.yml`'s `paths-ignore`, so editing it does not run the test matrix — but `src/test-fixtures/scoop-manifest.test.ts` reads it to pin the portable-zip asset name, which is why `audit.yml` (no path filter) runs that test too.
+- **[bump-cask.yml](workflows/bump-cask.yml)** / **[bump-scoop.yml](workflows/bump-scoop.yml)** — run on `release: published` and commit `Casks/entracte.rb` / `bucket/entracte.json` straight to `main`. Actions cannot open PRs on this repo (`can_approve_pull_request_reviews` is off — see #349), so each ends with an `if: failure()` step that files or comments on an issue; nothing downstream would otherwise notice a red run. Stable releases only.
 
 Codecov targets: project + patch, both `informational: true` (no merge block on coverage drops) — see [.github/codecov.yml](codecov.yml).
 

@@ -18,6 +18,10 @@ const assets: Asset[] = [
   { name: "Entracte_0.0.10_x64.dmg", url: `${BASE}/Entracte_0.0.10_x64.dmg` },
   { name: "Entracte_0.0.10_x64-setup.exe", url: `${BASE}/Entracte_0.0.10_x64-setup.exe` },
   { name: "Entracte_0.0.10_x64_en-US.msi", url: `${BASE}/Entracte_0.0.10_x64_en-US.msi` },
+  {
+    name: "Entracte_0.0.10_x64-portable.zip",
+    url: `${BASE}/Entracte_0.0.10_x64-portable.zip`,
+  },
   { name: "Entracte_0.0.10_amd64.AppImage", url: `${BASE}/Entracte_0.0.10_amd64.AppImage` },
   { name: "Entracte_0.0.10_amd64.deb", url: `${BASE}/Entracte_0.0.10_amd64.deb` },
   { name: "Entracte-0.0.10-1.x86_64.rpm", url: `${BASE}/Entracte-0.0.10-1.x86_64.rpm` },
@@ -28,7 +32,7 @@ const assets: Asset[] = [
 ];
 
 describe("classify", () => {
-  it("recognises exactly the seven installer artefacts", () => {
+  it("recognises exactly the eight installer artefacts", () => {
     const got = classify(assets);
     expect(got.map((i) => i.name).sort()).toEqual(
       [
@@ -39,6 +43,7 @@ describe("classify", () => {
         "Entracte_0.0.10_x64-setup.exe",
         "Entracte_0.0.10_x64.dmg",
         "Entracte_0.0.10_x64_en-US.msi",
+        "Entracte_0.0.10_x64-portable.zip",
       ].sort(),
     );
   });
