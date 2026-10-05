@@ -35,6 +35,58 @@ impl CliCommand {
     }
 }
 
+/// What `main` should do with a given argv, decided in one pure place so the
+/// table is unit-testable on every OS. The Windows console attach keys off
+/// [`Invocation::produces_console_output`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Invocation {
+    Help,
+    Log,
+    Local(CliCommand),
+    ParseError(CliError),
+    LaunchApp,
+}
+
+impl Invocation {
+    /// Whether this invocation writes to the terminal (help text, log stream,
+    /// IPC query output, or an argument error). The tray-app fall-through does
+    /// not — attaching a console for it would flash a window on Explorer launch.
+    pub fn produces_console_output(&self) -> bool {
+        !matches!(self, Invocation::LaunchApp)
+    }
+}
+
+/// Classify a raw `argv` into the single action `main` takes. Mirrors the old
+/// inline dispatch exactly: `help`/`log` are recognised ahead of the parser,
+/// everything else goes through [`parse_cli`], and anything that isn't a
+/// locally-runnable command falls through to launching the tray app.
+pub fn classify(argv: &[String]) -> Invocation {
+    match argv.get(1).map(|s| s.as_str()) {
+        Some("help" | "-h" | "--help") => return Invocation::Help,
+        Some("log") => return Invocation::Log,
+        _ => {}
+    }
+    match parse_cli(argv) {
+        Err(e) => Invocation::ParseError(e),
+        Ok(Some(cmd)) if cmd.runs_locally() => Invocation::Local(cmd),
+        _ => Invocation::LaunchApp,
+    }
+}
+
+/// Attach to the parent process's console on Windows. The release binary is
+/// built with `windows_subsystem = "windows"` (no console, so the tray app
+/// doesn't flash one), which also detaches it from the terminal it was invoked
+/// from — every CLI `print!`/`eprintln!` would otherwise write to a closed
+/// handle (#364). Called only on the paths that print, never on tray launch.
+#[cfg(windows)]
+pub fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    // No preconditions; returns FALSE (ignored) when the parent has no console.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PauseTarget {
     Indefinite,
@@ -721,6 +773,59 @@ mod tests {
         assert!(expand_colour("not-a-colour").is_err());
         assert!(expand_colour("#zzzzzz").is_err());
         assert!(expand_colour("#abcd").is_err());
+    }
+
+    #[test]
+    fn classify_help_variants_are_help_and_print() {
+        for flag in [&["help"][..], &["-h"][..], &["--help"][..]] {
+            let inv = classify(&argv(flag));
+            assert_eq!(inv, Invocation::Help, "flag {flag:?}");
+            assert!(inv.produces_console_output(), "flag {flag:?}");
+        }
+    }
+
+    #[test]
+    fn classify_log_is_log_and_prints() {
+        let inv = classify(&argv(&["log"]));
+        assert_eq!(inv, Invocation::Log);
+        assert!(inv.produces_console_output());
+    }
+
+    #[test]
+    fn classify_local_command_prints() {
+        let inv = classify(&argv(&["status"]));
+        assert_eq!(inv, Invocation::Local(CliCommand::Status));
+        assert!(inv.produces_console_output());
+    }
+
+    #[test]
+    fn classify_quick_flags_are_local_and_print() {
+        let inv = classify(&argv(&["--profile=Focus"]));
+        assert!(
+            matches!(inv, Invocation::Local(CliCommand::Quick { .. })),
+            "{inv:?}"
+        );
+        assert!(inv.produces_console_output());
+    }
+
+    #[test]
+    fn classify_parse_error_still_prints() {
+        let inv = classify(&argv(&["doomsday"]));
+        assert!(
+            matches!(inv, Invocation::ParseError(CliError::UnknownCommand(_))),
+            "{inv:?}"
+        );
+        assert!(inv.produces_console_output());
+    }
+
+    #[test]
+    fn classify_no_command_launches_app_without_console() {
+        let inv = classify(&argv(&[]));
+        assert_eq!(inv, Invocation::LaunchApp);
+        assert!(
+            !inv.produces_console_output(),
+            "tray launch must not attach a console"
+        );
     }
 
     #[test]
