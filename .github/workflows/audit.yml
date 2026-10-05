@@ -67,6 +67,14 @@ jobs:
       - name: workflow shell syntax
         run: npm run audit:workflow-shell
 
+      # The Scoop packaging pins span files that ci.yml's `paths-ignore`
+      # excludes — `.github/workflows/release.yml` and `docs/**` — so a rename
+      # in either would skip ci.yml's `frontend` job and sail past the one test
+      # that catches it. This workflow has no path filter, which is exactly the
+      # property the pins need, and the job already has `npm ci` (#359).
+      - name: cross-file packaging pins
+        run: npm test -- src/test-fixtures/scoop-manifest.test.ts
+
   # Advisory audits: surface signal without blocking merges.
   # cargo-deny covers licenses + CVEs + duplicate-version checks.
   # npm audit is externally-validated and can flap, so it stays advisory.

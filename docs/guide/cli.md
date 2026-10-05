@@ -2,6 +2,10 @@
 
 The `entracte` binary doubles as a small CLI. The tray app starts when you launch it with no arguments; CLI commands forward to the already-running instance via the [single-instance plugin](https://v2.tauri.app/plugin/single-instance/), so you can wire up shortcuts, scripts, or editor commands without juggling a separate daemon.
 
+::: warning Windows: commands work, output does not
+The Windows build is compiled as a GUI binary (so launching the tray app never flashes a console window), and a GUI binary does not attach to the console it was started from. Action commands like `entracte pause 30m` still reach the running app, but nothing is printed back — `entracte help`, `entracte status` and the other query commands return silently, and so do error messages. Tracked in [#364](https://github.com/drmowinckels/entracte/issues/364); until it is fixed, treat the CLI as macOS/Linux for anything you need to read.
+:::
+
 ## Synopsis
 
 ```sh
