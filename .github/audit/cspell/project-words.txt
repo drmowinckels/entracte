@@ -204,3 +204,4 @@ preopened
 dryrun
 worktree
 worktrees
+triggerable
