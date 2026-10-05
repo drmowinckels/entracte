@@ -9,7 +9,11 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Added
 
-- **Install Entracte with Scoop on Windows.** `scoop bucket add entracte https://github.com/drmowinckels/entracte` then `scoop install entracte/entracte` — no installer to click through, and `entracte` lands on your `PATH`, so `entracte pause 30m` works from any shell. (Commands that print something back are still silent on Windows; that is [#364](https://github.com/drmowinckels/entracte/issues/364).) Releases now also carry a portable `Entracte_<version>_x64-portable.zip` for anyone who wants the app without an installer at all; Scoop is what it is built for. The bucket tracks stable releases only, like the Homebrew cask, because a `scoop` install cannot see the in-app update-channel setting. ([#359](https://github.com/drmowinckels/entracte/issues/359))
+- **Install Entracte with Scoop on Windows.** `scoop bucket add entracte https://github.com/drmowinckels/entracte` then `scoop install entracte/entracte` — no installer to click through, and `entracte` lands on your `PATH`, so `entracte pause 30m` works from any shell. Releases now also carry a portable `Entracte_<version>_x64-portable.zip` for anyone who wants the app without an installer at all; Scoop is what it is built for. The bucket tracks stable releases only, like the Homebrew cask, because a `scoop` install cannot see the in-app update-channel setting. ([#359](https://github.com/drmowinckels/entracte/issues/359))
+
+### Fixed
+
+- **Entracte no longer crashes at random on Linux/X11.** On X11 the app reads the system idle counter on a background thread while the window system runs on the main one, and the X client library only makes that safe if it is told up front that the app is multi-threaded. It wasn't, so now and then the two collided and X aborted the whole app — most visibly when a break fired and the overlay window was being built, which looked like "the app vanishes when a break starts". Threading is now initialised before any window exists, and the two remaining places that asked X about your monitors from a background thread (building a break overlay, and generating a diagnostics report) now ask on the main thread. macOS and Windows were never affected. ([#333](https://github.com/drmowinckels/entracte/issues/333))
 
 ## [0.0.13] — 2026-10-01
 

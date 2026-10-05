@@ -68,9 +68,14 @@ extism = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# `XInitThreads()` only — see src/display.rs and #333. Already in the tree via
+# `user-idle`'s XScreenSaver probe, so this adds a feature flag, not a build.
+x11 = { version = "2", features = ["xlib"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
-windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_StationsAndDesktops", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Wdk_System_SystemServices"] }
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_StationsAndDesktops", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Wdk_System_SystemServices"] }
 # High-level COM bindings for the WASAPI endpoint peak-meter probe that gates
 # the break-time media Play/Pause key (#234). Pinned to 0.61 to unify with the
 # copy already in the tree via tauri/wry rather than adding a third version.
