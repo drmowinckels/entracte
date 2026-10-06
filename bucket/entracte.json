@@ -1,0 +1,44 @@
+{
+    "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
+    "version": "0.0.14",
+    "description": "Cross-platform break reminder named after the theatre interval between acts",
+    "homepage": "https://github.com/drmowinckels/entracte",
+    "license": "Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/drmowinckels/entracte/releases/download/v0.0.14/Entracte_0.0.14_x64-portable.zip",
+            "hash": "5f92fb9d470c0406d1f8575dfeb60d4bd1d740274b697193b5b467fed40c6f00"
+        }
+    },
+    "bin": [
+        [
+            "Entracte.exe",
+            "entracte"
+        ]
+    ],
+    "shortcuts": [
+        [
+            "Entracte.exe",
+            "Entracte"
+        ]
+    ],
+    "notes": [
+        "Entracte runs from the tray. `entracte pause 30m` and `entracte resume` reach the running app from any shell; commands that print (help, status) stay silent on Windows until #364 lands.",
+        "Needs the Microsoft Edge WebView2 Runtime, preinstalled on Windows 11 and on current Windows 10. If the window stays blank, install it from https://developer.microsoft.com/microsoft-edge/webview2/",
+        "Your settings live in %APPDATA%\\io.drmowinckels.entracte, outside the Scoop app directory — uninstalling leaves them in place."
+    ],
+    "checkver": {
+        "url": "https://api.github.com/repos/drmowinckels/entracte/releases/latest",
+        "regex": "\"tag_name\":\\s*\"v(\\d+\\.\\d+\\.\\d+)\""
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/drmowinckels/entracte/releases/download/v$version/Entracte_$version_x64-portable.zip",
+                "hash": {
+                    "url": "https://github.com/drmowinckels/entracte/releases/download/v$version/SHA256SUMS.txt"
+                }
+            }
+        }
+    }
+}
