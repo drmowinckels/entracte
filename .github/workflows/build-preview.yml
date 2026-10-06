@@ -170,9 +170,14 @@ jobs:
           fi
           echo "verifying $(basename "$appimage")"
 
+          # Absolute, because the extract runs from a scratch directory and
+          # $OLDPWD is only defined after a cd — referencing it outside that
+          # subshell trips `set -u`.
+          appimage_abs="$PWD/$appimage"
+
           workdir=$(mktemp -d)
-          chmod +x "$appimage"
-          ( cd "$workdir" && "$OLDPWD/$appimage" --appimage-extract >/dev/null )
+          chmod +x "$appimage_abs"
+          ( cd "$workdir" && "$appimage_abs" --appimage-extract >/dev/null )
           root="$workdir/squashfs-root"
 
           fail=0
@@ -218,8 +223,8 @@ jobs:
           # could not start when root mounts the image and another user runs
           # it (`firejail --appimage`, which is how the catalog tests). That
           # rejected 0.0.13 at appimage.github.io#9123.
-          offset=$("$OLDPWD/$appimage" --appimage-offset)
-          modes=$(unsquashfs -o "$offset" -lls "$OLDPWD/$appimage")
+          offset=$("$appimage_abs" --appimage-offset)
+          modes=$(unsquashfs -o "$offset" -lls "$appimage_abs")
 
           # The launchers must be readable AND executable by everyone. These
           # sit at the AppDir root, so no directory traversal is involved.
