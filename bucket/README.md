@@ -2,10 +2,16 @@
 
 A [Scoop](https://scoop.sh/) bucket is just a repository with a `bucket/`
 directory full of manifests, so Entracte's lives here rather than in a separate
-`scoop-entracte` repo — one repo, no cross-repo token for CI to push with, and
-the same arrangement the [Homebrew cask](../Casks/entracte.rb) already uses.
-(Homebrew _requires_ a separate repo for a tap; Scoop does not, so this is the
-closer parity, not a departure from it.)
+`scoop-entracte` repo — one repo, and no cross-repo token for CI to push with.
+
+The Homebrew cask went the other way, to the shared tap
+[`drmowinckels/homebrew-tap`](https://github.com/drmowinckels/homebrew-tap).
+Not an inconsistency: a tap is only reachable as `brew tap drmowinckels/tap` if
+the repository is *named* `homebrew-tap`, so sharing one tap across apps buys a
+short install command that an in-repo cask cannot offer. Scoop has no such
+naming rule, and `scoop bucket add` takes the URL either way. The cask is
+bumped by that tap polling this repo's releases; the manifest below is still
+pushed from here.
 
 ```powershell
 scoop bucket add entracte https://github.com/drmowinckels/entracte

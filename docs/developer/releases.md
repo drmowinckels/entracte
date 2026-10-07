@@ -86,17 +86,17 @@ The version arithmetic lives in [`scripts/next-beta-version.mjs`](https://github
 
 ### What betas do not touch
 
-The Homebrew cask tracks stable only (`bump-cask.yml` skips prereleases): a `brew` install cannot see the in-app channel setting, so it has no way to opt out. Offering betas over Homebrew would need a separate `entracte-beta` cask. The Scoop bucket is stable-only for exactly the same reason (`bump-scoop.yml` refuses prerelease tags, and its `checkver` reads `releases/latest`, which GitHub excludes prereleases from).
+The Homebrew cask tracks stable only (the tap's bump job asks GitHub for the latest *non-prerelease* release): a `brew` install cannot see the in-app channel setting, so it has no way to opt out. Offering betas over Homebrew would need a separate `entracte-beta` cask. The Scoop bucket is stable-only for exactly the same reason (`bump-scoop.yml` refuses prerelease tags, and its `checkver` reads `releases/latest`, which GitHub excludes prereleases from).
 
 ## Homebrew cask
 
-Publishing the release also fires [`.github/workflows/bump-cask.yml`](https://github.com/drmowinckels/entracte/blob/main/.github/workflows/bump-cask.yml), which rewrites `Casks/entracte.rb` (the `version` line and both DMG `sha256` lines, read from the release's `SHA256SUMS.txt`) and **commits it straight to `main`**. No action is needed from you; `brew upgrade --cask entracte` picks the new version up once that push lands.
+The cask no longer lives here. It sits in the shared tap [`drmowinckels/homebrew-tap`](https://github.com/drmowinckels/homebrew-tap) next to Cairn's, so users get `brew tap drmowinckels/tap` with no URL argument — a repository whose name lacks the `homebrew-` prefix cannot be tapped by short name.
 
-It commits directly rather than opening a PR because GitHub Actions is not permitted to create pull requests on this repo, and a generated version-and-checksum bump has nothing to review. If `main` ever becomes protected against direct pushes, this workflow needs a PAT or GitHub App token instead.
+**Releasing triggers nothing on the Homebrew side.** The tap polls this repo hourly for its latest non-prerelease release and commits the bump itself, so there is no action for you and nothing in this repo can fail. Expect `brew upgrade --cask entracte` to see a new release within the hour; the tap's **Bump casks** workflow has a `workflow_dispatch` trigger if you want it immediately.
 
-**If the bump fails, it files an issue against itself.** Nothing downstream depends on this workflow — a red run blocks neither the release nor any merge — so it announces its own failure rather than waiting to be noticed. That is deliberate: the PR-based version of this step failed on every release from `v0.0.2` to `v0.0.12`, eleven in a row, and the cask sat stranded behind the latest release because nobody was watching the run ([#349](https://github.com/drmowinckels/entracte/issues/349)).
+That direction is deliberate. The bump used to live here and push, which needed no token only because the cask was in-repo; moving the cask out would have meant a PAT or deploy key in this repo purely to write to another one. More to the point, a push cannot recover from its own failure — the PR-based version of this step failed on every release from `v0.0.2` to `v0.0.12`, eleven in a row, and the cask sat stranded behind the latest release because nobody was watching the run ([#349](https://github.com/drmowinckels/entracte/issues/349)). A poller re-derives the desired state every hour, so a dropped tick repairs itself on the next one.
 
-To bump by hand — after a failure, or for a tag that predates the workflow — re-run it from the Actions tab via **Run workflow**, which takes the tag as an input.
+`tap_migrations.json` at the root of this repo maps `entracte` to its new home, so anyone who tapped the old `drmowinckels/entracte` follows the move on their next `brew upgrade` without being told.
 
 ## Scoop bucket
 

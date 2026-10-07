@@ -19,12 +19,18 @@ Both `.dmg` builds are code-signed; the inner `.app` is notarised with an Apple 
 
 ### Homebrew
 
-The project ships its own [Homebrew Cask](https://brew.sh/) hosted in this repo. Until we submit to `homebrew-cask` upstream (planned after `0.1.0` stable lands), install via the custom tap:
+Entracte ships a [Homebrew Cask](https://brew.sh/) in a tap of its own. Until we submit to `homebrew-cask` upstream (planned after `0.1.0` stable lands), install from it:
 
 ```sh
-brew tap drmowinckels/entracte https://github.com/drmowinckels/entracte
-brew install --cask drmowinckels/entracte/entracte
+brew tap drmowinckels/tap
+brew install --cask entracte
 ```
+
+No URL argument: the tap repository is named [`homebrew-tap`](https://github.com/drmowinckels/homebrew-tap), which is what lets Homebrew resolve `drmowinckels/tap` on its own. It is shared with [Cairn](https://github.com/drmowinckels/cairn), so one tap covers both apps.
+
+::: tip Moved from the old tap
+The cask used to live in the Entracte repo and needed `brew tap drmowinckels/entracte <url>`. If that is what you have, you need do nothing — `brew upgrade` follows the move by itself, and `brew untap drmowinckels/entracte` tidies up when convenient.
+:::
 
 `brew upgrade --cask entracte` handles updates once Homebrew refreshes the tap. The Cask tracks **stable releases only** — prereleases never bump it, because a `brew` install cannot see the in-app update-channel setting and so has no way to opt out of betas. To run betas, install from the [release page](https://github.com/drmowinckels/entracte/releases) and switch the channel in **Preferences → About**.
 
