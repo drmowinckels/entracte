@@ -62,8 +62,8 @@ jobs:
       - run: npm ci
       # actionlint does not parse `run:` bodies deeply enough to catch a
       # shell syntax error — a heredoc nested in `$( )` with an apostrophe
-      # in the prose slipped through it into bump-cask.yml's failure-report
-      # step, which only runs under `if: failure()` (#349).
+      # in the prose slipped through it into the old bump-cask.yml's
+      # failure-report step, which only ran under `if: failure()` (#349).
       - name: workflow shell syntax
         run: npm run audit:workflow-shell
 
