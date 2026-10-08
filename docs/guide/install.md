@@ -23,8 +23,13 @@ Entracte ships a [Homebrew Cask](https://brew.sh/). Until we submit to `homebrew
 
 ```sh
 brew tap drmowinckels/tap
+brew trust drmowinckels/tap
 brew install --cask entracte
 ```
+
+::: warning `brew trust` is not optional
+Without it, `brew install` stops with `Refusing to load cask drmowinckels/tap/entracte from untrusted tap`. This is not specific to Entracte — current Homebrew requires it for every tap outside its own repositories, and trusting one means you accept that its casks run code Homebrew does not review. It is a one-off per tap.
+:::
 
 No URL argument: the tap repository is named [`homebrew-tap`](https://github.com/drmowinckels/homebrew-tap), which is what lets Homebrew resolve `drmowinckels/tap` on its own. The tap is shared across our macOS apps, so it is one tap to add however many of them you install.
 
