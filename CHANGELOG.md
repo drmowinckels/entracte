@@ -9,7 +9,7 @@ Versions on the `0.0.X` line are public beta releases; `0.1.X` and onwards will 
 
 ### Changed
 
-- **Homebrew installs come from a shorter tap.** `brew tap drmowinckels/tap` then `brew install --cask entracte` — no repository URL to paste any more, because the cask moved into a tap shared with [Cairn](https://github.com/drmowinckels/cairn) whose repository name Homebrew can resolve on its own. Nothing to do if you already installed via the old `drmowinckels/entracte` tap: `brew upgrade` follows the move by itself, and you can `brew untap drmowinckels/entracte` whenever it suits. The new tap also checks for new Entracte releases hourly rather than waiting to be told about them, so a release that the old one-shot bump would have dropped silently now gets picked up on the next check.
+- **Homebrew installs come from a shorter tap.** `brew tap drmowinckels/tap` then `brew install --cask entracte` — no repository URL to paste any more, because the cask moved into a tap whose repository name Homebrew can resolve on its own, shared across our macOS apps. Nothing to do if you already installed via the old `drmowinckels/entracte` tap: `brew upgrade` follows the move by itself, and you can `brew untap drmowinckels/entracte` whenever it suits. The new tap also checks for new Entracte releases hourly rather than waiting to be told about them, so a release that the old one-shot bump would have dropped silently now gets picked up on the next check.
 
 ## [0.0.14] — 2026-10-06
 

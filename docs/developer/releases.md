@@ -90,7 +90,7 @@ The Homebrew cask tracks stable only (the tap's bump job asks GitHub for the lat
 
 ## Homebrew cask
 
-The cask no longer lives here. It sits in the shared tap [`drmowinckels/homebrew-tap`](https://github.com/drmowinckels/homebrew-tap) next to Cairn's, so users get `brew tap drmowinckels/tap` with no URL argument — a repository whose name lacks the `homebrew-` prefix cannot be tapped by short name.
+The cask no longer lives here. It sits in the shared tap [`drmowinckels/homebrew-tap`](https://github.com/drmowinckels/homebrew-tap), which is shared across our macOS apps, so users get `brew tap drmowinckels/tap` with no URL argument — a repository whose name lacks the `homebrew-` prefix cannot be tapped by short name.
 
 **Releasing triggers nothing on the Homebrew side.** The tap polls this repo hourly for its latest non-prerelease release and commits the bump itself, so there is no action for you and nothing in this repo can fail. Expect `brew upgrade --cask entracte` to see a new release within the hour; the tap's **Bump casks** workflow has a `workflow_dispatch` trigger if you want it immediately.
 
