@@ -176,11 +176,18 @@ Audits run in CI but every one is invokable locally. Configs live in [.github/au
 | Accessibility (axe + console-error gate) | `npm run audit:a11y`           | puppeteer + axe-core | hard                   |
 | Rust licenses + CVEs + dupes             | `npm run audit:rust`           | cargo-deny           | advisory               |
 | Broken links in `*.md`                   | `npm run audit:links`          | lychee               | hard                   |
+| Workflow `run:` shell syntax             | `npm run audit:workflow-shell` | `bash -n`            | hard                   |
 | npm CVEs                                 | `npm audit --audit-level=high` | npm                  | advisory               |
 
 The `audit` CI job runs the always-hard-fail ones (knip / cspell / size-limit / a11y). The `advisory` job runs cargo-deny + lychee + npm audit with `continue-on-error: true` per-step so all three reports reach the sticky PR comment via `marocchino/sticky-pull-request-comment` — but a final step re-surfaces the lychee outcome as a job failure, so lychee breakage blocks merges.
 
 **knip warnings vs errors:** unused exports / types / duplicates are configured as `warn` (reported but exit-0) since legitimate API surface and parity-test-referenced types would otherwise force noisy ignores. Genuinely unused dependencies are still hard-fail.
+
+**Every gate must prove it analysed something.** A gate that analyses _nothing_ used to exit 0, which is the worst direction to be wrong in: the step is green, you believe the check ran, and the problem surfaces later or never. It happened twice in one day — `audit:spell` reported "Files checked: 0" from a worktree under `.claude/worktrees/`, and `audit:knip` downgraded "no project files matched" to a configuration _hint_ (#368). Both came from glob and path resolution.
+
+[`scripts/audit-gates.mjs`](../scripts/audit-gates.mjs) is the inventory: every gate declares either a **count floor** (parsed from the tool's own "files checked" output by [`scripts/audit-nonvacuous.mjs`](../scripts/audit-nonvacuous.mjs)), a **native flag** that makes the tool itself fail on an empty run (knip's `--treat-config-hints-as-errors`), or an **exemption with a stated reason**. `src/test-fixtures/audit-gates.test.ts` asserts every `audit:*` script appears there, so a new gate cannot be added without answering the question.
+
+A wrapped gate is two scripts: `audit:<gate>` runs the wrapper, `audit:<gate>:run` holds the real command. Keep the command in `:run` — moving it into the wrapper hides the binary from knip, which then reports the tool's own devDependency as unused. Floors are deliberately loose (`150` files against a real 207) so routine file churn does not move them; lower one only when the shrink is real.
 
 **cspell project dictionary:** [`.github/audit/cspell/project-words.txt`](audit/cspell/project-words.txt) — add new words alphabetically-ish under a relevant comment if you can.
 

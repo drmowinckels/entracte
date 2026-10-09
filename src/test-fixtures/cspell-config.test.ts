@@ -12,15 +12,19 @@ const cspellConfig = JSON.parse(readFileSync(configPath, "utf8")) as {
   ignorePaths: string[];
 };
 
+// `audit:spell` now wraps the real command for the non-vacuity floor (#368);
+// `audit:spell:run` is where cspell and its globs actually live.
 const spellScript = (
   JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"))
     .scripts as Record<string, string>
-)["audit:spell"];
+)["audit:spell:run"];
 
-// The quoted glob `audit:spell` passes on the command line. cspell REPLACES the
-// config's `files` with a CLI glob rather than intersecting the two, so this
-// string — not `files` — is what decides the real scope.
-const scriptGlob = /"([^"]*\*[^"]*)"/.exec(spellScript)?.[1];
+// The quoted globs `audit:spell:run` passes on the command line. cspell
+// REPLACES the config's `files` with CLI globs rather than intersecting the
+// two, so these strings — not `files` — are what decide the real scope.
+const scriptGlobs = [...spellScript.matchAll(/"([^"]*\*[^"]*)"/g)].map(
+  (m) => m[1],
+);
 
 // Two ways this config has already gone wrong, both silent:
 //
@@ -39,9 +43,9 @@ const scriptGlob = /"([^"]*\*[^"]*)"/.exec(spellScript)?.[1];
 //    is not what bounds the scope.
 //
 // These assertions pin the config shape. They cannot catch a *different* way of
-// checking nothing, because that needs a real cspell run; the durable place for
-// that is a minimum-file-count guard on the gate itself rather than an ~8s
-// subprocess in this suite.
+// checking nothing, because that needs a real cspell run; that guard now lives
+// on the gate itself as a minimum-file floor (scripts/audit-gates.mjs, #368)
+// rather than as an ~8s subprocess in this suite.
 
 describe("cspell config", () => {
   it("anchors the .claude ignore so a worktree run is not silently empty", () => {
@@ -55,11 +59,11 @@ describe("cspell config", () => {
     expect(unanchored).toEqual([]);
   });
 
-  it("declares exactly the glob the audit script passes", () => {
+  it("declares exactly the globs the audit script passes", () => {
     expect(
-      scriptGlob,
-      "audit:spell must pass a glob; the config's files alone check nothing",
-    ).toBeDefined();
-    expect(cspellConfig.files).toEqual([scriptGlob]);
+      scriptGlobs,
+      "audit:spell:run must pass a glob; the config's files alone check nothing",
+    ).not.toEqual([]);
+    expect(cspellConfig.files).toEqual(scriptGlobs);
   });
 });
