@@ -59,6 +59,20 @@ describe("cspell config", () => {
     expect(unanchored).toEqual([]);
   });
 
+  it("keeps a .github-anchored glob, which a **/ prefix cannot reach", () => {
+    // A `**/`-prefixed glob does not descend into dot-directories, so
+    // `**/*.md` never saw `.github/AGENTS.md` or any workflow YAML — a
+    // whole tree of contributor-facing prose went unchecked (#365). The
+    // `.github` tree therefore needs its own anchored pattern, and folding
+    // it back under a `**/` prefix would silently drop it again.
+    const anchored = scriptGlobs.filter((g) => g.startsWith(".github/"));
+    expect(
+      anchored,
+      "audit:spell:run must pass a glob anchored at .github/",
+    ).not.toEqual([]);
+    expect(anchored.every((g) => !g.startsWith("**/"))).toBe(true);
+  });
+
   it("declares exactly the globs the audit script passes", () => {
     expect(
       scriptGlobs,

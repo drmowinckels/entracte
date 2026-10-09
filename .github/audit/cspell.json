@@ -3,7 +3,7 @@
   "version": "0.2",
   "language": "en,en-GB",
   "globRoot": "../..",
-  "files": ["**/*.{md,ts,tsx}"],
+  "files": ["**/*.{md,ts,tsx}", ".github/**/*.{md,yml,yaml}"],
   "ignorePaths": [
     "**/node_modules/**",
     "**/dist/**",

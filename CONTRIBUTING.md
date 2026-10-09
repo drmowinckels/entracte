@@ -71,7 +71,7 @@ Run the full suite before pushing:
 npm test                                                     # vitest (frontend)
 npm run audit:a11y                                           # axe-core + console-error gate
 npm run audit:knip                                           # unused exports / deps
-npm run audit:spell                                          # cspell on *.md and *.ts*
+npm run audit:spell                                          # cspell on *.md, *.ts*, .github/
 npm run audit:workflow-shell                                 # bash -n over every workflow run: block
 npm run audit:size                                           # JS bundle budget
 cargo test  --manifest-path src-tauri/Cargo.toml --lib

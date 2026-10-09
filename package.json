@@ -23,7 +23,7 @@
     "audit:a11y": "npm run build && node scripts/audit-a11y.mjs",
     "audit:knip": "knip --config .github/audit/knip.json --treat-config-hints-as-errors",
     "audit:spell": "node scripts/audit-nonvacuous.mjs spell -- npm run --silent audit:spell:run",
-    "audit:spell:run": "cspell --no-progress --config .github/audit/cspell.json \"**/*.{md,ts,tsx}\"",
+    "audit:spell:run": "cspell --no-progress --config .github/audit/cspell.json \"**/*.{md,ts,tsx}\" \".github/**/*.{md,yml,yaml}\"",
     "audit:size": "npm run build && size-limit",
     "audit:links": "lychee --config .github/audit/lychee.toml --root-dir \"$PWD/docs\" \"**/*.md\"",
     "version:set": "node scripts/set-version.mjs",
