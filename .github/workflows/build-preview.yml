@@ -250,7 +250,7 @@ jobs:
           # here is not silent.
           hidden=$(echo "$modes" | grep -cE "^.[rwx-]{2}-------" || true)
           if [ "$hidden" -gt 0 ]; then
-            echo "::warning::${hidden} entr(ies) in the AppDir are not world-readable (not failing: the catalog traverses the image regardless)"
+            echo "::warning::${hidden} of the AppDir's entries are not world-readable (not failing: the catalog traverses the image regardless)"
           fi
 
           rm -rf "$workdir"

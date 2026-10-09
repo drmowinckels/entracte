@@ -171,7 +171,7 @@ Audits run in CI but every one is invokable locally. Configs live in [.github/au
 | Audit                                    | Command                        | Tool                 | Hard-fail or advisory? |
 | ---------------------------------------- | ------------------------------ | -------------------- | ---------------------- |
 | Unused TS exports / deps                 | `npm run audit:knip`           | knip                 | hard                   |
-| Spell check `*.md` + `*.ts*`             | `npm run audit:spell`          | cspell               | hard                   |
+| Spell check `*.md`, `*.ts*`, `.github/`  | `npm run audit:spell`          | cspell               | hard                   |
 | JS bundle size budget                    | `npm run audit:size`           | size-limit           | hard                   |
 | Accessibility (axe + console-error gate) | `npm run audit:a11y`           | puppeteer + axe-core | hard                   |
 | Rust licenses + CVEs + dupes             | `npm run audit:rust`           | cargo-deny           | advisory               |
@@ -188,6 +188,10 @@ The `audit` CI job runs the always-hard-fail ones (knip / cspell / size-limit / 
 [`scripts/audit-gates.mjs`](../scripts/audit-gates.mjs) is the inventory: every gate declares either a **count floor** (parsed from the tool's own "files checked" output by [`scripts/audit-nonvacuous.mjs`](../scripts/audit-nonvacuous.mjs)), a **native flag** that makes the tool itself fail on an empty run (knip's `--treat-config-hints-as-errors`), or an **exemption with a stated reason**. `src/test-fixtures/audit-gates.test.ts` asserts every `audit:*` script appears there, so a new gate cannot be added without answering the question.
 
 A wrapped gate is two scripts: `audit:<gate>` runs the wrapper, `audit:<gate>:run` holds the real command. Keep the command in `:run` — moving it into the wrapper hides the binary from knip, which then reports the tool's own devDependency as unused. Floors are deliberately loose (`150` files against a real 207) so routine file churn does not move them; lower one only when the shrink is real.
+
+**cspell scope, and the dot-directory trap.** A `**/`-prefixed glob does not descend into dot-directories, so `**/*.md` never reached `.github/AGENTS.md` or any workflow YAML — a whole tree of contributor-facing prose went unchecked (#365). The `.github` tree gets its own anchored glob for that reason, and `cspell-config.test.ts` pins the anchor so folding it back under `**/` cannot silently drop it again. Rust, TOML and JSON stay out of scope deliberately: they contribute ~290 issues that are almost entirely Windows FFI constants (`CLSCTX`, `HMONITOR`), errno names and crate identifiers, and every new platform shim would add more.
+
+Note cspell **replaces** the config's `files` with a CLI glob rather than intersecting the two, so `audit:spell:run`'s globs — not `.github/audit/cspell.json` — decide the real scope. `files` only applies when no glob is passed. Widening coverage means editing both; the drift test enforces that.
 
 **cspell project dictionary:** [`.github/audit/cspell/project-words.txt`](audit/cspell/project-words.txt) — add new words alphabetically-ish under a relevant comment if you can.
 

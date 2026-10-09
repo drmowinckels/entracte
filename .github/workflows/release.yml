@@ -439,9 +439,9 @@ jobs:
           #             re-versions macOS names) never needs a manual edit here.
           AARCH64_FILE=""
           X64_FILE=""
-          for cand in release-assets/*.app.tar.gz; do
-            [ -e "$cand" ] || continue
-            base="$(basename "$cand")"
+          for candidate in release-assets/*.app.tar.gz; do
+            [ -e "$candidate" ] || continue
+            base="$(basename "$candidate")"
             case "$base" in
               *aarch64*) AARCH64_FILE="$base" ;;
               *)         X64_FILE="$base" ;;
@@ -452,12 +452,12 @@ jobs:
             exit 1
           fi
           APPIMAGE_FILE=""
-          for cand in release-assets/*_amd64.AppImage; do
-            [ -e "$cand" ] && APPIMAGE_FILE="$(basename "$cand")" && break
+          for candidate in release-assets/*_amd64.AppImage; do
+            [ -e "$candidate" ] && APPIMAGE_FILE="$(basename "$candidate")" && break
           done
           MSI_FILE=""
-          for cand in release-assets/*.msi; do
-            [ -e "$cand" ] && MSI_FILE="$(basename "$cand")" && break
+          for candidate in release-assets/*.msi; do
+            [ -e "$candidate" ] && MSI_FILE="$(basename "$candidate")" && break
           done
           if [ -z "$MSI_FILE" ]; then
             echo "::error::could not resolve the Windows .msi updater artifact"

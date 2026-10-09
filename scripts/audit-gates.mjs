@@ -30,7 +30,7 @@ export const GATES = {
       // the case it cannot see: a glob or ignore change that shrinks the set
       // to a handful of files instead of emptying it.
       pattern: /Files checked:\s*(\d+)/,
-      floor: 150,
+      floor: 180,
       unit: "file",
     },
   },
