@@ -507,7 +507,7 @@ jobs:
         # compromised tag could exfiltrate the GITHUB_TOKEN or
         # replace artifacts on the draft release. Update via
         # dependabot.yml.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           draft: true
           # Restated, not inherited: softprops keeps the release's existing
@@ -618,7 +618,7 @@ jobs:
           ls -la signed
 
       # SHA-pinned: uploads to the GitHub release. Update via dependabot.
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           draft: true
           # See the note on the latest.json uploader above.
